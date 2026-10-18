@@ -1,0 +1,312 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * File Name          : freertos.c
+  * Description        : Code for freertos applications
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+
+/* Includes ------------------------------------------------------------------*/
+#include "FreeRTOS.h"
+#include "task.h"
+#include "main.h"
+#include "cmsis_os.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+typedef StaticTask_t osStaticThreadDef_t;
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+/* USER CODE BEGIN Variables */
+
+/* USER CODE END Variables */
+/* Definitions for defaultTask */
+osThreadId_t defaultTaskHandle;
+uint32_t defaultTaskBuffer[ 128 ];
+osStaticThreadDef_t defaultTaskControlBlock;
+const osThreadAttr_t defaultTask_attributes = {
+  .name = "defaultTask",
+  .cb_mem = &defaultTaskControlBlock,
+  .cb_size = sizeof(defaultTaskControlBlock),
+  .stack_mem = &defaultTaskBuffer[0],
+  .stack_size = sizeof(defaultTaskBuffer),
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for test */
+osThreadId_t testHandle;
+const osThreadAttr_t test_attributes = {
+  .name = "test",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for remote_control */
+osThreadId_t remote_controlHandle;
+const osThreadAttr_t remote_control_attributes = {
+  .name = "remote_control",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for shoot */
+osThreadId_t shootHandle;
+const osThreadAttr_t shoot_attributes = {
+  .name = "shoot",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for gimbal */
+osThreadId_t gimbalHandle;
+const osThreadAttr_t gimbal_attributes = {
+  .name = "gimbal",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for decision_center */
+osThreadId_t decision_centerHandle;
+const osThreadAttr_t decision_center_attributes = {
+  .name = "decision_center",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for safe_daemon */
+osThreadId_t safe_daemonHandle;
+const osThreadAttr_t safe_daemon_attributes = {
+  .name = "safe_daemon",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+
+/* Private function prototypes -----------------------------------------------*/
+/* USER CODE BEGIN FunctionPrototypes */
+
+/* USER CODE END FunctionPrototypes */
+
+void StartDefaultTask(void *argument);
+void test_task(void *argument);
+void remote_control_task(void *argument);
+void shoot_task(void *argument);
+void gimbal_task(void *argument);
+void decision_center_task(void *argument);
+void safe_daemon_task(void *argument);
+
+extern void MX_USB_DEVICE_Init(void);
+void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
+
+/**
+  * @brief  FreeRTOS initialization
+  * @param  None
+  * @retval None
+  */
+void MX_FREERTOS_Init(void) {
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* creation of defaultTask */
+  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
+  /* creation of test */
+  testHandle = osThreadNew(test_task, NULL, &test_attributes);
+
+  /* creation of remote_control */
+  remote_controlHandle = osThreadNew(remote_control_task, NULL, &remote_control_attributes);
+
+  /* creation of shoot */
+  shootHandle = osThreadNew(shoot_task, NULL, &shoot_attributes);
+
+  /* creation of gimbal */
+  gimbalHandle = osThreadNew(gimbal_task, NULL, &gimbal_attributes);
+
+  /* creation of decision_center */
+  decision_centerHandle = osThreadNew(decision_center_task, NULL, &decision_center_attributes);
+
+  /* creation of safe_daemon */
+  safe_daemonHandle = osThreadNew(safe_daemon_task, NULL, &safe_daemon_attributes);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
+
+}
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void *argument)
+{
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
+  /* USER CODE BEGIN StartDefaultTask */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END StartDefaultTask */
+}
+
+/* USER CODE BEGIN Header_test_task */
+/**
+* @brief Function implementing the test thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_test_task */
+__weak void test_task(void *argument)
+{
+  /* USER CODE BEGIN test_task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END test_task */
+}
+
+/* USER CODE BEGIN Header_remote_control_task */
+/**
+* @brief Function implementing the remote_control thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_remote_control_task */
+__weak void remote_control_task(void *argument)
+{
+  /* USER CODE BEGIN remote_control_task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END remote_control_task */
+}
+
+/* USER CODE BEGIN Header_shoot_task */
+/**
+* @brief Function implementing the shoot thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_shoot_task */
+__weak void shoot_task(void *argument)
+{
+  /* USER CODE BEGIN shoot_task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END shoot_task */
+}
+
+/* USER CODE BEGIN Header_gimbal_task */
+/**
+* @brief Function implementing the gimbal thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_gimbal_task */
+__weak void gimbal_task(void *argument)
+{
+  /* USER CODE BEGIN gimbal_task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END gimbal_task */
+}
+
+/* USER CODE BEGIN Header_decision_center_task */
+/**
+* @brief Function implementing the decision_center thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_decision_center_task */
+__weak void decision_center_task(void *argument)
+{
+  /* USER CODE BEGIN decision_center_task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END decision_center_task */
+}
+
+/* USER CODE BEGIN Header_safe_daemon_task */
+/**
+* @brief Function implementing the safe_daemon thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_safe_daemon_task */
+__weak void safe_daemon_task(void *argument)
+{
+  /* USER CODE BEGIN safe_daemon_task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END safe_daemon_task */
+}
+
+/* Private application code --------------------------------------------------*/
+/* USER CODE BEGIN Application */
+
+/* USER CODE END Application */
+

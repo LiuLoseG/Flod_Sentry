@@ -1,0 +1,358 @@
+{
+    "cmake.cmakePath": "D:\\install\\STM32CubleCLT\\STM32CubeCLT_1.21.0\\CMake\\bin\\cmake.exe",
+    "cmake.preferredGenerators": [
+        "Ninja"
+    ],
+    "stm32cube-ide-clangd.path": "cube",
+    "stm32cube-ide-clangd.arguments": [
+        "starm-clangd",
+        "--query-driver=D:/install/STM32CubleCLT/STM32CubeCLT_1.21.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc*",
+        "--query-driver=D:/install/STM32CubleCLT/STM32CubeCLT_1.21.0/GNU-tools-for-STM32/bin/arm-none-eabi-g++*"
+    ],
+    "stm32cube-ide-build-cmake.intellisense.enableAutomaticConfiguration": false,
+    "stm32cube-ide-build-cmake.ignoreCubeProjectDiscovery": true,
+    "terminal.integrated.env.windows": {
+        "CUBE_BUNDLE_PATH": "D:\\install\\STM32CubleCLT\\STM32CubeCLT_1.21.0"
+    },
+
+    // ========== 字体与排版 ==========
+    "editor.fontFamily": "Consolas, 'Cascadia Code', 'JetBrains Mono', 'Courier New', monospace",
+    "editor.fontLigatures": true,
+    "editor.fontSize": 14,
+    "editor.lineHeight": 1.6,
+    "editor.fontWeight": "400",
+    "editor.letterSpacing": 0,
+    // --- 光标 ---
+    "editor.cursorStyle": "line",
+    "editor.cursorBlinking": "smooth",
+    "editor.cursorSmoothCaretAnimation": "on",
+    "editor.cursorWidth": 2,
+    // --- 缩进与空白 ---
+    "editor.renderWhitespace": "selection",
+    "editor.guides.indentation": true,
+    "editor.guides.highlightActiveIndentation": "always",
+    "editor.stickyScroll.enabled": true,
+    "editor.smoothScrolling": true,
+    "editor.padding.top": 4,
+    "editor.scrollBeyondLastLine": false,
+    // --- 括号 ---
+    "editor.bracketPairColorization.enabled": true,
+    "editor.guides.bracketPairs": "active",
+    "editor.matchBrackets": "always",
+    // --- 行号与导航 ---
+    "editor.lineNumbers": "on",
+    "editor.renderLineHighlight": "all",
+    "editor.breadcrumbs.enabled": true,
+    "editor.rulers": [80, 100, 120],
+    // --- 缩略图 ---
+    "editor.minimap.enabled": true,
+    "editor.minimap.renderCharacters": false,
+    "editor.minimap.maxColumn": 80,
+    "editor.minimap.showSlider": "mouseover",
+    "editor.minimap.scale": 1,
+    // --- 折叠 ---
+    "editor.folding": true,
+    "editor.foldingStrategy": "indentation",
+    "editor.showFoldingControls": "mouseover",
+    // --- 补全 ---
+    "editor.suggest.showKeywords": true,
+    "editor.suggest.showSnippets": true,
+    "editor.suggest.preview": true,
+    "editor.tabCompletion": "on",
+    // --- 其他 ---
+    "editor.renderControlCharacters": false,
+    "editor.occurrencesHighlight": "singleFile",
+    "diffEditor.renderSideBySide": true,
+
+    // ========== 语义高亮: C++ 达芬奇影院配色 ==========
+    // 深黑底 + 暖金高光 + 宝石级饱和点缀
+    "editor.semanticHighlighting.enabled": true,
+    "editor.semanticTokenColorCustomizations": {
+        "enabled": true,
+        "rules": {
+            // ===== 变量 =====
+            "variable.local": {
+                "foreground": "#C8BFA0"
+            },
+            "variable.parameter": {
+                "foreground": "#F09860",
+                "fontStyle": "italic"
+            },
+            "parameter": {
+                "foreground": "#F09860",
+                "fontStyle": "italic"
+            },
+            "variable.global": {
+                "foreground": "#E08860"
+            },
+            "variable.global.static": {
+                "foreground": "#D4A848"
+            },
+            "variable.local.static": {
+                "foreground": "#D4A848"
+            },
+            "variable.readonly": {
+                "foreground": "#C8BFA0",
+                "fontStyle": "underline"
+            },
+
+            // ===== 成员变量 =====
+            "member.public": {
+                "foreground": "#70A0C0"
+            },
+            "member.protected": {
+                "foreground": "#C090C0"
+            },
+            "member.private": {
+                "foreground": "#A088B0"
+            },
+
+            // ===== 函数 =====
+            "function": {
+                "foreground": "#D4A848"
+            },
+            "function.static": {
+                "foreground": "#E08860"
+            },
+
+            // ===== 成员函数 =====
+            "method.public": {
+                "foreground": "#C8A8D8"
+            },
+            "method.protected": {
+                "foreground": "#B898C8"
+            },
+            "method.private": {
+                "foreground": "#A888B8"
+            },
+            "method": {
+                "foreground": "#C8A8D8"
+            },
+
+            // ===== 类型 =====
+            "class": { "foreground": "#78B890" },
+            "struct": { "foreground": "#78B890" },
+            "enum": { "foreground": "#80A0B0" },
+            "type": { "foreground": "#569CD6" },
+            "enumMember": { "foreground": "#70B898" },
+            "namespace": { "foreground": "#7A7060" },
+            "typeParameter": { "foreground": "#D09860" },
+            "macro": {
+                "foreground": "#E08860",
+                "fontStyle": "bold"
+            },
+
+            // ===== 修饰 =====
+            "*.deprecated": { "fontStyle": "strikethrough" },
+            "*.readonly": { "fontStyle": "underline" }
+        }
+    },
+
+    // ========== TextMate 语法增强 ==========
+    "editor.tokenColorCustomizations": {
+        "textMateRules": [
+            {
+                "name": "public:",
+                "scope": "storage.modifier.access.public.cpp",
+                "settings": { "foreground": "#70C070", "fontStyle": "bold" }
+            },
+            {
+                "name": "protected:",
+                "scope": "storage.modifier.access.protected.cpp",
+                "settings": { "foreground": "#D4A848", "fontStyle": "bold" }
+            },
+            {
+                "name": "private:",
+                "scope": "storage.modifier.access.private.cpp",
+                "settings": { "foreground": "#E06060", "fontStyle": "bold" }
+            },
+            {
+                "name": "Comment line",
+                "scope": "comment.line.cpp",
+                "settings": { "foreground": "#5A6050" }
+            },
+            {
+                "name": "Comment doc",
+                "scope": "comment.block.cpp, comment.block.documentation.cpp",
+                "settings": { "foreground": "#6A7060" }
+            },
+            {
+                "name": "#if 0 disabled",
+                "scope": "comment.block.preprocessor.if.cpp",
+                "settings": { "foreground": "#4A504080" }
+            },
+            {
+                "name": "String",
+                "scope": "string.quoted.double.cpp, string.quoted.single.cpp",
+                "settings": { "foreground": "#C8A060" }
+            },
+            {
+                "name": "Number",
+                "scope": "constant.numeric.cpp",
+                "settings": { "foreground": "#A0C088" }
+            },
+            {
+                "name": "System type (uint32_t etc)",
+                "scope": "support.type.c, support.type.cpp, support.type.sys.cpp",
+                "settings": { "foreground": "#569CD6" }
+            },
+            {
+                "name": "Built-in primitive type (float, int, char etc)",
+                "scope": "storage.type.primitive.cpp, storage.type.built-in.primitive.cpp, storage.type.primitive, storage.type.built-in.primitive, storage.type.built-in.cpp, storage.type.built-in, storage.type.cpp, storage.type, keyword.type.cpp, keyword.type",
+                "settings": { "foreground": "#569CD6" }
+            },
+            {
+                "name": "Storage/function specifier (inline, static, const, extern, volatile etc)",
+                "scope": "storage.modifier.inline, storage.modifier.const, storage.modifier.specifier",
+                "settings": { "foreground": "#C09080" }
+            },
+            { "name": "public method", "scope": "entity.name.function.member.public.cpp", "settings": { "foreground": "#C8A8D8" } },
+            { "name": "protected method", "scope": "entity.name.function.member.protected.cpp", "settings": { "foreground": "#B898C8" } },
+            { "name": "private method", "scope": "entity.name.function.member.private.cpp", "settings": { "foreground": "#A888B8" } },
+            { "name": "public member", "scope": "entity.name.variable.member.public.cpp", "settings": { "foreground": "#70A0C0" } },
+            { "name": "protected member", "scope": "entity.name.variable.member.protected.cpp", "settings": { "foreground": "#C090C0" } },
+            { "name": "private member", "scope": "entity.name.variable.member.private.cpp", "settings": { "foreground": "#A088B0" } },
+            { "name": "global var", "scope": "entity.name.variable.global.cpp", "settings": { "foreground": "#E08860" } },
+            { "name": "static func", "scope": "entity.name.function.static.cpp", "settings": { "foreground": "#E08860" } },
+            {
+                "name": "Parameter",
+                "scope": "variable.parameter.cpp",
+                "settings": { "foreground": "#F09860", "fontStyle": "italic" }
+            }
+        ]
+    },
+
+    // ========== 工作台: 达芬奇影院调色 ==========
+    // 深黑底色 + 暖金高光 + 高饱和宝石点缀
+    "workbench.colorCustomizations": {
+        // --- 编辑器 ---
+        "editor.background": "#0A0D12",
+        "editor.foreground": "#D0C0A0",
+        "editor.lineHighlightBackground": "#D4A84808",
+        "editor.selectionBackground": "#40609050",
+        "editor.inactiveSelectionBackground": "#40609025",
+        "editor.wordHighlightBackground": "#6090B020",
+        "editor.wordHighlightStrongBackground": "#6090B030",
+        "editor.wordHighlightBorder": "#6090B050",
+        "editor.findMatchBackground": "#D0484860",
+        "editor.findMatchHighlightBackground": "#D4A84840",
+        "editor.findMatchBorder": "#D0484870",
+        "editorBracketMatch.border": "#D4A84860",
+        "editorBracketMatch.background": "#D4A84815",
+        "editorIndentGuide.background1": "#D0C0A912",
+        "editorIndentGuide.activeBackground1": "#D4A84830",
+        "editorRuler.foreground": "#D0C0A910",
+        // --- 滚动条 ---
+        "editorOverviewRuler.border": "#00000000",
+        "scrollbar.shadow": "#00000000",
+        "scrollbarSlider.background": "#D0C0A912",
+        "scrollbarSlider.hoverBackground": "#D4A84822",
+        "scrollbarSlider.activeBackground": "#D4A84832",
+        // --- 行号区 ---
+        "editorLineNumber.foreground": "#585040",
+        "editorLineNumber.activeForeground": "#D4A848",
+        "editorGutter.background": "#0A0D12",
+        "editorGutter.modifiedBackground": "#D4A84840",
+        "editorGutter.addedBackground": "#58B87040",
+        "editorGutter.deletedBackground": "#D0484840",
+        "editorCodeLens.foreground": "#685F48",
+        // --- 波浪线 ---
+        "editorError.foreground": "#E05858",
+        "editorWarning.foreground": "#D4A848",
+        "editorInfo.foreground": "#5898B8",
+        "editorHint.foreground": "#58B8A0",
+        // --- 内联提示 ---
+        "editorInlayHint.background": "#181C2490",
+        "editorInlayHint.foreground": "#685F48",
+        "editorInlayHint.parameterBackground": "#181C2490",
+        "editorInlayHint.parameterForeground": "#887858",
+        "editorInlayHint.typeBackground": "#181C2490",
+        "editorInlayHint.typeForeground": "#887858",
+        // --- 微件 ---
+        "editorWidget.background": "#12151C",
+        "editorWidget.border": "#D4A84820",
+        "editorWidget.resizeBorder": "#D4A84840",
+        "editorSuggestWidget.background": "#12151C",
+        "editorSuggestWidget.border": "#D4A84820",
+        "editorSuggestWidget.selectedBackground": "#D4A84820",
+        "editorSuggestWidget.highlightForeground": "#D4A848",
+        "editorHoverWidget.background": "#12151C",
+        "editorHoverWidget.border": "#D4A84830",
+        "peekView.background": "#12151C",
+        "peekView.border": "#D4A84830",
+        "peekViewEditor.background": "#0A0D12",
+        "peekViewResult.background": "#12151C",
+        "peekViewTitle.background": "#181C24",
+        "peekViewTitleLabel.foreground": "#D0C0A0",
+        "peekViewEditor.matchHighlightBackground": "#D4A84820",
+        // --- 差异 ---
+        "diffEditor.insertedTextBackground": "#58B87020",
+        "diffEditor.removedTextBackground": "#D0484820",
+        "diffEditor.insertedLineBackground": "#58B87010",
+        "diffEditor.removedLineBackground": "#D0484810",
+        // --- 标签栏 ---
+        "tab.activeForeground": "#F0E0C0",
+        "tab.inactiveForeground": "#685F48",
+        "tab.activeBorderTop": "#D4A848",
+        "tab.activeBackground": "#0A0D12",
+        "tab.inactiveBackground": "#060810",
+        "tab.hoverBackground": "#12151C",
+        // --- 状态栏 ---
+        "statusBar.background": "#060810",
+        "statusBar.foreground": "#A09070",
+        "statusBar.noFolderBackground": "#060810",
+        "statusBarItem.remoteBackground": "#58B87030",
+        // --- 标题栏 ---
+        "titleBar.activeBackground": "#040610",
+        "titleBar.activeForeground": "#A09070",
+        "titleBar.inactiveBackground": "#040610",
+        "titleBar.inactiveForeground": "#585040",
+        // --- 侧边栏: 纯黑 ---
+        "sideBar.background": "#040610",
+        "sideBar.foreground": "#A09070",
+        "sideBar.border": "#00000000",
+        "sideBarSectionHeader.background": "#040610",
+        "sideBarSectionHeader.foreground": "#A09070",
+        // --- 活动栏: 纯黑 ---
+        "activityBar.background": "#040610",
+        "activityBar.foreground": "#A09070",
+        "activityBar.inactiveForeground": "#585040",
+        "activityBar.border": "#00000000",
+        "activityBar.activeBorder": "#D4A848",
+        // --- 面板: 纯黑 ---
+        "panel.background": "#040610",
+        "panel.border": "#D0C0A908",
+        "panelTitle.activeForeground": "#F0E0C0",
+        "panelTitle.inactiveForeground": "#685F48",
+        // --- 列表 ---
+        "list.activeSelectionBackground": "#D4A84820",
+        "list.hoverBackground": "#D0C0A90C",
+        "list.inactiveSelectionBackground": "#D4A84810",
+        "list.highlightForeground": "#D4A848",
+        "tree.indentGuidesStroke": "#D0C0A912",
+        // --- 快捷选择器 ---
+        "quickInput.background": "#12151C",
+        "quickInput.foreground": "#D0C0A0",
+        "pickerGroup.foreground": "#D4A848",
+        "pickerGroup.border": "#D4A84830",
+        // --- 通知 ---
+        "notifications.background": "#12151C",
+        "notifications.foreground": "#D0C0A0",
+        "notifications.border": "#D4A84820",
+        // --- Git ---
+        "gitDecoration.modifiedResourceForeground": "#D4A848",
+        "gitDecoration.addedResourceForeground": "#58B870",
+        "gitDecoration.deletedResourceForeground": "#D04848",
+        "gitDecoration.untrackedResourceForeground": "#5898B8",
+        "gitDecoration.ignoredResourceForeground": "#585040",
+        "gitDecoration.conflictingResourceForeground": "#E08050"
+    },
+
+    // --- 终端 ---
+    "terminal.integrated.fontSize": 13,
+    "terminal.integrated.lineHeight": 1.3,
+    "terminal.integrated.cursorStyle": "line",
+    "terminal.integrated.cursorBlinking": true,
+    "terminal.integrated.background": "#040610",
+    "emberprobe.sampleFrequencyHz": 100
+}
