@@ -95,43 +95,43 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     User/Drive/bmi088/BMI088Middleware.cpp
     User/Drive/buzzer/buzzer.cpp
 
-    User/Drive/direct_motor/a4950_drive/a4950_drive.cpp
-    User/Drive/direct_motor/tb6612_drive/tb6612_drive.cpp
-    User/Drive/direct_motor/servo_drive/servo_drive.cpp
-    User/Drive/direct_motor/mks_drive/mks_drive.cpp
-
-    User/Drive/brush_motor/dji_motor/dji_motor.cpp
+    # User/Drive/brush_motor/dji_motor/dji_motor.cpp
     User/Drive/brush_motor/dji_motor_new/dji_motor_new.cpp
     User/Drive/brush_motor/dm_motor/dm_motor.cpp
     User/Drive/brush_motor/lk_motor/lk_motor.cpp
+
+    # User/Drive/direct_motor/a4950_drive/a4950_drive.cpp
+    # User/Drive/direct_motor/tb6612_drive/tb6612_drive.cpp
+    # User/Drive/direct_motor/servo_drive/servo_drive.cpp
+    # User/Drive/direct_motor/mks_drive/mks_drive.cpp
 
     User/Drive/data_distribution_center/can_board_communication/can_board_communication.cpp
     User/Drive/data_distribution_center/can_distribution/can_distribution.cpp
     User/Drive/data_distribution_center/pc_communication/pc_communication.cpp
 
-    User/Drive/debug_tool/usb_vofa/usb_vofa.cpp
-    User/Drive/debug_tool/uart_vofa/uart_vofa.cpp
+    # User/Drive/debug_tool/usb_vofa/usb_vofa.cpp
+    # User/Drive/debug_tool/uart_vofa/uart_vofa.cpp
     User/Drive/seggee_rtt/SEGGER_RTT.c
     User/Drive/seggee_rtt/SEGGER_RTT_printf.c
 
     User/Drive/sys_identificate/sys_phased_freq/sys_phased_freq.cpp
     User/Drive/sys_identificate/sys_sweep_freq/sys_sweep_freq.cpp
 
-    User/Drive/grayscale/grayscale.cpp
-    User/Drive/imu/wit_imu/wit_imu.cpp
+    # User/Drive/grayscale/grayscale.cpp
+    # User/Drive/imu/wit_imu/wit_imu.cpp
     User/Drive/imu/hi12_imu/hi12_imu.cpp
-    User/Drive/imu/mspm0_imu/mspm0_imu.cpp
+    # User/Drive/imu/mspm0_imu/mspm0_imu.cpp
 
-    User/Drive/key/adc_key/adc_key.cpp
-    User/Drive/key/regular_key/regular_key.cpp
+    # User/Drive/key/adc_key/adc_key.cpp
+    # User/Drive/key/regular_key/regular_key.cpp
 
-    User/Drive/lcd_oled/st7789_73x219_lcd/st7789_73x219_lcd.cpp
+    # User/Drive/lcd_oled/st7789_73x219_lcd/st7789_73x219_lcd.cpp
 
     User/Drive/wheel_system_solution/wheel_system_solution.cpp
 
-    User/Drive/odometer/imu_odometer/imu_odometer.cpp
-    User/Drive/odometer/fusion_odometer/fusion_odometer.cpp
-    User/Drive/odometer/ops_9/ops_9.cpp
+    # User/Drive/odometer/imu_odometer/imu_odometer.cpp
+    # User/Drive/odometer/fusion_odometer/fusion_odometer.cpp
+    # User/Drive/odometer/ops_9/ops_9.cpp
 
     User/Drive/remote_control/crsf/crsf.cpp
     User/Drive/remote_control/remote_center/remote_center.cpp
@@ -142,6 +142,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # User/APP/chassis/chassis.cpp
     # User/APP/steering_wheel/steering_wheel.cpp
     User/APP/gimbal/gimbal.cpp
+    # User/APP/imu_temp_ctrl/imu_temp_ctrl.cpp
     User/APP/shoot/shoot.cpp
     User/APP/robot_decision/robot_decision.cpp
     User/APP/safe_daemon_process/safe_daemon_process.cpp
@@ -191,7 +192,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     User/Drive/bmi088
     User/Drive/buzzer
 
-    User/Drive/brush_motor/dji_motor
+    # User/Drive/brush_motor/dji_motor
     User/Drive/brush_motor/dji_motor_new
     User/Drive/brush_motor/dm_motor
     User/Drive/brush_motor/lk_motor
@@ -200,27 +201,27 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     User/Drive/data_distribution_center/can_distribution
     User/Drive/data_distribution_center/pc_communication
 
-    User/Drive/debug_tool/usb_vofa
-    User/Drive/debug_tool/uart_vofa
+    # User/Drive/debug_tool/usb_vofa
+    # User/Drive/debug_tool/uart_vofa
     User/Drive/seggee_rtt
 
-    User/Drive/direct_motor/a4950_drive
-    User/Drive/direct_motor/servo_drive
-    User/Drive/direct_motor/mks_drive
+    # User/Drive/direct_motor/a4950_drive
+    # User/Drive/direct_motor/servo_drive
+    # User/Drive/direct_motor/mks_drive
 
-    User/Drive/grayscale
-    User/Drive/imu/wit_imu
+    # User/Drive/grayscale
+    # User/Drive/imu/wit_imu
     User/Drive/imu/hi12_imu
-    User/Drive/imu/mspm0_imu
+    # User/Drive/imu/mspm0_imu
 
-    User/Drive/key/adc_key
-    User/Drive/key/regular_key
+    # User/Drive/key/adc_key
+    # User/Drive/key/regular_key
 
-    User/Drive/lcd_oled/st7789_73x219_lcd
+    # User/Drive/lcd_oled/st7789_73x219_lcd
 
-    User/Drive/odometer/imu_odometer
-    User/Drive/odometer/fusion_odometer
-    User/Drive/odometer/ops_9
+    # User/Drive/odometer/imu_odometer
+    # User/Drive/odometer/fusion_odometer
+    # User/Drive/odometer/ops_9
 
     User/Drive/remote_control/crsf
     User/Drive/remote_control/remote_center
@@ -237,6 +238,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # User/APP/chassis
     # User/APP/steering_wheel
     User/APP/gimbal
+    # User/APP/imu_temp_ctrl
     User/APP/shoot
     User/APP/robot_decision
     User/APP/safe_daemon_process

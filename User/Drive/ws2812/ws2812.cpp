@@ -10,7 +10,7 @@
 #include "bsp_uart.h"
 #include "usart.h"
 
-#include "servo_drive.h"
+// #include "servo_drive.h"
 
 
 
@@ -33,8 +33,8 @@ const ws2812_color WS2812_COLOR_CYAN = {0, 255, 255};
 // 品红
 const ws2812_color WS2812_COLOR_MAGENTA = {255, 0, 255};
 
-servo_class servo1;
-servo_class servo2;
+// servo_class servo1;
+// servo_class servo2;
 
 /**
  * @brief WS2812单个灯珠初始化, 默认灯灭
