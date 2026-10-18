@@ -85,6 +85,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     User/Drive/algorithm/QuaternionEKF/QuaternionEKF.cpp
     User/Drive/algorithm/quaternion/quaternion.cpp
     User/Drive/algorithm/queue/queue.cpp
+    User/Drive/algorithm/reference_track_plan/reference_track_plan.cpp
     User/Drive/algorithm/slope_math/slope_math.cpp
     User/Drive/algorithm/pid/pid.cpp
     User/Drive/algorithm/pid_fuse/pid_fuse.cpp
@@ -181,6 +182,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     User/Drive/algorithm/QuaternionEKF
     User/Drive/algorithm/quaternion
     User/Drive/algorithm/queue
+    User/Drive/algorithm/reference_track_plan
     User/Drive/algorithm/slope_math
     User/Drive/algorithm/matrix
     User/Drive/algorithm/rls
