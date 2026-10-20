@@ -90,6 +90,16 @@ static float yaw_small_ff_coeff[3] = {
 #define BIG_YAW_RECENTER_FULL      0.52f   // 原 0.35: 满回中幅值提高, 让工作区间保持低回中
 #define BIG_YAW_RECENTER_MIN_FRAC  0.25f   // 原 0.32: 小角度回中基础比例降低, 释放小yaw高响应
 
+// 轨迹规划器参数配置
+reference_config_t yaw_small_track_plan_config = {
+    .max_rate_rad_s = 1.2f,           // 最大角速度，单位：rad/s
+    .max_accel_rad_s2 = 1.8f,        // 最大角加速度，单位：rad/s^2
+    .position_gain_per_s = 1.0f,      // 位置比例增益，单位：1/秒
+    .dt_min_s = 0.0009f,               // 最小采样时间，单位：秒
+    .dt_max_s = 0.005f,                // 最大采样时间，单位：秒
+    .wrap_angle = true                // 是否进行角度环绕处理(最短角规划)
+};
+
 /*------------------------------------云台电机can接收对象(注册到统一分发层）-------------------------------------------*/
 static void gimbal_pitch_motor_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
 {
@@ -220,6 +230,8 @@ void gimbal_init(void)
     SAFE_DAEMON_PROCESS_REGISTER("gimbal_pitch_motor", gimbal.pitch_motor, SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
     SAFE_DAEMON_PROCESS_REGISTER("gimbal_yaw_small_motor", gimbal.yaw_small_motor, SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
     SAFE_DAEMON_PROCESS_REGISTER("gimbal_yaw_big_motor", gimbal.yaw_big_motor, SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
+    // 12. 初始化云台参考轨迹规划器
+    reference_track_plan_init(&gimbal.yaw_small_track_plan, &yaw_small_track_plan_config, 0.0f);
 }
 
 /**
@@ -947,7 +959,8 @@ void gimbal_motor_calculate(void)
  */
 void gimbal_motor_parameter_test()
 {
-
+    wave_generator_calc(&yaw_wave);
+    reference_track_plan_update(&gimbal.yaw_small_track_plan, wave_generator_get_value(&yaw_wave), 0.001f, &gimbal.yaw_small_plan_output);
 }
 
 extern "C" void gimbal_task(void *argument)
@@ -979,7 +992,7 @@ extern "C" void gimbal_task(void *argument)
         gimbal_motor_calculate();
 
         // 云台测试任务
-        // gimbal_motor_parameter_test();
+        gimbal_motor_parameter_test();
 
         // 任务执行频率1000Hz
         osDelay(1);

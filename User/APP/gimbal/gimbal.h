@@ -18,6 +18,7 @@
 #include "general_filter.h"
 #include "wave_generator.h"
 #include "rls.h"
+#include "reference_track_plan.h"
 
 /**
  * @brief 云台模式枚举
@@ -172,6 +173,9 @@ typedef struct
 
     // 限位标定状态
     uint8_t  limit_offset_ready; // 1 = 小yaw限位零点偏移已标定并冻结
+/*------------------------------------轨迹规划测试---------------------------------------------*/
+    reference_track_plan_t yaw_small_track_plan; // 小yaw云台参考轨迹规划器
+    reference_value_t yaw_small_plan_output; // 小yaw云台参考轨迹规划器输出
 
 } gimbal_t;
 
