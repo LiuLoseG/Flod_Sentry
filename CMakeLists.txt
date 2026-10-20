@@ -86,6 +86,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     User/Drive/algorithm/quaternion/quaternion.cpp
     User/Drive/algorithm/queue/queue.cpp
     User/Drive/algorithm/reference_track_plan/reference_track_plan.cpp
+    User/Drive/algorithm/rls/rls_last/rls_last.cpp
     
     User/Drive/algorithm/slope_math/slope_math.cpp
     User/Drive/algorithm/pid/pid.cpp
@@ -118,6 +119,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
     User/Drive/sys_identificate/sys_phased_freq/sys_phased_freq.cpp
     User/Drive/sys_identificate/sys_sweep_freq/sys_sweep_freq.cpp
+    User/Drive/sys_identificate/gimbal_identification/gimbal_identification.cpp
 
     # User/Drive/grayscale/grayscale.cpp
     # User/Drive/imu/wit_imu/wit_imu.cpp
@@ -187,6 +189,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     User/Drive/algorithm/slope_math
     User/Drive/algorithm/matrix
     User/Drive/algorithm/rls/rls_new
+    User/Drive/algorithm/rls/rls_last
     User/Drive/algorithm/pid
     User/Drive/algorithm/pid_fuse
     User/Drive/algorithm/user_lib
@@ -231,6 +234,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
     User/Drive/sys_identificate/sys_phased_freq
     User/Drive/sys_identificate/sys_sweep_freq
+    User/Drive/sys_identificate/gimbal_identification
 
     User/Drive/wheel_system_solution
 

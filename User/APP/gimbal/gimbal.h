@@ -18,6 +18,7 @@
 #include "general_filter.h"
 #include "wave_generator.h"
 #include "rls.h"
+#include "gimbal_identification.h"
 #include "reference_track_plan.h"
 
 /**
@@ -142,6 +143,24 @@ typedef struct
 /*------------------------------------重力/摩擦力补偿量---------------------------------------------*/
     pitch_gravity_compensation_t pitch_gravity_comp; // pitch轴重力补偿量
     low_pass_filter_class pitch_gravity_comp_filter; // pitch轴重力补偿量低通滤波器
+    /* 旁路辨识器只读取反馈，不修改云台控制输出。 */
+    // gimbal_identification_t identification_pitch;
+    gimbal_identification_t identification_small_yaw;
+    // gimbal_identification_t identification_big_yaw;
+    // gimbal_identification_output_t identification_pitch_output;
+    gimbal_identification_output_t identification_small_yaw_output;
+    gimbal_identification_sample_t sample;
+    float feedforward_small_yaw_torque;
+    /* ---- 小yaw轨迹规划/前馈降噪状态 ---- */
+    float yaw_small_plan_target_lpf;                     // 规划器输入目标低通(抑制target量化台阶,使规划器可用更高增益)
+    float yaw_small_ff_acc_lpf;                          // 前馈加速度项低通(抑制二阶微分噪声)
+    float yaw_small_ff_torque_lpf;                       // 前馈力矩输出低通(最终兜底)
+    uint32_t yaw_small_plan_dt_cnt;                      // 规划器更新周期DWT计数缓存(用实测dt替代写死0.001)
+    // gimbal_identification_output_t identification_big_yaw_output;
+    /* 最近一次电机反馈帧到达本机的 DWT 时间戳，用于计算反馈年龄。 */
+    uint32_t pitch_feedback_timestamp_us;
+    uint32_t small_yaw_feedback_timestamp_us;
+    uint32_t big_yaw_feedback_timestamp_us;
     // Core::Control::Math::RLS<4> rls{1e-5f, 0.99999f};
     // Matrixf<4, 1> samples;
     // Matrixf<4, 1> params;
@@ -178,4 +197,3 @@ typedef struct
     reference_value_t yaw_small_plan_output; // 小yaw云台参考轨迹规划器输出
 
 } gimbal_t;
-

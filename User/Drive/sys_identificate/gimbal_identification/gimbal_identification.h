@@ -30,11 +30,11 @@ typedef enum {
 
 typedef struct {
     gimbal_identification_axis_t axis;
-    float window_s;
-    float max_gap_s;
-    float feedback_timeout_s;
-    float friction_velocity_rad_s; /* Fixed positive epsilon in tanh(rate/eps). */
-    uint32_t configuration_id;
+    float window_s;     // 单个积分窗口的持续时间，单位为秒， config->window_s
+    float max_gap_s;    // 相邻两个有效采样点之间允许的最大时间间隔，单位是秒
+    float feedback_timeout_s; // 反馈超时时间，单位是秒
+    float friction_velocity_rad_s; /* Fixed positive epsilon in tanh(rate/eps). */ // 摩擦速度阈值，单位为弧度每秒，用于计算摩擦力矩
+    uint32_t configuration_id;  // 仅用于调试，标识当前配置的唯一 ID
     /* Parameter order: J, B, Fc for yaw; J, B, Fc, A, C for pitch.
      * Required bounds: minimum[J] > 0; minimum[B/Fc] >= 0.
      * A/C are signed. Bounds and initial values belong to this configuration.

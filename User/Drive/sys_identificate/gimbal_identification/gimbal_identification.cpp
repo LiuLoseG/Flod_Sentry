@@ -155,25 +155,25 @@ void gimbal_identification_default_config(gimbal_identification_config_t *config
     if (config == NULL) return;
     memset(config, 0, sizeof(*config));
     config->axis = axis;
-    config->window_s = 0.05f;
-    config->max_gap_s = 0.02f;
-    config->feedback_timeout_s = 0.02f;
-    config->friction_velocity_rad_s = 0.08f;
+    config->window_s = 0.05f;                 // 50 ms：覆盖约 50 个 1 kHz 控制周期，降低单帧噪声
+    config->max_gap_s = 0.02f;                // 20 ms：允许少量任务抖动，但不跨越明显丢帧
+    config->feedback_timeout_s = 0.02f;       // 反馈超过 20 ms 未更新就丢弃，避免错位回归
+    config->friction_velocity_rad_s = 0.08f;  // tanh 平滑 sign(omega)，约覆盖低速摩擦过渡区
     count = axis == GIMBAL_IDENTIFICATION_YAW ? 3u : 5u;
     rls_last_default_config(&config->rls, count);
-    config->rls.initial[0] = 0.01f;
-    config->rls.initial[1] = 0.005f;
-    config->rls.initial[2] = 0.02f;
-    config->rls.minimum[0] = 0.000001f;
+    config->rls.initial[0] = 0.01f;          // J 起步量：仅用于 RLS 初值，不是实测标定值
+    config->rls.initial[1] = 0.005f;         // B 起步量：保持与小型云台输出轴量级同阶
+    config->rls.initial[2] = 0.02f;          // Fc 起步量：给低速摩擦项一个非零可学习初值
+    config->rls.minimum[0] = 0.000001f;      // J 必须为正，禁止 RLS 退化成非物理负惯量
     config->rls.minimum[1] = 0.0f;
     config->rls.minimum[2] = 0.0f;
-    config->rls.maximum[0] = 1.0f;
-    config->rls.maximum[1] = 5.0f;
-    config->rls.maximum[2] = 5.0f;
-    config->rls.feature_scale[0] = 10.0f;
+    config->rls.maximum[0] = 1.0f;           // 覆盖常见云台等效惯量，超出需按实测机构放宽
+    config->rls.maximum[1] = 5.0f;           // B 上界避免噪声把阻尼推向异常大值
+    config->rls.maximum[2] = 5.0f;           // Fc 上界与最大反馈扭矩同量级
+    config->rls.feature_scale[0] = 10.0f;    // 角加速度通常最大，缩放改善 J 列条件数
     if (axis == GIMBAL_IDENTIFICATION_PITCH) {
-        config->rls.initial[3] = 0.0f;
-        config->rls.initial[4] = 0.1f;
+        config->rls.initial[3] = 0.0f;       // sin 重力项无先验方向，使用零中心
+        config->rls.initial[4] = 0.1f;       // cos 重力项提供轻微非零起点，避免初期完全失激励
         config->rls.minimum[3] = -5.0f;
         config->rls.minimum[4] = -5.0f;
         config->rls.maximum[3] = 5.0f;
