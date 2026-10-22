@@ -21,6 +21,8 @@
 #include "gimbal_identification.h"
 #include "reference_track_plan.h"
 
+#include "kalman_new.h"
+
 /**
  * @brief 云台模式枚举
  */
@@ -195,5 +197,9 @@ typedef struct
 /*------------------------------------轨迹规划测试---------------------------------------------*/
     reference_track_plan_t yaw_small_track_plan; // 小yaw云台参考轨迹规划器
     reference_value_t yaw_small_plan_output; // 小yaw云台参考轨迹规划器输出
+
+    class_filter_kalman<> filter_yaw_omega; // 小yaw云台卡尔曼滤波器
+    float filter_angle;
+    float filter_omega;
 
 } gimbal_t;

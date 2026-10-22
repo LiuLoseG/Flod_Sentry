@@ -107,6 +107,14 @@ reference_config_t yaw_small_track_plan_config = {
     .wrap_angle = true                // 是否进行角度环绕处理(最短角规划)
 };
 
+// 相关矩阵
+class_matrix_f32<2, 2> A;
+class_matrix_f32<2, 1> B;
+class_matrix_f32<2, 2> H;
+class_matrix_f32<2, 2> Q;
+class_matrix_f32<2, 2> R;
+class_matrix_f32<2, 2> P;
+
 gimbal_identification_config_t identification_small_yaw_config;
 
 /*------------------------------------云台电机can接收对象(注册到统一分发层）-------------------------------------------*/
@@ -421,6 +429,36 @@ void gimbal_init(void)
     SAFE_DAEMON_PROCESS_REGISTER("gimbal_yaw_big_motor", gimbal.yaw_big_motor, SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
     // 12. 初始化云台参考轨迹规划器
     reference_track_plan_init(&gimbal.yaw_small_track_plan, &yaw_small_track_plan_config, 0.0f);
+
+    // 卡尔曼滤波器
+    A[0][0] = 1.0f;
+    A[0][1] = 0.001f;
+    A[1][0] = 0.0f;
+    A[1][1] = 1.0f;
+
+    B[0][0] = 0.0f;
+    B[1][0] = 0.0f;
+
+    H[0][0] = 1.0f;
+    H[0][1] = 0.0f;
+    H[1][0] = 0.0f;
+    H[1][1] = 1.0f;
+
+    Q[0][0] = 0.1f;
+    Q[0][1] = 0.0f;
+    Q[1][0] = 0.0f;
+    Q[1][1] = 0.008f;
+
+    R[0][0] = 0.0001f;
+    R[0][1] = 0.0f;
+    R[1][0] = 0.0f;
+    R[1][1] = 0.1f;
+
+    P[0][0] = 0.001f;
+    P[0][1] = 0.0f;
+    P[1][0] = 0.0f;
+    P[1][1] = 0.8f;
+    gimbal.filter_yaw_omega.init(A, B, H, Q, R, P);
 }
 
 /**
@@ -1222,6 +1260,13 @@ void gimbal_motor_parameter_test()
 
         gimbal.feedforward_small_yaw_torque = gimbal.yaw_small_ff_torque_lpf;
     }
+
+    gimbal.filter_yaw_omega.vector_z[0][0] = gimbal.yaw_small_motor.get_now_angle();
+    gimbal.filter_yaw_omega.vector_z[1][0] = gimbal.yaw_small_motor.get_now_omega();
+    gimbal.filter_yaw_omega.tim_predict_periodelapsedcallback();
+    gimbal.filter_yaw_omega.tim_update_periodelapsedcallback();
+    gimbal.filter_angle = gimbal.filter_yaw_omega.vector_x[0][0];
+    gimbal.filter_omega = gimbal.filter_yaw_omega.vector_x[1][0];
 }
 
 extern "C" void gimbal_task(void *argument)
