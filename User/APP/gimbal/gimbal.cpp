@@ -62,9 +62,9 @@ static const float pitch_ff_static_torque[PITCH_FF_STATIC_NUM] = {
 };
 
 static float yaw_small_ff_coeff[3] = {
-    +0.098415f,  // c[0] = K (刚度)      Nm/rad
-    +0.170000f,  // c[1] = B (阻尼)      Nm/(rad/s)  [v3: 0.11→0.17, 实测辨识 0.171±0.009]
-    +0.000000f   // c[2] = J (等效惯量)  Nm/(rad/s²)
+    +0.098415f,  // c[0] = K (刚度)       Nm/rad
+    +0.170000f,  // c[1] = B (阻尼)       Nm/(rad/s) 
+    +0.000000f   // c[2] = J (等效惯量)   Nm/(rad/s²)
 };
 
 #define GIMBAL_IDENTIFICATION_CONFIGURATION_PITCH       1u
