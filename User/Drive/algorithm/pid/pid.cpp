@@ -36,8 +36,11 @@
  * @param __i_variable_speed_b 变速积分误差阈值B
  * @param __i_separate_threshold 积分分离误差阈值
  * @param __d_first 是否开启微分先行
+ * @param __anti_windup 抗积分饱和方案
+ * @param __anti_windup_gain 反算增益Kb, 单位1/s, 仅BACK_CALC使用
+ * @param __anti_windup_out_max 抗饱和判定用输出上限, 0为沿用out_max
  */
-void pid_class::init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f, const float &__i_out_max, const float &__out_max, const float &__d_t, const float &__dead_zone, const float &__i_variable_speed_a, const float &__i_variable_speed_b, const float &__i_separate_threshold, const pid_d_first_e &__d_first)
+void pid_class::init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f, const float &__i_out_max, const float &__out_max, const float &__d_t, const float &__dead_zone, const float &__i_variable_speed_a, const float &__i_variable_speed_b, const float &__i_separate_threshold, const pid_d_first_e &__d_first, const pid_anti_windup_e &__anti_windup, const float &__anti_windup_gain, const float &__anti_windup_out_max)
 {
     k_p = __k_p;
     k_i = __k_i;
@@ -51,6 +54,9 @@ void pid_class::init(const float &__k_p, const float &__k_i, const float &__k_d,
     i_variable_speed_b = __i_variable_speed_b;
     i_separate_threshold = __i_separate_threshold;
     d_first = __d_first;
+    anti_windup = __anti_windup;
+    anti_windup_gain = __anti_windup_gain;
+    anti_windup_out_max = __anti_windup_out_max;
 }
 
 /**
@@ -59,6 +65,9 @@ void pid_class::init(const float &__k_p, const float &__k_i, const float &__k_d,
  */
 void pid_class::pid_calculate_callback()
 {
+    // 本步实际累加进积分的增量, 供抗积分饱和回退
+    float integ_delta = 0.0f;
+
     term.error = target - now;  // 当前误差
     term.abs_error = basic_math_abs(term.error);  // 计算绝对值误差
 
@@ -111,8 +120,8 @@ void pid_class::pid_calculate_callback()
         }
     }
     
-    // 积分限幅
-    if (i_out_max != 0.0f)
+    // 积分限幅 (k_i==0 时积分项恒为0, 不做除法, 避免除零)
+    if (i_out_max != 0.0f && k_i != 0.0f)
     {
         basic_math_constrain(&integral_error, -i_out_max / k_i, i_out_max / k_i);
     }
@@ -120,7 +129,8 @@ void pid_class::pid_calculate_callback()
     if (i_separate_threshold == 0.0f)
     {
         // 没有积分分离
-        integral_error += term.speed_ratio * d_t * term.error;
+        integ_delta = term.speed_ratio * d_t * term.error;
+        integral_error += integ_delta;
         term.i_out = k_i * integral_error;
     }
     else
@@ -129,13 +139,15 @@ void pid_class::pid_calculate_callback()
         if (term.abs_error < i_separate_threshold)
         {
             // 不在积分分离区间上
-            integral_error += term.speed_ratio * d_t * term.error;
+            integ_delta = term.speed_ratio * d_t * term.error;
+            integral_error += integ_delta;
             term.i_out = k_i * integral_error;
         }
         else
         {
             // 在积分分离区间上
             integral_error = 0.0f;
+            integ_delta = 0.0f;
             term.i_out = 0.0f;
         }
     }
@@ -165,13 +177,42 @@ void pid_class::pid_calculate_callback()
     term.f_out = k_f * (target - pre_target);
 
     // 计算输出
+    out_unsaturated = term.p_out + term.i_out + term.d_out + term.f_out;
 
-    out = term.p_out + term.i_out + term.d_out + term.f_out;
+    // 输出限幅 (抗饱和优先使用 anti_windup_out_max, 便于与下游真实限幅对齐)
+    float out_limit = (anti_windup_out_max != 0.0f) ? anti_windup_out_max : out_max;
+    out = out_unsaturated;
 
-    // 输出限幅
-    if (out_max != 0.0f)
+    // 这一帧 PID 的输出是否被限幅器削掉
+    bool saturated = false;
+    if (out_limit != 0.0f)
     {
-        basic_math_constrain(&out, -out_max, out_max);
+        out = basic_math_constrain(out_unsaturated, -out_limit, out_limit);
+
+        // 检测输出是否被限幅器削掉
+        saturated = (out != out_unsaturated);
+    }
+
+    // 抗积分饱和: 仅在输出被限幅且 k_i 非零时动作
+    if (saturated && anti_windup != PID_Anti_Windup_DISABLE && k_i != 0.0f)
+    {
+        if (anti_windup == PID_Anti_Windup_CLAMP)
+        {
+            // 如果这一帧输出被限幅了，而且误差方向还在往限幅的方向推，那就把这一帧刚加进积分的量撤销掉
+            if (term.error * (out_unsaturated - out) > 0.0f)
+            {
+                integral_error -= integ_delta;
+                term.i_out = k_i * integral_error;
+            }
+        }
+
+        // 输出被削掉多少，就把积分按比例往回拉多少
+        else if (anti_windup == PID_Anti_Windup_BACK_CALC)
+        {
+            // 反算: integral += (Kb/k_i) * (u_sat - u_unsat) * d_t
+            integral_error += (anti_windup_gain / k_i) * (out - out_unsaturated) * d_t;
+            term.i_out = k_i * integral_error;
+        }
     }
 
     // 善后工作

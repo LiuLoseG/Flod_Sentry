@@ -29,6 +29,17 @@ typedef enum
 } pid_d_first_e;
 
 /**
+ * @brief 抗积分饱和(anti-windup)方案
+ * @note 均在输出被限幅时才生效; 默认 DISABLE, 行为与原逻辑逐位一致
+ */
+typedef enum
+{
+    PID_Anti_Windup_DISABLE = 0,    // 关闭
+    PID_Anti_Windup_CLAMP,          // 条件积分: 饱和且误差仍朝限幅方向时冻结本步积分
+    PID_Anti_Windup_BACK_CALC,      // 反算: 按输出超出量回退积分
+} pid_anti_windup_e;
+
+/**
  * @brief PID各项输出结构体
  */
 typedef struct
@@ -50,11 +61,13 @@ typedef struct
 class pid_class
 {
 public:
-    void init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f = 0.0f, const float &__i_out_max = 0.0f, const float &__out_max = 0.0f, const float &__d_t = 0.001f, const float &__dead_zone = 0.0f, const float &__i_variable_speed_a = 0.0f, const float &__i_variable_speed_b = 0.0f, const float &__i_separate_threshold = 0.0f, const pid_d_first_e &__d_first = PID_D_First_DISABLE);
+    void init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f = 0.0f, const float &__i_out_max = 0.0f, const float &__out_max = 0.0f, const float &__d_t = 0.001f, const float &__dead_zone = 0.0f, const float &__i_variable_speed_a = 0.0f, const float &__i_variable_speed_b = 0.0f, const float &__i_separate_threshold = 0.0f, const pid_d_first_e &__d_first = PID_D_First_DISABLE, const pid_anti_windup_e &__anti_windup = PID_Anti_Windup_DISABLE, const float &__anti_windup_gain = 10.0f, const float &__anti_windup_out_max = 0.0f);
 
     inline float get_integral_error() const;
 
     inline float get_out() const;
+
+    inline float get_out_unsaturated() const;
 
     inline void set_k_p(const float &__k_p);
 
@@ -81,6 +94,12 @@ public:
     inline void set_now(const float &__now);
 
     inline void set_integral_error(const float &__integral_error);
+
+    inline void set_anti_windup(const pid_anti_windup_e &__anti_windup);
+
+    inline void set_anti_windup_gain(const float &__anti_windup_gain);
+
+    inline void set_anti_windup_out_max(const float &__anti_windup_out_max);
 
     void pid_calculate_callback();
 
@@ -139,6 +158,15 @@ protected:
     float d_filter_n = 10.0f;  // 微分滤波器截止频率, Hz
     float d_filter_out = 0.0f; // 微分滤波器输出
 
+    // 抗积分饱和
+    pid_anti_windup_e anti_windup = PID_Anti_Windup_DISABLE;
+    // 反算增益Kb, 单位1/s
+    float anti_windup_gain = 10.0f;      
+    // 抗饱和判定用输出上限, 0=沿用out_max, 单位同out
+    float anti_windup_out_max = 0.0f;    
+    // 限幅前的原始输出
+    float out_unsaturated = 0.0f;        
+
     // 目标值
     float target = 0.0f;
     // 当前值
@@ -175,6 +203,16 @@ inline float pid_class::get_integral_error() const
 inline float pid_class::get_out() const
 {
     return (out);
+}
+
+/**
+ * @brief 获取限幅前的原始输出(AW调试观察用)
+ *
+ * @return float 限幅前输出
+ */
+inline float pid_class::get_out_unsaturated() const
+{
+    return (out_unsaturated);
 }
 
 /**
@@ -305,6 +343,36 @@ inline void pid_class::set_now(const float &__now)
 inline void pid_class::set_integral_error(const float &__set_integral_error)
 {
     integral_error = __set_integral_error;
+}
+
+/**
+ * @brief 设定抗积分饱和方案
+ *
+ * @param __anti_windup 抗积分饱和方案
+ */
+inline void pid_class::set_anti_windup(const pid_anti_windup_e &__anti_windup)
+{
+    anti_windup = __anti_windup;
+}
+
+/**
+ * @brief 设定反算增益Kb, 单位1/s, 仅PID_Anti_Windup_BACK_CALC使用
+ *
+ * @param __anti_windup_gain 反算增益Kb
+ */
+inline void pid_class::set_anti_windup_gain(const float &__anti_windup_gain)
+{
+    anti_windup_gain = __anti_windup_gain;
+}
+
+/**
+ * @brief 设定抗饱和判定用输出上限, 0为沿用out_max
+ *
+ * @param __anti_windup_out_max 抗饱和判定用输出上限
+ */
+inline void pid_class::set_anti_windup_out_max(const float &__anti_windup_out_max)
+{
+    anti_windup_out_max = __anti_windup_out_max;
 }
 
 /************************ COPYRIGHT(C) USTC-ROBOWALKER **************************/
