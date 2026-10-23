@@ -10,6 +10,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /**
  * @brief 轨迹规划目标结构体
@@ -32,6 +33,10 @@ typedef struct {
     float dt_min_s;                 // 最小采样时间，单位：秒
     float dt_max_s;                 // 最大采样时间，单位：秒
     bool wrap_angle;                // 是否进行角度环绕处理(最短角规划)
+
+    bool  accel_sat_guard_enable;   // true: 检测到加速度/加加速度被限幅时临时降低位置增益
+    float sat_gain_scale;           // 饱和时位置增益缩放系数, 0<scale<1 (建议 0.4~0.6)
+    float sat_release_per_s;        // 饱和解除后增益恢复速率, 单位 1/s (建议 1~3)
 } reference_config_t;
 
 /**
@@ -42,6 +47,10 @@ typedef struct
     reference_value_t value;            // 目标轨迹规划点
     reference_config_t config;          // 轨迹规划参数配置
     bool is_initialized;                // 是否已初始化
+
+    float gain_scale;                   // 当前位置增益缩放, 1.0=正常, 饱和时 -> sat_gain_scale
+    bool accel_saturated;               // 上一帧 accel/jerk 是否被限幅 (供上层 P4 监督读取)
+    uint32_t sat_frames;                // 连续饱和帧数 (调试/观察用)
 } reference_track_plan_t;
 
 // 初始化参考轨迹规划
