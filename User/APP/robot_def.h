@@ -50,7 +50,7 @@
 #define YAW_SMALL_MAX_OFFSET 0.54899019f           
 
 // 小yaw电机单次角度增量系数 (单位: rad/单位输入)
-#define YAW_SMALL_ANGLE_INCREMENT_RATION    0.0020f 
+#define YAW_SMALL_ANGLE_INCREMENT_RATION    0.0035f 
 // pitch电机单次角度增量系数 (单位: rad/单位输入)       
 #define PITCH_ANGLE_INCREMENT_RATION        0.0020f        
 

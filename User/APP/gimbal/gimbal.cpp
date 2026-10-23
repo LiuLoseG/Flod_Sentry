@@ -99,9 +99,10 @@ static float yaw_small_ff_coeff[3] = {
 
 // 轨迹规划器参数配置
 reference_config_t yaw_small_track_plan_config = {
-    .max_rate_rad_s = 4.0f,           // 最大角速度，单位：rad/s
-    .max_accel_rad_s2 = 32.0f,        // 最大角加速度，单位：rad/s^2 (留裕量, 避免规划器长期饱和)
-    .position_gain_per_s = 15.0f,      // 位置比例增益，单位：1/秒 (tau≈125ms; 输入已预滤波, 可比6更高)
+    .max_rate_rad_s = 5.0f,           // 最大角速度，单位：rad/s
+    .max_accel_rad_s2 = 35.0f,        // 最大角加速度，单位：rad/s^2
+    .max_jerk_rad_s3 = 8000.0f,       // 最大角加加速度，单位：rad/s^3 (≈透明, 仅挡异常尖峰; 太小会削掉正常拐点)
+    .position_gain_per_s = 30.0f,      // 位置比例增益，单位：1/秒 (P滞后≈v/Kp)
     .dt_min_s = 0.0009f,               // 最小采样时间，单位：秒
     .dt_max_s = 0.005f,                // 最大采样时间，单位：秒
     .wrap_angle = true                // 是否进行角度环绕处理(最短角规划)
@@ -162,9 +163,9 @@ static void gimbal_identification_init_small_yaw(gimbal_identification_config_t 
     count = axis == GIMBAL_IDENTIFICATION_YAW ? 3u : 5u;
     rls_last_default_config(&config->rls, count);
 
-    config->rls.initial[0] = 0.0081168f;          // J 起步量：仅用于 RLS 初值，不是实测标定值
-    config->rls.initial[1] = 0.0164834075f;         // B 起步量：保持与小型云台输出轴量级同阶
-    config->rls.initial[2] = 0.0453760996f;          // Fc 起步量：给低速摩擦项一个非零可学习初值
+    config->rls.initial[0] = 0.0102536101f;          // J 起步量：仅用于 RLS 初值，不是实测标定值
+    config->rls.initial[1] = 0.02668944f;         // B 起步量：保持与小型云台输出轴量级同阶
+    config->rls.initial[2] = 0.0289114676f;          // Fc 起步量：给低速摩擦项一个非零可学习初值
 
     config->rls.minimum[0] = 0.000001f;      // J 必须为正，禁止 RLS 退化成非物理负惯量
     config->rls.minimum[1] = 0.0f;
@@ -1233,9 +1234,9 @@ void gimbal_motor_parameter_test()
      *    - accel 是二阶微分, 在1kHz下对量化极敏感, 必须低通
      */
     {
-        const float J_ff  = 0.00811678451f;    // 等效惯量 Nm/(rad/s^2)
-        const float B_ff  = 0.0164834075f;    // 阻尼 Nm/(rad/s)
-        const float Fc_ff = 0.0453760996f;    // 库仑摩擦 Nm
+        const float J_ff  = 0.0102536101f;    // 等效惯量 Nm/(rad/s^2)
+        const float B_ff  = 0.02668944f;    // 阻尼 Nm/(rad/s)
+        const float Fc_ff = 0.0289114676f;    // 库仑摩擦 Nm
         const float EPS   = 0.08f;      // 摩擦速度过渡尺度 rad/s
 
         const float rate = gimbal.yaw_small_plan_output.rate_rad_s;

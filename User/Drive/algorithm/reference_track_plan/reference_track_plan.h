@@ -27,6 +27,7 @@ typedef struct
 typedef struct {
     float max_rate_rad_s;           // 最大角速度，单位：rad/s
     float max_accel_rad_s2;         // 最大角加速度，单位：rad/s^2
+    float max_jerk_rad_s3;          // 最大角加加速度，单位：rad/s^3
     float position_gain_per_s;      // 位置比例增益，单位：1/秒
     float dt_min_s;                 // 最小采样时间，单位：秒
     float dt_max_s;                 // 最大采样时间，单位：秒

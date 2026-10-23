@@ -49,7 +49,7 @@ static float angle_error(float angle, float target, bool wrap)
 static bool reference_config_valid(const reference_config_t *c)
 {
     return c != NULL && isfinite(c->max_rate_rad_s) && c->max_rate_rad_s > 0.0f &&
-    isfinite(c->max_accel_rad_s2) && c->max_accel_rad_s2 > 0.0f &&
+    isfinite(c->max_accel_rad_s2) && c->max_accel_rad_s2 > 0.0f && isfinite(c->max_jerk_rad_s3) &&
     isfinite(c->position_gain_per_s) && c->position_gain_per_s > 0.0f &&
     isfinite(c->dt_min_s) && c->dt_min_s > 0.0f &&
     isfinite(c->dt_max_s) && c->dt_max_s >= c->dt_min_s;
@@ -159,8 +159,7 @@ bool reference_track_plan_update(reference_track_plan_t *plan, float target_angl
 
     // 当前目标角度与参考轨迹规划点的角度误差
     error = angle_error(target_angle_rad, plan->value.angle_rad, c->wrap_angle);
-
-    // 根据角度误差计算出角速度(拟定的角速度)
+    // 根据角度误差计算出角速度(拟定的角速度)   
     desired_rate = c->position_gain_per_s * error;
 
     // 防止非正常的角速度值(无理数)
@@ -175,6 +174,15 @@ bool reference_track_plan_update(reference_track_plan_t *plan, float target_angl
     desired_accel = (desired_rate - plan->value.rate_rad_s) / dt_s;
     if (!isfinite(desired_accel)) {
         return false;
+    }
+
+    if(c->max_jerk_rad_s3 > 0.0f)
+    {
+        // 限制角加速度的变化率(角加加速度)在最大角加加速度范围内
+        float max_delta_accel = c->max_jerk_rad_s3 * dt_s;
+        desired_accel = basic_math_constrain(desired_accel, 
+                                             plan->value.accel_rad_s2 - max_delta_accel, 
+                                             plan->value.accel_rad_s2 + max_delta_accel);
     }
 
     // 限制角加速度在最大角加速度范围内
