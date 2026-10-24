@@ -1,6 +1,8 @@
 #include "wheel_system_solution.h"
 #include <cmath>
+#include <cstdint>
 #include "arm_math.h"
+#include "dsp/fast_math_functions.h"
 #include "user_lib.h"
 
 
@@ -143,6 +145,11 @@ void steer_wheel_inverse_kinematics(wheel_motor_status_t *wheel_status, float vx
         return; // wheel_status 为空指针，直接返回
     }
 
+    if(!isfinite(vx_set) || !isfinite(vy_set) || !isfinite(vw_set) || !isfinite(control_mode))
+    {
+        return; // 有输入值不是有限数，直接返回
+    }
+
     // 舵轮逆运动学解算函数实现
     // wheel_status->wheel_speed[0] = sqrtf(square(vx_set - SQRT_2_2 * vw_set * STEER_WHEEL_DISTANCE_R) + square(vy_set + SQRT_2_2 * vw_set * STEER_WHEEL_DISTANCE_R)) / WHEEL_RADIUS_S; // 轮子1速度计算
     // wheel_status->wheel_speed[1] = sqrtf(square(vx_set - SQRT_2_2 * vw_set * STEER_WHEEL_DISTANCE_R) + square(vy_set - SQRT_2_2 * vw_set * STEER_WHEEL_DISTANCE_R)) / WHEEL_RADIUS_S; // 轮子2速度计算
@@ -155,33 +162,19 @@ void steer_wheel_inverse_kinematics(wheel_motor_status_t *wheel_status, float vx
     // wheel_status->wheel_angle[3] = atan2f(vx_set + SQRT_2_2 * vw_set * STEER_WHEEL_DISTANCE_R, vy_set + SQRT_2_2 * vw_set * STEER_WHEEL_DISTANCE_R); // 轮子4转向角计算
 
     // 静止判定(两种优化配置共用)
-    const bool cmd_zero = (fabsf(vx_set) <= MIN_LIMIT) &&
-                          (fabsf(vy_set) <= MIN_LIMIT) &&
-                          (fabsf(vw_set) <= MIN_LIMIT);
+    const bool cmd_zero = (fabsf(vx_set) <= MIN_LIMIT) && (fabsf(vy_set) <= MIN_LIMIT) && (fabsf(vw_set) <= MIN_LIMIT);
 
 #if COSINE_OPTIMIZE_ENABLE == 1 // 启动余弦优化
-    float vx_plus, vx_minus, vy_plus, vy_minus;
-    float rotational_speed;
+    
+    // 舵轮逆运动学解算(直接解算目标角度和速度)
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        const float vel_x = vx_set - vw_set * arm_sin_f32(Wheel_Azimuth[i]) * Wheel_To_Core_Distance[i];
+        const float vel_y = vy_set + vw_set * arm_cos_f32(Wheel_Azimuth[i]) * Wheel_To_Core_Distance[i];
 
-    // 底盘整体旋转控制速度投影到每个轮组的线速度分量
-    rotational_speed = vw_set * STEER_WHEEL_DISTANCE_R * SQRT_2_2;
-
-    vx_plus  = vx_set + rotational_speed;
-    vx_minus = vx_set - rotational_speed;
-    vy_plus  = vy_set + rotational_speed;
-    vy_minus = vy_set - rotational_speed;
-
-    // 求解解算后的轮向电机角速度
-    wheel_status->solution_speed[0] = sqrtf(vx_minus * vx_minus + vy_plus * vy_plus) / WHEEL_RADIUS_S;  // 轮组1速度计算
-    wheel_status->solution_speed[1] = sqrtf(vx_minus * vx_minus + vy_minus * vy_minus) / WHEEL_RADIUS_S; // 轮组2速度计算
-    wheel_status->solution_speed[2] = sqrtf(vx_plus * vx_plus + vy_minus * vy_minus) / WHEEL_RADIUS_S;  // 轮组3速度计算
-    wheel_status->solution_speed[3] = sqrtf(vx_plus * vx_plus + vy_plus * vy_plus) / WHEEL_RADIUS_S;  // 轮组4速度计算
-
-    // 求解解算后的轮向电机角度
-    wheel_status->solution_angle[0] = atan2f(vx_minus, vy_plus);  // 轮组1转向角计算
-    wheel_status->solution_angle[1] = atan2f(vx_minus, vy_minus); // 轮组2转向角计算
-    wheel_status->solution_angle[2] = atan2f(vx_plus, vy_minus);  // 轮组3转向角计算
-    wheel_status->solution_angle[3] = atan2f(vx_plus, vy_plus);  // 轮组4转向角计算
+        wheel_status->solution_speed[i] = sqrtf(vel_x * vel_x + vel_y * vel_y) / STEER_WHEEL_RADIUS; // 轮向电机目标角速度
+        wheel_status->solution_angle[i] = atan2f(vel_y, vel_x);                                  // 舵向目标角, 0 对应 +X
+    }
 
     // 舵向电机余弦优化计算
     for(uint8_t i = 0; i < 4; i++)
@@ -191,7 +184,7 @@ void steer_wheel_inverse_kinematics(wheel_motor_status_t *wheel_status, float vx
         float optimize_direction = 1.0f;
         const float target = (cmd_zero || wheel_status->solution_speed[i] <= 0.0f)
                              ? wheel_status->now_angle[i]
-                             : steer_select_nearest_target(wheel_status->solution_angle[i] + Enc_Zero_Angle[i],wheel_status->now_angle[i], &optimize_direction);
+                             : steer_select_nearest_target(wheel_status->solution_angle[i] + Enc_Zero_Angle[i], wheel_status->now_angle[i], &optimize_direction);
 
         // 目标已经选择为最近的等效方向，再对位置目标做斜坡限制。
         const float planned_target = steer_limit_target_step(target, wheel_status->now_angle[i], wheel_status->optimize_angle[i]);
@@ -217,27 +210,26 @@ void steer_wheel_inverse_kinematics(wheel_motor_status_t *wheel_status, float vx
     }
 
 #else // 关闭余弦优化：不做 cos³ 削减，仅做就近转位
-    const float wheel_projection = STEER_WHEEL_DISTANCE_R * SQRT_2_2; // 轮组投影坐标 a
-
     for (uint8_t i = 0; i < 4; i++)
     {
-        // 各轮组投影坐标符号: FL(+1,+1) RL(-1,+1) RR(-1,-1) FR(+1,-1)
-        const float sign_x = (i == 0 || i == 3) ? 1.0f : -1.0f; // r_x / a
-        const float sign_y = (i < 2) ? 1.0f : -1.0f;            // r_y / a
+        const float r_arm = Wheel_To_Core_Distance[i];               // 该轮心到中心的距离(力臂), m
+        if (!isfinite(r_arm))
+        {
+            wheel_status->solution_speed[i] = 0.0f;
+            continue;
+        }
 
-        // 解算到每个轮组的具体线速度 (vx - ω·r_y, vy + ω·r_x)
-        const float tmp_velocity_x = vx_set - vw_set * wheel_projection * sign_y;
-        const float tmp_velocity_y = vy_set + vw_set * wheel_projection * sign_x;
+        const float vel_x = vx_set - vw_set * r_arm * arm_sin_f32(Wheel_Azimuth[i]);
+        const float vel_y = vy_set + vw_set * r_arm * arm_cos_f32(Wheel_Azimuth[i]);
 
-        const float tmp_velocity_modulus = sqrtf(tmp_velocity_x * tmp_velocity_x +
-                                                 tmp_velocity_y * tmp_velocity_y);
+        const float vel_modulus = sqrtf(vel_x * vel_x + vel_y * vel_y);
 
-        wheel_status->solution_speed[i] = tmp_velocity_modulus / WHEEL_RADIUS_S;
+        wheel_status->solution_speed[i] = vel_modulus / STEER_WHEEL_RADIUS;
 
-        // 角度约定与余弦优化分支保持一致(0 对应 +Y)；无速度时保持当前角
-        wheel_status->solution_angle[i] = (tmp_velocity_modulus <= 0.0f)
+        // 角度约定与余弦优化分支保持一致(0 对应 +X)；无速度时保持当前角
+        wheel_status->solution_angle[i] = (vel_modulus <= 0.0f)
                                         ? wheel_status->now_angle[i]
-                                        : atan2f(tmp_velocity_x, tmp_velocity_y);
+                                        : atan2f(vel_y, vel_x);
     }
 
     // 舵向电机目标规划：只展开到当前多圈角度附近，不通过加减π改变舵向目标。
@@ -268,7 +260,7 @@ void steer_wheel_inverse_kinematics(wheel_motor_status_t *wheel_status, float vx
             wheel_status->optimize_angle[i]);
         wheel_status->optimize_direction[i] = optimize_direction;
         wheel_status->error_angle[i]        =
-            wheel_status->optimize_angle[i] - wheel_status->now_angle[i];
+        wheel_status->optimize_angle[i] - wheel_status->now_angle[i];
         wheel_status->cosine_optimize[i]    = 1.0f; // 关闭余弦优化，不削减轮速
     }
 #endif
@@ -318,69 +310,37 @@ void steer_wheel_inverse_kinematics(wheel_motor_status_t *wheel_status, float vx
  * @param robot_speed 机器人实际速度（输出：vx/vy 单位m/s，vw 单位rad/s）
  * @param wheel_angle 四个舵向电机的转向角反馈值，单位rad
  * @param wheel_speed 四个轮向电机的角速度反馈值，单位rad/s
- * @note  轮组布局: [0]=FL前左, [1]=RL后左, [2]=RR后右, [3]=FR前右
- *        轮子投影坐标: FL(+a,+a) RL(-a,+a) RR(-a,-a) FR(+a,-a), a = STEER_WHEEL_DISTANCE_R * SQRT_2_2
- *        单个轮子线速度在底盘系的分量为 (v·sinθ, v·cosθ)，与逆解 atan2f(vx, vy) 的角度约定一致
  */
 void steer_wheel_speed_soluction(wheel_robot_speed_t *robot_speed, float *wheel_angle, float *wheel_speed)
 {
-    const float projection = STEER_WHEEL_DISTANCE_R * SQRT_2_2; // 轮子投影点到几何中心的X/Y坐标，单位m
+    if (robot_speed == nullptr || wheel_angle == nullptr || wheel_speed == nullptr) return;
+
     float vx_sum = 0.0f, vy_sum = 0.0f, vw_sum = 0.0f;
 
     for (uint8_t i = 0; i < 4; i++)
     {
-        const float wheel_linear_speed = wheel_speed[i] * WHEEL_RADIUS_S; // 轮向电机角速度 → 轮子线速度，单位m/s
-        const float sin_angle = arm_sin_f32(wheel_angle[i]);              // 轮子线速度在底盘X轴的分量系数
-        const float cos_angle = arm_cos_f32(wheel_angle[i]);              // 轮子线速度在底盘Y轴的分量系数
+        const float wheel_linear_speed = wheel_speed[i] * STEER_WHEEL_RADIUS; // 轮向电机角速度 → 轮子线速度, 单位m/s
 
-        vx_sum += wheel_linear_speed * sin_angle; // 累加各轮线速度的X轴分量
-        vy_sum += wheel_linear_speed * cos_angle; // 累加各轮线速度的Y轴分量
+        // 反向扣除零位,同时 now_angle 为多圈连续角, 归一化到 [-π,π) 防止精度退化.
+        const float steer = basic_math_modulus_normalization(wheel_angle[i] - Enc_Zero_Angle[i], 2.0f * PI);
 
-        // 依据 vx - vw·r_y = v·sinθ, 以轮子投影Y坐标符号 (+a,+a,-a,-a) 为权消去vx，解出角速度
-        vw_sum += (i < 2 ? 1.0f : -1.0f) * wheel_linear_speed * sin_angle;
+        const float sin_angle = arm_sin_f32(steer);   // sinθ
+        const float cos_angle = arm_cos_f32(steer);   // cosθ
+
+        vx_sum += wheel_linear_speed * cos_angle; // 各轮线速度在 X(前) 方向分量
+        vy_sum += wheel_linear_speed * sin_angle; // 各轮线速度在 Y(左) 方向分量
+        // 角速度分量: v_i·sin(θ_i−φ_i)/R_i = ω, 四轮求和再平均即底盘角速度
+        vw_sum += wheel_linear_speed * arm_sin_f32(steer - Wheel_Azimuth[i]) / Wheel_To_Core_Distance[i];
     }
 
     robot_speed->vx = vx_sum * 0.25f;                // 四轮X分量均值即底盘X轴实际速度
     robot_speed->vy = vy_sum * 0.25f;                // 四轮Y分量均值即底盘Y轴实际速度
-    robot_speed->vw = -vw_sum / (4.0f * projection); // 底盘实际角速度，单位rad/s
+    robot_speed->vw = vw_sum * 0.25f;                // Σv·sin(θ−φ)/R = 4ω → 底盘角速度, 单位rad/s
 }
 
 #endif
 
-/*-------------------------------------------------------------------------mecanum_odometry_encoder-----------------------------------------------------------------------------------------------------------*/
-
-/*===========================================================================
- * 麦轮编码器里程计 — 基于累计轮转角的位移解算
- *
- * 输入: 外部已转换为多圈累计轮转角 (rad), 无需编码器原始值.
- *
- * 核心流程:
- *   Step 1 — 计算轮转角增量:
- *            Δθ_i = wheel_angle_rad[i] - last_angle_rad[i]
- *   Step 2 — 轮转角增量 → 轮子线位移:
- *            ds_i = Δθ_i × WHEEL_RADIUS_S
- *   Step 3 — 麦轮正运动学 (位移形式):
- *            dx_body = ( ds0 + ds1 - ds2 - ds3) / 4
- *            dy_body = (-ds0 + ds1 + ds2 - ds3) / 4
- *            dyaw    = ( ds0 + ds1 + ds2 + ds3) / (4 × (a+b))
- *   Step 4 — 机体→世界 旋转 (半步长航向中值法):
- *            ψ_mid = ψ(k-1) + ½·Δψ
- *            x(k) = x(k-1) + dx_body·cos(ψ_mid) - dy_body·sin(ψ_mid)
- *            y(k) = y(k-1) + dx_body·sin(ψ_mid) + dy_body·cos(ψ_mid)
- *            ψ(k) = ψ(k-1) + Δψ (rad) → 转 deg 存储
- *
- * 坐标系:
- *   机体: X=前 Y=左 Z=上 (右手系)
- *   世界: 上电位置=(0,0), 上电朝向=前(+x)
- *   yaw: CCW为正, 内部 rad 计算, 输出 deg
- *
- * 轮组布局 & 轮转角索引 (俯视, 外八辊子):
- *        FL[0] \  ← 前 →  / FR[3]
- *          ↙                ↗    ← 辊子外八 (小口→车内, 大口→车外)
- *          ↖                ↘
- *        RL[1] /  ← 后 →  \ RR[2]
- *===========================================================================*/
-
+/*-------------------------------------------------------------------------Mecanum Wheel Odometry-----------------------------------------------------------------------------------------------------------*/
 #if WHEEL_TYPE == 1 // 麦轮编码器里程计 (仅麦轮车系使用)
 
 /**
@@ -417,7 +377,7 @@ void mecanum_encoder_odom_update(mecanum_encoder_odom_t *odom, wheel_motor_encod
     float dtheta[4];   // 本帧轮转角增量 (rad)
     float ds[4];       // 各轮线位移 (m), 正转→前进方向
 
-    /* ---- 首次调用: 捕获基准角度, 位移=0 ---- */
+    // 首次调用时记录基准角度, 避免里程计位姿跳变
     if (!odom->initialized)
     {
         for (int i = 0; i < 4; i++)
@@ -428,7 +388,6 @@ void mecanum_encoder_odom_update(mecanum_encoder_odom_t *odom, wheel_motor_encod
         return;
     }
 
-    /* ---- Step 1: 轮转角增量 (rad) ---- */
     for (int i = 0; i < 4; i++)
     {
         dtheta[i] = wheel_encoder_rad->wheel_angle[i] - odom->last_angle_rad[i];
@@ -441,21 +400,6 @@ void mecanum_encoder_odom_update(mecanum_encoder_odom_t *odom, wheel_motor_encod
         ds[i] = dtheta[i] * WHEEL_RADIUS_S;
     }
 
-    /* ---- Step 3: 麦轮正运动学 (机体坐标系位移) ---- */
-    /*
-     * 逆运动学矩阵 M (4×3) 的 Moore-Penrose 伪逆 M⁺:
-     *
-     *   ω_i = M · [vx_set, vy_set, ω]ᵀ,  其中 M 的第 i 行 = f_i(vx_set,vy_set,ω)/R
-     *
-     *   M⁺ = (MᵀM)⁻¹Mᵀ  →  对于正交轮组简化为:
-     *
-     *   dx_body = ( ds0 + ds1 - ds2 - ds3) / 4
-     *   dy_body = (-ds0 + ds1 + ds2 - ds3) / 4
-     *   dyaw    = ( ds0 + ds1 + ds2 + ds3) / (4 × (a+b))
-     *
-     *   验证 (纯前向 vx_set>0): FL+RL正转 RR+FR反转 → dx>0 ✓
-     *   验证 (纯左移 vy_set>0): FL+FR反转 RL+RR正转 → dy>0 ✓
-     */
     float dx_body = ( ds[0] + ds[1] - ds[2] - ds[3]) / 4.0f;
     float dy_body = (-ds[0] + ds[1] + ds[2] - ds[3]) / 4.0f;
     float dyaw    = -( ds[0] + ds[1] + ds[2] + ds[3]) / (4.0f * MECANUM_WHEEL_SUM_XY);
@@ -466,19 +410,8 @@ void mecanum_encoder_odom_update(mecanum_encoder_odom_t *odom, wheel_motor_encod
         return;
     }
 
-    /* ---- Step 4: 机体→世界 旋转 (使用IMU反馈yaw, 避免轮式yaw累积误差) ---- */
-    /*
-     * 关键设计: 使用IMU反馈的绝对航向角进行坐标旋转, 而非轮式解算yaw.
-     *   轮式yaw (dyaw) 由轮子编码器差分计算, 轮子打滑会导致累积误差,
-     *   进而污染世界坐标系位置解算, 引起后续运动控制中轮子方向混乱.
-     *
-     *   IMU yaw 由陀螺仪+加速度计+磁力计融合得到, 长期精度远优于轮式yaw.
-     *   轮式yaw仅作为辅助监控量保留在 odom->pose.yaw 中.
-     *
-     * 坐标系: 前向=(cosψ, sinψ), 左向=(-sinψ, cosψ)
-     */
-    float cos_yaw = cosf(imu_yaw_rad);
-    float sin_yaw = sinf(imu_yaw_rad);
+    float cos_yaw = arm_cos_f32(imu_yaw_rad);
+    float sin_yaw = arm_sin_f32(imu_yaw_rad);
 
     odom->pose.x += dx_body * cos_yaw - dy_body * sin_yaw;
     odom->pose.y += dx_body * sin_yaw + dy_body * cos_yaw;
@@ -487,20 +420,6 @@ void mecanum_encoder_odom_update(mecanum_encoder_odom_t *odom, wheel_motor_encod
     odom->pose.yaw = imu_yaw_rad;
 }
 
-/*===========================================================================
- * 轮式里程计 — 正运动学位移积分 (所有轮系通用)
- *
- * 坐标系:
- *   机体: X=前 Y=左 Z=上 (右手系)
- *   世界: 上电位置=(0,0), 上电朝向=前(x+), 左=y+
- *   yaw: CCW为正 (Z轴右手定则), 单位弧度 (rad), 0=初始朝向
- *
- * 公式:
- *   yaw(k)   = imu_yaw_rad              (直接同步IMU航向, 避免轮式积分漂移)
- *   pos_x(k) = pos_x(k-1) + (vx_set*cosψ - vy_set*sinψ) * dt
- *   pos_y(k) = pos_y(k-1) + (vx_set*sinψ + vy_set*cosψ) * dt
- *   ψ = yaw 中值 (使用半步长航向提高精度)
- *===========================================================================*/
 /**
  * @brief 初始化轮式速度里程计位置
  * @param position 位置结构体指针
@@ -518,20 +437,8 @@ void wheel_speed_odometry_update(wheel_robot_position_t *position, wheel_robot_s
 {
     if (dt <= 0.0f) return;
 
-    /* ---- Body→World 旋转: 使用IMU反馈yaw, 避免轮式yaw累积误差 ---- */
-    /*
-     * 关键设计: 使用IMU反馈的绝对航向角进行坐标旋转, 而非轮式积分yaw.
-     *   轮式yaw (由正运动学 vw_set 积分得到) 会因轮子打滑产生累积误差,
-     *   进而污染世界坐标系位置解算, 引起后续运动控制中轮子方向混乱.
-     *
-     *   IMU yaw 由陀螺仪+加速度计+磁力计融合得到, 长期精度远优于轮式yaw.
-     *   轮式yaw仅作为辅助监控量保留在 position->yaw 中.
-     *
-     * 坐标系: 前向=(cosψ, sinψ), 左向=(-sinψ, cosψ)
-     */
-
-    float cos_yaw = cosf(imu_yaw_rad);
-    float sin_yaw = sinf(imu_yaw_rad);
+    float cos_yaw = arm_cos_f32(imu_yaw_rad);
+    float sin_yaw = arm_sin_f32(imu_yaw_rad);
 
     position->x += (robot_speed->vx * cos_yaw - robot_speed->vy * sin_yaw) * dt;
     position->y += (robot_speed->vx * sin_yaw + robot_speed->vy * cos_yaw) * dt;
@@ -539,4 +446,155 @@ void wheel_speed_odometry_update(wheel_robot_position_t *position, wheel_robot_s
     /* ---- yaw 直接同步 IMU 反馈值, 不再累加轮式积分 ---- */
     position->yaw = imu_yaw_rad;
 }
+
+/*-------------------------------------------------------------------------Steering Wheel Odometry-----------------------------------------------------------------------------------------------------------*/
+#elif WHEEL_TYPE == 2 // 舵轮编码器里程计 (仅舵轮车系使用)
+
+/**
+ * @brief 单帧轮向转角增量 → 线位移
+ * @param cur  本帧轮向多圈累计转角(连续角), rad
+ * @param prev 上一帧轮向转角(连续角), rad
+ * @return 本帧轮子线位移, m (正转→前进方向)
+ * @note  采用"多圈连续角"反馈时, 直接相减即为真实增量:
+ *        1) 有多圈信息, 不存在单圈反馈在 ±π 处的过零跳变, 无需取模;
+ *        2) 若再对增量做 2π 归一化, 反而会在单帧真实转角 >π 时少算一整圈(且掩盖丢帧);
+ *        3) 前提: 上层喂入的 wheel_angle 必须是多圈连续角(非 now_angle 单圈值), 否则需改回归一化。
+ */
+static inline float steer_odom_wheel_ds(float cur, float prev)
+{
+    const float dtheta = cur - prev;
+    return dtheta * STEER_WHEEL_RADIUS;
+}
+
+void steer_encoder_odom_init(steer_encoder_odom_t *odom, IMU_Odometry_TypeDef imu_odom)
+{
+    if (odom == nullptr || imu_odom < IMU_None || imu_odom > IMU_Nine_Axis) return;
+
+    odom->imu_type = imu_odom;
+
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        odom->last_encoder.wheel_angle[i] = 0.0f;  
+        odom->last_encoder.steer_angle[i] = 0.0f;
+    }
+
+    odom->pose.x = 0.0f;
+    odom->pose.y = 0.0f;
+    odom->pose.yaw = 0.0f;
+    odom->initialized = false;
+}
+
+/**
+ * @brief 舵轮编码器里程计更新 (实时调用, 通常 1kHz)
+ *
+ * 支持两种航向来源:
+ *   1. odom->imu_type == IMU_None : 无 IMU, 航向角由舵轮运动学解算 (角位移 dyaw 差分积分);
+ *   2. odom->imu_type != IMU_None : 有 IMU, 航向角直接采用 IMU 绝对航向角
+ *                                   (抑制轮子打滑/侧滑导致的航向累积误差).
+ * 两种模式共用同一套位移解算, 仅"航向来源"与"机体→世界旋转角"不同.
+ *
+ * @param odom              里程计状态结构体指针 (维护内部状态, 输出位姿到 odom->pose)
+ * @param wheel_encoder_rad 四个舵轮的多圈累计编码器角度 (单位 rad)
+ *                          wheel_angle[i] 轮向累计转角, steer_angle[i] 舵向累计转角(可多圈)
+ * @param imu_yaw_rad     IMU 绝对航向角 (rad), 仅 imu_type != IMU_None 时使用
+ *
+ * @note 轮组布局: [0]=FL前左 [1]=RL后左 [2]=RR后右 [3]=FR前右
+ *       轮心方位角 φ_i = Wheel_Azimuth[i] (45/135/225/315°), 力臂 R_i = Wheel_To_Core_Distance[i]
+ *       与 steer_wheel_speed_soluction 角度约定一致: 单轮线位移在底盘系分量 = ds·(cosθ, sinθ)
+ *       (θ=0 → +X前, 逆时针为正). 首次调用自动记录基准角度并对齐航向, 避免位姿跳变.
+ */
+void steer_encoder_odom_update(steer_encoder_odom_t *odom, wheel_system_encoder_t *wheel_encoder_rad, float imu_yaw_rad)
+{
+    if (odom == nullptr || wheel_encoder_rad == nullptr) return;
+
+    // 有 IMU 时用 IMU 绝对航向; 无 IMU 时用编码器运动学解算的航向
+    const bool use_imu = (odom->imu_type != IMU_None);
+
+    // 获取编码器基准, 对齐航向角
+    if (!odom->initialized)
+    {
+        for (uint8_t i = 0; i < 4; i++)
+        {
+            odom->last_encoder.wheel_angle[i] = wheel_encoder_rad->wheel_angle[i];
+            odom->last_encoder.steer_angle[i] = wheel_encoder_rad->steer_angle[i];
+        }
+        odom->pose.yaw    = use_imu ? imu_yaw_rad : 0.0f; // 有 IMU 直接对齐绝对航向; 无则从 0 起
+        odom->initialized = true;
+        return;
+    }
+
+    // 各轮本帧线位移 (m), 正转→前进方向 (多圈连续角直接相减)
+    float ds[4];
+
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        // wheel_angle 为多圈连续角: 直接差分即真实转角, 无需归一化(归一化反而会在>π时少算一圈)
+        ds[i] = steer_odom_wheel_ds(wheel_encoder_rad->wheel_angle[i], odom->last_encoder.wheel_angle[i]);
+
+        odom->last_encoder.wheel_angle[i] = wheel_encoder_rad->wheel_angle[i]; // 更新轮向缓存
+        odom->last_encoder.steer_angle[i] = wheel_encoder_rad->steer_angle[i]; // 同步舵向缓存(供观察/扩展)
+    }
+
+    /* ---- Step 2: 各轮线位移投影到底盘系(X前/Y左), 四轮累加解算 dx/dy/dyaw ---- */
+    //  与正解 steer_wheel_speed_soluction 完全一致:
+    //    单轮线位移在底盘系分量 = ds·(cosθ, sinθ);
+    //    角位移分量 = ds·sin(θ−φ)/R, φ_i = Wheel_Azimuth[i], R_i = Wheel_To_Core_Distance[i].
+    float vx_sum = 0.0f, vy_sum = 0.0f, vw_sum = 0.0f;
+
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        // 扣除零位; steer_angle 为多圈累计角, 但 sinf/cosf 对整圈不敏感
+        const float steer = wheel_encoder_rad->steer_angle[i] - Enc_Zero_Angle[i];
+        const float sin_angle = arm_sin_f32(steer);                        // 底盘 X(前) 方向分量系数
+        const float cos_angle = arm_cos_f32(steer);                        // 底盘 Y(左) 方向分量系数
+
+        vx_sum += ds[i] * cos_angle;                               // 累加各轮 X 位移分量
+        vy_sum += ds[i] * sin_angle;                               // 累加各轮 Y 位移分量
+        vw_sum += ds[i] * arm_sin_f32(steer - Wheel_Azimuth[i]) / Wheel_To_Core_Distance[i]; // 角位移分量, Σ = 4·dyaw
+    }
+
+    const float dx_body = vx_sum * 0.25f;                          // 四轮 X 分量均值 → 底盘 X 位移 (m)
+    const float dy_body = vy_sum * 0.25f;                          // 四轮 Y 分量均值 → 底盘 Y 位移 (m)
+    const float dyaw    = vw_sum * 0.25f;                          // 底盘角位移 (rad), 与正解同号
+
+    /* ---- 忽略零位移帧 (静止/微噪声不积分), 有 IMU 时仍同步航向 ---- */
+    if (fabsf(dx_body) < 1e-7f && fabsf(dy_body) < 1e-7f && fabsf(dyaw) < 1e-9f)
+    {
+        // 如果所有位移都为零，则不更新位姿
+        if (use_imu) odom->pose.yaw = imu_yaw_rad;
+        return;
+    }
+
+    /* ---- Step 3: 确定航向角 (IMU 优先; 无 IMU 则编码器角位移积分) ---- */
+    float yaw_for_rotate;                                          // 机体→世界 旋转所用的航向角
+    if (use_imu)
+    {
+        yaw_for_rotate = imu_yaw_rad;                            // 直接采用 IMU 绝对航向
+        odom->pose.yaw  = imu_yaw_rad;                          // 输出航向同步 IMU
+    }
+    else
+    {
+        // 无 IMU: 航向 = 上一帧航向 + 本帧舵轮解算角位移, 归一化到 [-π, π)
+        odom->pose.yaw = basic_math_modulus_normalization(odom->pose.yaw + dyaw, 2.0f * PI);
+        yaw_for_rotate = odom->pose.yaw;
+    }
+
+    /* ---- Step 4: 底盘系位移 → 世界系 (用本帧航向旋转), 累加到位姿 ---- */
+    const float cos_yaw = arm_cos_f32(yaw_for_rotate);
+    const float sin_yaw = arm_sin_f32(yaw_for_rotate);
+
+    odom->pose.x += dx_body * cos_yaw - dy_body * sin_yaw;
+    odom->pose.y += dx_body * sin_yaw + dy_body * cos_yaw;
+}
+
+/**
+ * @brief 输出轮式里程计位姿, 供在线观察/标定 (仅在主循环低频调用, 勿放入 1kHz 控制流)
+ */
+void odom_debug_printf(const steer_encoder_odom_t *odom)
+{
+    if (odom == nullptr) return;
+    printf("[ODOM] x=%.4f y=%.4f yaw=%.4f rad (%.2f deg)\r\n",
+           odom->pose.x, odom->pose.y, odom->pose.yaw, odom->pose.yaw * (180.0f / PI));
+}
+
 #endif
