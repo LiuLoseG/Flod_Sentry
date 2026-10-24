@@ -89,7 +89,7 @@ typedef struct
 {
     // 输出轴状态
     float now_angle;            // 输出轴当前总角度, rad
-    float single_angle;         // 输出轴当前单圈角度, rad
+    float single_angle;         // 输出轴当前单圈角度, rad, 以 0 为中心归一化
     float now_omega;            // 输出轴当前角速度, rad/s
     float now_torque;           // 输出轴当前扭矩, Nm
     float now_temperature;      // 当前温度
@@ -633,7 +633,7 @@ inline float dji_gm6020_motor_class::get_now_angle() const
 
 /**
  * @brief 获取输出轴当前单圈角度
- * @retval float: 单圈角度, rad
+ * @retval float: 单圈角度, rad, 范围 (-PI, PI]
  */
 inline float dji_gm6020_motor_class::get_single_angle() const
 {
@@ -904,7 +904,7 @@ inline float dji_c610_motor_class::get_now_angle() const
 
 /**
  * @brief 获取输出轴当前单圈角度
- * @retval float: 单圈角度, rad
+ * @retval float: 单圈角度, rad, 范围 (-PI/gearbox_rate, PI/gearbox_rate]
  */
 inline float dji_c610_motor_class::get_single_angle() const
 {
@@ -1164,7 +1164,7 @@ inline float dji_c620_motor_class::get_now_angle() const
 
 /**
  * @brief 获取输出轴当前单圈角度
- * @retval float: 单圈角度, rad
+ * @retval float: 单圈角度, rad, 范围 (-PI/gearbox_rate, PI/gearbox_rate]
  */
 inline float dji_c620_motor_class::get_single_angle() const
 {

@@ -284,7 +284,7 @@ static void gimbal_identification_update_all(void)
     // (void)gimbal_identification_update(&gimbal.identification_pitch, &sample,
     //                                    &gimbal.identification_pitch_output);
 
-    /* 小 yaw：get_now_angle 是输出轴连续角，避免 single_angle 的 2*pi 跳变。 */
+    /* 小 yaw：get_now_angle 是输出轴连续角，避免 single_angle 在 ±PI 处的单圈跳变。 */
     gimbal.sample.configuration_id = GIMBAL_IDENTIFICATION_CONFIGURATION_SMALL_YAW;
     gimbal.sample.valid = small_yaw_valid;
     gimbal.sample.feedback_age_s = small_yaw_feedback_age_s;
@@ -517,21 +517,21 @@ void gimbal_update_measure(void)
     gimbal.now_value.pitch_omega = gimbal.hi12_imu->gyr_y() * BASIC_MATH_DEG_TO_RAD;        //  pitch电机角速度来自于IMU陀螺仪
 
     // 更新大yaw电机的反馈角度，根据小yaw电机编码器的角度来计算大小yaw的相对角度差，用于大yaw电机跟随小yaw电机。
-    gimbal.now_value.big_yaw_angle = -(gimbal.yaw_small_motor.get_single_angle() - YAW_SMALL_MOTOR_MID_ANGLE);
-    // gimbal.now_value.big_yaw_angle = gimbal.yaw_big_motor.get_single_angle();
+    gimbal.now_value.big_yaw_angle = -(gimbal.yaw_small_motor.get_now_angle() - YAW_SMALL_MOTOR_MID_ANGLE);
+    // gimbal.now_value.big_yaw_angle = gimbal.yaw_big_motor.get_now_angle();
     gimbal.now_value.big_yaw_omega = gimbal.yaw_big_motor.get_now_omega();  //  大yaw电机角速度来自于大yaw电机编码器     
 
     // 小yaw电机编码器角度反馈值
-    gimbal.now_s_yaw_angle = gimbal.yaw_small_motor.get_single_angle() - YAW_SMALL_MOTOR_MID_ANGLE;
+    gimbal.now_s_yaw_angle = gimbal.yaw_small_motor.get_now_angle() - YAW_SMALL_MOTOR_MID_ANGLE;
 
     // 更新小yaw电机的反馈角度，根据小yaw电机编码器的角度来计算小yaw电机的实际角度。
-    if(gimbal.yaw_small_motor.get_single_angle() == 0.0f || gimbal.yaw_small_motor.get_single_angle() >= 2*PI)
+    if(gimbal.yaw_small_motor.get_now_angle() == 0.0f || gimbal.yaw_small_motor.get_now_angle() >= 2*PI)
     {
         gimbal.now_value.small_yaw_angle = 0.0f;
     }
     else
     {
-        gimbal.now_value.small_yaw_angle = gimbal.yaw_small_motor.get_single_angle() - YAW_SMALL_MOTOR_MID_ANGLE;     
+        gimbal.now_value.small_yaw_angle = gimbal.yaw_small_motor.get_now_angle() - YAW_SMALL_MOTOR_MID_ANGLE;     
     }
 
     /* ---- 姿态角需要等待 IMU 滤波器收敛 ---- */
@@ -610,7 +610,7 @@ void gimbal_update_measure(void)
 void gimbal_robot_decision_source_update(void)
 {
     gimbal.source->big_yaw_angle = basic_math_loop_constrain(gimbal.yaw_big_motor.get_single_angle(), -PI, PI);
-    gimbal.source->small_yaw_angle = gimbal.yaw_small_motor.get_single_angle();
+    gimbal.source->small_yaw_angle = gimbal.yaw_small_motor.get_now_angle();
     gimbal.source->vision_gyr_z = gimbal.now_value.small_yaw_omega;
 }
 
@@ -688,8 +688,8 @@ void gimbal_control_decision(void)
 
             {
                 // 检测小yaw是否超出正常工作范围 (偏移域 ±偏移量*1.2倍裕量)
-                // 单圈角度 → 偏移角度 = single_angle - MID
-                float small_yaw_offset = gimbal.yaw_small_motor.get_single_angle() - YAW_SMALL_MOTOR_MID_ANGLE;
+                // 单圈角度 → 偏移角度 = single_angle - MID, 循环限幅把 (-PI, PI] 域映射回 ±PI 的绝对偏移
+                float small_yaw_offset = basic_math_loop_constrain(gimbal.yaw_small_motor.get_now_angle() - YAW_SMALL_MOTOR_MID_ANGLE, -PI, PI);
                 if (small_yaw_offset <= YAW_SMALL_MIN_OFFSET * 1.2f ||
                     small_yaw_offset >= YAW_SMALL_MAX_OFFSET * 1.2f)
                 {
@@ -866,7 +866,7 @@ void gimbal_control_decision(void)
                     // float delta = basic_math_loop_constrain(gimbal.target_value.gimbal_yaw_angle - gimbal.now_value.gimbal_yaw_angle, -PI, PI);
                     // gimbal.target_value.small_yaw_angle = basic_math_constrain(gimbal.now_value.small_yaw_angle + delta, YAW_SMALL_MIN_OFFSET, YAW_SMALL_MAX_OFFSET);
 
-                    // float small_yaw_offset = gimbal.yaw_small_motor.get_single_angle() - YAW_SMALL_MOTOR_MID_ANGLE;
+                    // float small_yaw_offset = gimbal.yaw_small_motor.get_now_angle() - YAW_SMALL_MOTOR_MID_ANGLE;
                     
                     // if (small_yaw_offset <= YAW_SMALL_MIN_OFFSET * 1.12f ||
                     //     small_yaw_offset >= YAW_SMALL_MAX_OFFSET * 1.12f)
@@ -899,7 +899,7 @@ void gimbal_control_decision(void)
                     }
 
                     {
-                        float small_yaw_offset = gimbal.yaw_small_motor.get_single_angle() - YAW_SMALL_MOTOR_MID_ANGLE;
+                        float small_yaw_offset = basic_math_loop_constrain(gimbal.yaw_small_motor.get_now_angle() - YAW_SMALL_MOTOR_MID_ANGLE, -PI, PI);
                         
                         if (small_yaw_offset <= YAW_SMALL_MIN_OFFSET * 1.12f ||
                             small_yaw_offset >= YAW_SMALL_MAX_OFFSET * 1.12f)

@@ -572,7 +572,8 @@ void dji_gm6020_motor_class::data_process()
 
     // 电机输出轴转换数据
     rx_data.now_angle = rx_data.rotor_angle; // 减速箱减速前电机角度, rad
-    rx_data.single_angle = (float)tmp_encoder / (float)(Encoder_Num_Per_Round) * 2.0f * PI; // 电机单圈角度, rad
+    // 电机单圈角度, rad, 归一化到 (-PI, PI]
+    rx_data.single_angle = basic_math_loop_constrain((float)tmp_encoder / (float)(Encoder_Num_Per_Round) * 2.0f * PI, -PI, PI);
     rx_data.now_omega = rx_data.rotor_omega;                               // 电机角速度, rad/s
     rx_data.now_torque = rx_data.rotor_current / Current_To_Out * Current_To_Torque; // 电机扭矩, Nm
     rx_data.now_temperature = (float)(tmp_buffer->temperature); // 电机温度
@@ -861,7 +862,8 @@ void dji_c610_motor_class::data_process()
 
     // 电机输出轴转换数据
     rx_data.now_angle = rx_data.rotor_angle / gearbox_rate; // 减速箱减速前电机角度, rad
-    rx_data.single_angle = (float)tmp_encoder / (float)(Encoder_Num_Per_Round) / gearbox_rate * 2.0f * PI; // 电机单圈角度, rad
+    // 电机单圈角度, rad, 归一化到 (-PI/gearbox_rate, PI/gearbox_rate]
+    rx_data.single_angle = basic_math_loop_constrain((float)tmp_encoder / (float)(Encoder_Num_Per_Round) / gearbox_rate * 2.0f * PI, -PI / gearbox_rate, PI / gearbox_rate);
     rx_data.now_omega = rx_data.rotor_omega / gearbox_rate;                               // 电机角速度, rad/s
     rx_data.now_torque = rx_data.rotor_current / Current_To_Out * Current_To_Torque * gearbox_rate; // 电机扭矩, Nm
     rx_data.now_temperature = (float) (tmp_buffer->temperature); // 电机温度
@@ -1152,7 +1154,8 @@ void dji_c620_motor_class::data_process()
 
     // 电机输出轴转换数据
     rx_data.now_angle = rx_data.rotor_angle / gearbox_rate; // 减速箱减速前电机角度, rad
-    rx_data.single_angle = (float)tmp_encoder / (float)(Encoder_Num_Per_Round) / (float)(gearbox_rate) * 2.0f * PI; // 电机单圈角度, rad
+    // 电机单圈角度, rad, 归一化到 (-PI/gearbox_rate, PI/gearbox_rate]
+    rx_data.single_angle = basic_math_loop_constrain((float)tmp_encoder / (float)(Encoder_Num_Per_Round) / (float)(gearbox_rate) * 2.0f * PI, -PI / (float)(gearbox_rate), PI / (float)(gearbox_rate));
     rx_data.now_omega = rx_data.rotor_omega / gearbox_rate;                               // 电机角速度, rad/s
     rx_data.now_torque = (float)(tmp_current) / Current_To_Out * Current_To_Torque * gearbox_rate; // 电机扭矩, Nm
     rx_data.now_temperature = (float)(tmp_buffer->temperature); // 电机温度
