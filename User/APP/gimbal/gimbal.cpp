@@ -1181,7 +1181,7 @@ void gimbal_motor_calculate(void)
     }
 
     gimbal.yaw_small_motor.external_calculate_callback();                       // 执行小yaw电机的外部PID闭环计算和控制
-    bsp_can_1_to_4_transmit(&hfdcan1, 0x1fe, can1_0x1fe_tx_data, Can_transmit_frequency_1000Hz);  // 发送小yaw电机的CAN数据
+    bsp_can_1_to_4_transmit(&hfdcan1, 0x1fe, can1_0x1fe_tx_data, Can_Transmit_Frequency_Div1);  // 发送小yaw电机的CAN数据
     gimbal.pitch_motor.calculate_callback();
     gimbal.yaw_big_motor.calculate_callback();
 

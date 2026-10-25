@@ -132,7 +132,19 @@ void chassis_init(void)
     // chassis.control_power.init(15.0f, 0.0f, 1.0f);
     chassis.control_power.init();
     chassis.control_power.set_chassis_power_max(20.0f); // 设置底盘功率上限 20W(无电容/缓冲反馈, 暂用固定值)
-    chassis.tgt_steer_state[0].angle = 1.0f; // 初始化目标舵向角度为 0
+    
+    // 7. 初始化电机状态为0
+    for (uint8_t i = 0; i <4; i++)
+    {
+        chassis.now_steer_state.angle[i] = 0.0f; // 初始化目标舵向角度为 0
+        chassis.now_steer_state.speed[i] = 0.0f; // 初始化目标舵向速度为 0
+
+        chassis.now_wheel_state.angle[i] = 0.0f; // 初始化目标轮子角度为 0
+        chassis.now_wheel_state.speed[i] = 0.0f; // 初始化目标轮子速度为 0
+    }
+
+    // 8. 初始化舵轮底盘的优化和控制参数
+    chassis.steer_wheel.init();
 
     wave_generator_init(&motor_wave, WAVE_SINE, 0.1f, 2.0f, 0.0f);
     wave_generator_enable(&motor_wave);
@@ -249,32 +261,33 @@ void chassis_update_mode(void)
  */
 void chassis_update_measure(void)
 {
+
+#if ROBOT_AMOUNT_BOARD == 2
+
     // 获取CAN板间通讯获取的旋转矩阵偏航角度
     chassis.yaw_angular_offset = robot_decision.can_board_communication.get_rotation_matrix_yaw_control(); 
-
+#endif
     // 更新电机当前角度和速度值
     for (uint8_t i = 0; i < 4; i++)
     {
         // 获取舵向电机当前角度值
         // 舵向位置环使用连续总角度，避免每圈边界处目标角跳变。
-        chassis.now_steer_state[i].angle = chassis.steer_motor[i].get_now_angle(); 
-        chassis.now_steer_state[i].speed = chassis.steer_motor[i].get_now_omega(); 
+        chassis.now_steer_state.angle[i] = chassis.steer_motor[i].get_now_angle(); 
+        chassis.now_steer_state.speed[i] = chassis.steer_motor[i].get_now_omega(); 
 
         // 获取轮向电机当前速度值
-        chassis.now_wheel_state[i].angle = chassis.wheel_motor[i].get_now_angle();
-        chassis.now_wheel_state[i].speed = chassis.wheel_motor[i].get_now_omega(); 
+        chassis.now_wheel_state.angle[i] = chassis.wheel_motor[i].get_now_angle();
+        chassis.now_wheel_state.speed[i] = chassis.wheel_motor[i].get_now_omega(); 
     }
 
     // 更新舵轮解算的相关参数
-    for (uint8_t i = 0; i < 4; i++)
-    {
-        chassis.mtr_stat.now_angle[i] = chassis.now_steer_state[i].angle;
-        chassis.mtr_stat.now_speed[i] = chassis.now_wheel_state[i].speed;
-    }
+
+    chassis.steer_wheel.update_now_state(chassis.now_steer_state, chassis.now_wheel_state);
 
     // 更新滤波后的轮电机速度值（一阶IIR低通，30Hz截止）
     
     // 使用底盘正运动学解算，计算底盘的实际速度
+    chassis.steer_wheel.forward_calculate_callback();
    
 }
 
@@ -388,39 +401,54 @@ void chassis_overall_mobile_control(void)
  */
 void chassis_motor_calculate(void)
 {
-    // 1. 运动学解算，计算轮子目标速度
-    steer_wheel_inverse_kinematics(&chassis.mtr_stat, chassis.slope_output_speed.vx, chassis.slope_output_speed.vy, chassis.slope_output_speed.vw, chassis.now_mode); // 计算轮子目标速度
+    // 更新底盘整体运动学参数
+    chassis.steer_wheel.update_robot_state(chassis.slope_output_speed, chassis.now_mode);
+    // 舵轮逆运动学解算
+    chassis.steer_wheel.inverse_calculate_callback();
 
-    // 2. 舵向电机PID计算，计算电机控制参数
+    // 电机控制参数更新
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        chassis.tgr_steer_state.angle[i] = chassis.steer_wheel.get_optimize_angle(i);
+        chassis.tgr_wheel_state.speed[i] = chassis.steer_wheel.get_optimize_speed(i);
+    }
+
+    // 舵向电机PID计算
     for (uint8_t i = 0; i < 4; i++)
     {
         // 位置环
-        chassis.pid_steer_angle[i].set_now(chassis.now_steer_state[i].angle); // 设置电机当前角度值
-        chassis.pid_steer_angle[i].set_target(chassis.mtr_stat.optimize_angle[i]); // 设置电机目标角度值
+        chassis.pid_steer_angle[i].set_now(chassis.now_steer_state.angle[i]); // 设置电机当前角度值
+        chassis.pid_steer_angle[i].set_target(chassis.tgr_steer_state.angle[i]); // 设置电机目标角度值
         chassis.pid_steer_angle[i].pid_calculate_callback(); // 计算电机控制参数
-        chassis.tgt_steer_state[i].speed = chassis.pid_steer_angle[i].get_out(); // 获取电机控制参数
+        chassis.tgr_steer_state.speed[i] = chassis.pid_steer_angle[i].get_out(); // 获取电机控制参数
 
         // 速度环
-        chassis.pid_steer_omega[i].set_now(chassis.now_steer_state[i].speed); // 设置电机当前速度值
-        chassis.pid_steer_omega[i].set_target(chassis.tgt_steer_state[i].speed); // 设置电机目标速度值
+        chassis.pid_steer_omega[i].set_now(chassis.now_steer_state.speed[i]); // 设置电机当前速度值
+        chassis.pid_steer_omega[i].set_target(chassis.tgr_steer_state.speed[i]); // 设置电机目标速度值
         chassis.pid_steer_omega[i].pid_calculate_callback(); // 计算电机控制参数
-        chassis.steer_motor[i].set_target_torque(chassis.pid_steer_omega[i].get_out()); // 设置电机目标转矩值
-        chassis.steer_motor[i].external_calculate_callback();
     }
 
-    // 轮向电机PID计算，计算电机控制参数
+    // 轮向电机PID计算
     for (uint8_t i = 0; i < 4; i++)
     {
-        chassis.pid_wheel_omega[i].set_now(chassis.now_wheel_state[i].speed);
-        chassis.pid_wheel_omega[i].set_target(chassis.mtr_stat.optimize_speed[i]);
+        chassis.pid_wheel_omega[i].set_now(chassis.now_wheel_state.speed[i]);
+        chassis.pid_wheel_omega[i].set_target(chassis.tgr_wheel_state.speed[i]);
         chassis.pid_wheel_omega[i].pid_calculate_callback();
-        chassis.wheel_motor[i].set_target_torque(chassis.pid_wheel_omega->get_out()); // 设置轮向电机目标转矩值
+    }
+
+    // 电机控制参数发送
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        chassis.steer_motor[i].set_target_torque(chassis.pid_steer_omega[i].get_out()); // 设置电机目标转矩值
+        chassis.steer_motor[i].external_calculate_callback();
+
+        chassis.wheel_motor[i].set_target_torque(chassis.pid_wheel_omega[i].get_out()); // 设置轮向电机目标转矩值
         chassis.wheel_motor[i].external_calculate_callback();
     }
 
     // 发送数据
-    bsp_can_1_to_4_transmit(&hfdcan2, 0x1fe, can2_0x1fe_tx_data, Can_transmit_frequency_1000Hz); // 发送电机控制参数
-    bsp_can_1_to_4_transmit(&hfdcan1, 0x200, can1_0x200_tx_data, Can_transmit_frequency_1000Hz); // 发送电机控制参数
+    bsp_can_1_to_4_transmit(&hfdcan2, 0x1fe, can2_0x1fe_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
+    bsp_can_1_to_4_transmit(&hfdcan1, 0x200, can1_0x200_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
 }
 
 /**
@@ -428,36 +456,42 @@ void chassis_motor_calculate(void)
  */
 void chasiss_motor_test(void)
 {
-    // 2. 电机PID计算，计算电机控制参数
+    // 舵向电机PID计算
     for (uint8_t i = 0; i < 4; i++)
     {
         // 位置环
-        chassis.pid_steer_angle[i].set_now(chassis.now_steer_state[i].angle); // 设置电机当前角度值
-        chassis.pid_steer_angle[i].set_target(chassis.tgt_steer_state[i].angle); // 设置电机目标角度值
+        chassis.pid_steer_angle[i].set_now(chassis.now_steer_state.angle[i]); // 设置电机当前角度值
+        chassis.pid_steer_angle[i].set_target(chassis.tgr_steer_state.angle[i]); // 设置电机目标角度值
         chassis.pid_steer_angle[i].pid_calculate_callback(); // 计算电机控制参数
-        chassis.tgt_steer_state[i].speed = chassis.pid_steer_angle[i].get_out(); // 获取电机控制参数
+        chassis.tgr_steer_state.speed[i] = chassis.pid_steer_angle[i].get_out(); // 获取电机控制参数
 
         // 速度环
-        chassis.pid_steer_omega[i].set_now(chassis.now_steer_state[i].speed); // 设置电机当前速度值
-        chassis.pid_steer_omega[i].set_target(chassis.tgt_steer_state[i].speed); // 设置电机目标速度值
+        chassis.pid_steer_omega[i].set_now(chassis.now_steer_state.speed[i]); // 设置电机当前速度值
+        chassis.pid_steer_omega[i].set_target(chassis.tgr_steer_state.speed[i]); // 设置电机目标速度值
         chassis.pid_steer_omega[i].pid_calculate_callback(); // 计算电机控制参数
-        chassis.steer_motor[i].set_target_torque(chassis.pid_steer_omega[i].get_out()); // 设置电机目标转矩值
-        chassis.steer_motor[i].external_calculate_callback();
     }
 
-    // 轮向电机PID计算，计算电机控制参数
+    // 轮向电机PID计算
     for (uint8_t i = 0; i < 4; i++)
     {
-        chassis.pid_wheel_omega[i].set_now(chassis.now_wheel_state[i].speed);
-        chassis.pid_wheel_omega[i].set_target(chassis.tgt_wheel_state[i].speed);
+        chassis.pid_wheel_omega[i].set_now(chassis.now_wheel_state.speed[i]);
+        chassis.pid_wheel_omega[i].set_target(chassis.tgr_wheel_state.speed[i]);
         chassis.pid_wheel_omega[i].pid_calculate_callback();
-        chassis.wheel_motor[i].set_target_torque(chassis.pid_wheel_omega->get_out()); // 设置轮向电机目标转矩值
+    }
+
+    // 电机控制参数发送
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        chassis.steer_motor[i].set_target_torque(chassis.pid_steer_omega[i].get_out()); // 设置电机目标转矩值
+        chassis.steer_motor[i].external_calculate_callback();
+
+        chassis.wheel_motor[i].set_target_torque(chassis.pid_wheel_omega[i].get_out()); // 设置轮向电机目标转矩值
         chassis.wheel_motor[i].external_calculate_callback();
     }
 
     // 发送数据
-    bsp_can_1_to_4_transmit(&hfdcan2, 0x1fe, can2_0x1fe_tx_data, Can_transmit_frequency_1000Hz); // 发送电机控制参数
-    bsp_can_1_to_4_transmit(&hfdcan1, 0x200, can1_0x200_tx_data, Can_transmit_frequency_1000Hz); // 发送电机控制参数
+    bsp_can_1_to_4_transmit(&hfdcan2, 0x1fe, can2_0x1fe_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
+    bsp_can_1_to_4_transmit(&hfdcan1, 0x200, can1_0x200_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
 }
 
 /*
@@ -545,7 +579,7 @@ void chassis_power_calculate(void)
     chassis.wheel_motor[2].power_control_calculate_callback(chassis.control_power.get_motor_rotor_out(2));
     chassis.wheel_motor[3].power_control_calculate_callback(chassis.control_power.get_motor_rotor_out(3));
 
-    bsp_can_1_to_4_transmit(&hfdcan1, 0x200, can1_0x200_tx_data, Can_transmit_frequency_1000Hz); // 发送电机控制参数
+    bsp_can_1_to_4_transmit(&hfdcan1, 0x200, can1_0x200_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
 }
 */
 

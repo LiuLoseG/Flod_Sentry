@@ -13,9 +13,9 @@
 // CAN总线发送频率枚举，适用于一拖四电机的CAN发送
 typedef enum
 {
-    Can_transmit_frequency_1000Hz = 0,
-    Can_transmit_frequency_500Hz,
-    Can_transmit_frequency_250Hz,
+    Can_Transmit_Frequency_Div1 = 0,
+    Can_Transmit_Frequency_Div2,
+    Can_Transmit_Frequency_Div4,
 } Can_transmit_frequency_t;
 
 typedef struct 
@@ -25,7 +25,7 @@ typedef struct
     uint8_t data[8];
     uint8_t rx_len;
 
-        // 接收时间戳
+    // 接收时间戳
     uint64_t rx_time_stamp;
 
 }FDCAN_RxFrame_TypeDef;

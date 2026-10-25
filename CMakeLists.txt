@@ -242,7 +242,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
     User/test
     User/APP
-    # User/APP/chassis
+    User/APP/chassis
     # User/APP/steering_wheel
     User/APP/gimbal
     # User/APP/imu_temp_ctrl

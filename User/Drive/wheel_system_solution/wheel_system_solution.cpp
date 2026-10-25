@@ -1,13 +1,11 @@
 /**
  * @file wheel_system_solution.cpp
  * @author Robin Liu (19038200162@163.com)
- * @brief 轮系运动学解算模块 (C++ 版) 实现
- * @note  三种轮系的里程计末段(轮位移差分 → 机体系位移 → 世界系累加)完全一致,
- *        抽为文件内静态函数, 各 class 的 protected 方法只做一行转发; 坐标系见头文件.
- *        编码器里程计的零帧抑制为"累积-触发"(wheel_odom_gate_step), 与调用频率解耦.
+ * @brief 
  * @date 2026-10-25
- * @version 2.1
+ * @version 1.2
  * @copyright HNAU-Robot (c) 2026
+ * @note 正方向定义: 机器人坐标系 +X 向前, +Y 向左, +Z 向上; 角速度绕 Z 轴 CCW 为正
  */
 
 /* Includes ------------------------------------------------------------------*/
@@ -17,7 +15,7 @@
 #include <cstdint>
 #include "basic_math.h"
 
-/*-----------------------------------编译期常量的类外定义-----------------------------------*/
+/*-----------------------------------文件内静态辅助函数-----------------------------------*/
 
 /** @brief 计算本帧各轮线位移 ds 并更新基准; 首帧只建基准并返回 false
  *  @param __wheel_angle 当前轮转角
@@ -126,7 +124,7 @@ static void wheel_odom_apply_body_step(wheel_robot_position_t &__pose, const flo
  * @param __period       控制周期, s
  * @param __linear_eps   线速度死区, m/s
  * @param __angular_eps  角速度死区, rad/s
- * @note  与编码器里程计相互独立, 各自维护一份 encoder_pose; 死区按速度判定, 与调用频率无关.
+ * @note  与编码器里程计相互独立, 各自维护一份位姿; 死区按速度判定, 与调用频率无关.
  */
 static void wheel_odom_integrate_speed(wheel_robot_position_t &__pose, const wheel_robot_speed_t &__speed, const float &__period,
                                        const float &__linear_eps, const float &__angular_eps)
@@ -149,6 +147,34 @@ static void wheel_odom_integrate_speed(wheel_robot_position_t &__pose, const whe
     wheel_odom_apply_body_step(__pose, __speed.vx * __period, __speed.vy * __period);
 }
 
+/**
+ * @brief 编码器里程计位姿清零: 重建位移基准并丢弃清零前未积分的残余位移
+ */
+static void wheel_odom_reset_pose(wheel_robot_position_t &__pose, bool &__first_flag,
+                                  float &__res_dx, float &__res_dy, float &__res_dyaw)
+{
+    __pose = {0.0f, 0.0f, 0.0f};
+    __first_flag = true; // 下一帧重建基准, 避免跳变
+    __res_dx = 0.0f;
+    __res_dy = 0.0f;
+    __res_dyaw = 0.0f;
+}
+
+/**
+ * @brief 里程计位姿重定位; 任一参数非有限时保持原位姿
+ */
+static void wheel_odom_set_pose(wheel_robot_position_t &__pose, const float &__x, const float &__y, const float &__yaw)
+{
+    if (!isfinite(__x) || !isfinite(__y) || !isfinite(__yaw))
+    {
+        return;
+    }
+
+    __pose.x = __x;
+    __pose.y = __y;
+    __pose.yaw = __yaw;
+}
+
 /*-----------------------------------omni_wheel-----------------------------------*/
 
 /**
@@ -162,10 +188,11 @@ void omni_wheel_class::init(const float &__distance_to_core, const float &__cont
     distance_to_core = (isfinite(__distance_to_core) && __distance_to_core > 0.0f) ? __distance_to_core : Wheel_Distance_To_Core;
     control_period = (isfinite(__control_period) && __control_period > 0.0f) ? __control_period : 0.001f;
 
+    // status 同时承载正/逆解轮速与里程计用多圈转角, 一并清零
+    status = {};
+
     for (uint8_t i = 0; i < 4; i++)
     {
-        status.wheel_speed[i] = 0.0f;
-        wheel_angle[i] = 0.0f;
         last_angle_rad[i] = 0.0f;
     }
     target_speed = {0.0f, 0.0f, 0.0f};
@@ -177,10 +204,6 @@ void omni_wheel_class::init(const float &__distance_to_core, const float &__cont
     odom_residual_dx = 0.0f;
     odom_residual_dy = 0.0f;
     odom_residual_dyaw = 0.0f;
-    ds_cache[0] = ds_cache[1] = ds_cache[2] = ds_cache[3] = 0.0f;
-    body_dx = 0.0f;
-    body_dy = 0.0f;
-    body_dyaw = 0.0f;
 }
 
 /**
@@ -193,10 +216,10 @@ void omni_wheel_class::inverse_calculate_callback()
         return;
     }
 
-    status.wheel_speed[0] = -(SQRT_2_2 * (-target_speed.vx + target_speed.vy) + target_speed.vw * distance_to_core) / Wheel_Radius;
-    status.wheel_speed[1] = -(SQRT_2_2 * (-target_speed.vx - target_speed.vy) + target_speed.vw * distance_to_core) / Wheel_Radius;
-    status.wheel_speed[2] = -(SQRT_2_2 * (target_speed.vx - target_speed.vy)  + target_speed.vw * distance_to_core) / Wheel_Radius;
-    status.wheel_speed[3] = -(SQRT_2_2 * (target_speed.vx + target_speed.vy)  + target_speed.vw * distance_to_core) / Wheel_Radius;
+    status.speed[0] = -(SQRT_2_2 * (-target_speed.vx + target_speed.vy) + target_speed.vw * distance_to_core) / Wheel_Radius;
+    status.speed[1] = -(SQRT_2_2 * (-target_speed.vx - target_speed.vy) + target_speed.vw * distance_to_core) / Wheel_Radius;
+    status.speed[2] = -(SQRT_2_2 * (target_speed.vx - target_speed.vy)  + target_speed.vw * distance_to_core) / Wheel_Radius;
+    status.speed[3] = -(SQRT_2_2 * (target_speed.vx + target_speed.vy)  + target_speed.vw * distance_to_core) / Wheel_Radius;
 }
 
 /**
@@ -206,16 +229,16 @@ void omni_wheel_class::forward_calculate_callback()
 {
     for (uint8_t i = 0; i < 4; i++)
     {
-        if (!isfinite(status.wheel_speed[i]))
+        if (!isfinite(status.speed[i]))
         {
             return;
         }
     }
 
-    const float ws0 = -status.wheel_speed[0];
-    const float ws1 = -status.wheel_speed[1];
-    const float ws2 = -status.wheel_speed[2];
-    const float ws3 = -status.wheel_speed[3];
+    const float ws0 = -status.speed[0];
+    const float ws1 = -status.speed[1];
+    const float ws2 = -status.speed[2];
+    const float ws3 = -status.speed[3];
 
     robot_speed.vx = (SQRT_2_4 * (-ws0 - ws1 + ws2 + ws3)) * Wheel_Radius;         // 底盘速度, m/s
     robot_speed.vy = (SQRT_2_4 * (ws0 - ws1 - ws2 + ws3)) * Wheel_Radius;
@@ -223,19 +246,51 @@ void omni_wheel_class::forward_calculate_callback()
 }
 
 /**
- * @brief 计算本帧各轮线位移 ds; 首帧只建基准并返回 false
+ * @brief 全向轮编码器里程计单步
+ * @param __use_imu_yaw true: 航向取 IMU; false: 航向由 dyaw 自持积分
+ * @retval true: 本帧已积分; false: 数据非法 / 首帧建基准 / 仍在死区内
  */
-bool omni_wheel_class::calc_wheel_ds()
+bool omni_wheel_class::encoder_odometry_step(const bool &__use_imu_yaw)
 {
-    return wheel_odom_calc_ds(wheel_angle, last_angle_rad, ds_cache, Wheel_Radius, first_fb_flag);
-}
+    if (__use_imu_yaw)
+    {
+        if (!isfinite(imu_yaw))
+        {
+            return false;
+        }
 
-/**
- * @brief 机体系位移 → 世界系, 累加到 encoder_pose
- */
-void omni_wheel_class::apply_body_step()
-{
-    wheel_odom_apply_body_step(encoder_pose, body_dx, body_dy);
+        // 航向直接取 IMU (首帧即以绝对航向对齐), 位移仍由编码器解算;
+        // 折到 [-π, π) 与编码器航向路线一致, 否则同一 pose.yaw 会出现两种取值范围
+        encoder_pose.yaw = basic_math_modulus_normalization(imu_yaw, 2.0f * PI);
+    }
+
+    float ds[4];
+    if (!wheel_odom_calc_ds(status.angle, last_angle_rad, ds, Wheel_Radius, first_fb_flag))
+    {
+        return false;
+    }
+
+    const float frame_dx = SQRT_2_4 * ( ds[0] + ds[1] - ds[2] - ds[3]);
+    const float frame_dy = SQRT_2_4 * (-ds[0] + ds[1] + ds[2] - ds[3]);
+    const float frame_dyaw = -(ds[0] + ds[1] + ds[2] + ds[3]) / (4.0f * distance_to_core);
+
+    float step_dx = 0.0f, step_dy = 0.0f, step_dyaw = 0.0f;
+
+    // 累积-触发死区: 死区内的位移留在累积器里, 达阈值后连同历史位移一次积分
+    if (!wheel_odom_gate_step(frame_dx, frame_dy, frame_dyaw,
+                              odom_residual_dx, odom_residual_dy, odom_residual_dyaw,
+                              step_dx, step_dy, step_dyaw, Odom_Linear_Deadband, Odom_Angle_Deadband))
+    {
+        return false;
+    }
+
+    if (!__use_imu_yaw)
+    {
+        encoder_pose.yaw = basic_math_modulus_normalization(encoder_pose.yaw + step_dyaw, 2.0f * PI);
+    }
+
+    wheel_odom_apply_body_step(encoder_pose, step_dx, step_dy);
+    return true;
 }
 
 /**
@@ -243,25 +298,7 @@ void omni_wheel_class::apply_body_step()
  */
 void omni_wheel_class::encoder_odometry_callback()
 {
-    if (!calc_wheel_ds())
-    {
-        return;
-    }
-
-    const float frame_dx = SQRT_2_4 * ( ds_cache[0] + ds_cache[1] - ds_cache[2] - ds_cache[3]);
-    const float frame_dy = SQRT_2_4 * (-ds_cache[0] + ds_cache[1] + ds_cache[2] - ds_cache[3]);
-    const float frame_dyaw = -(ds_cache[0] + ds_cache[1] + ds_cache[2] + ds_cache[3]) / (4.0f * distance_to_core);
-
-    // 累积-触发死区: 死区内的位移留在累积器里, 达阈值后连同历史位移一次积分
-    if (!wheel_odom_gate_step(frame_dx, frame_dy, frame_dyaw,
-                              odom_residual_dx, odom_residual_dy, odom_residual_dyaw,
-                              body_dx, body_dy, body_dyaw, Odom_Linear_Deadband, Odom_Angle_Deadband))
-    {
-        return;
-    }
-
-    encoder_pose.yaw = basic_math_modulus_normalization(encoder_pose.yaw + body_dyaw, 2.0f * PI);
-    apply_body_step();
+    encoder_odometry_step(false);
 }
 
 /**
@@ -269,32 +306,7 @@ void omni_wheel_class::encoder_odometry_callback()
  */
 void omni_wheel_class::imu_odometry_callback()
 {
-    if (!isfinite(imu_yaw))
-    {
-        return;
-    }
-
-    // 航向直接取 IMU (首帧即以绝对航向对齐), 位移仍由编码器解算;
-    // 折到 [-π, π) 与编码器航向路线一致, 否则同一 pose.yaw 会出现两种取值范围
-    encoder_pose.yaw = basic_math_modulus_normalization(imu_yaw, 2.0f * PI);
-
-    if (!calc_wheel_ds())
-    {
-        return;
-    }
-
-    const float frame_dx = SQRT_2_4 * ( ds_cache[0] + ds_cache[1] - ds_cache[2] - ds_cache[3]);
-    const float frame_dy = SQRT_2_4 * (-ds_cache[0] + ds_cache[1] + ds_cache[2] - ds_cache[3]);
-    const float frame_dyaw = -(ds_cache[0] + ds_cache[1] + ds_cache[2] + ds_cache[3]) / (4.0f * distance_to_core);
-
-    if (!wheel_odom_gate_step(frame_dx, frame_dy, frame_dyaw,
-                              odom_residual_dx, odom_residual_dy, odom_residual_dyaw,
-                              body_dx, body_dy, body_dyaw, Odom_Linear_Deadband, Odom_Angle_Deadband))
-    {
-        return;
-    }
-
-    apply_body_step();
+    encoder_odometry_step(true);
 }
 
 /**
@@ -310,11 +322,7 @@ void omni_wheel_class::speed_odometry_callback()
  */
 void omni_wheel_class::reset_position()
 {
-    encoder_pose = {0.0f, 0.0f, 0.0f};
-    first_fb_flag = true; // 下一帧重建基准, 避免跳变
-    odom_residual_dx = 0.0f;
-    odom_residual_dy = 0.0f;
-    odom_residual_dyaw = 0.0f; // 丢弃清零前的未积分位移
+    wheel_odom_reset_pose(encoder_pose, first_fb_flag, odom_residual_dx, odom_residual_dy, odom_residual_dyaw);
 }
 
 /**
@@ -322,13 +330,7 @@ void omni_wheel_class::reset_position()
  */
 void omni_wheel_class::set_position(const float &__x, const float &__y, const float &__yaw)
 {
-    if (!isfinite(__x) || !isfinite(__y) || !isfinite(__yaw))
-    {
-        return;
-    }
-    encoder_pose.x = __x;
-    encoder_pose.y = __y;
-    encoder_pose.yaw = __yaw;
+    wheel_odom_set_pose(encoder_pose, __x, __y, __yaw);
 }
 
 /**
@@ -344,13 +346,7 @@ void omni_wheel_class::reset_speed_position()
  */
 void omni_wheel_class::set_speed_position(const float &__x, const float &__y, const float &__yaw)
 {
-    if (!isfinite(__x) || !isfinite(__y) || !isfinite(__yaw))
-    {
-        return;
-    }
-    speed_pose.x = __x;
-    speed_pose.y = __y;
-    speed_pose.yaw = __yaw;
+    wheel_odom_set_pose(speed_pose, __x, __y, __yaw);
 }
 
 /*-----------------------------------mecanum_wheel-----------------------------------*/
@@ -375,10 +371,11 @@ void mecanum_wheel_class::init(const float &__projection_x, const float &__proje
     }
     control_period = (isfinite(__control_period) && __control_period > 0.0f) ? __control_period : 0.001f;
 
+    // status 同时承载正/逆解轮速与里程计用多圈转角, 一并清零
+    status = {};
+
     for (uint8_t i = 0; i < 4; i++)
     {
-        status.wheel_speed[i] = 0.0f;
-        wheel_angle[i] = 0.0f;
         last_angle_rad[i] = 0.0f;
     }
     target_speed = {0.0f, 0.0f, 0.0f};
@@ -390,10 +387,6 @@ void mecanum_wheel_class::init(const float &__projection_x, const float &__proje
     odom_residual_dx = 0.0f;
     odom_residual_dy = 0.0f;
     odom_residual_dyaw = 0.0f;
-    ds_cache[0] = ds_cache[1] = ds_cache[2] = ds_cache[3] = 0.0f;
-    body_dx = 0.0f;
-    body_dy = 0.0f;
-    body_dyaw = 0.0f;
 }
 
 /**
@@ -406,10 +399,10 @@ void mecanum_wheel_class::inverse_calculate_callback()
         return;
     }
 
-    status.wheel_speed[0] = ( target_speed.vx - target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // FL
-    status.wheel_speed[1] = ( target_speed.vx + target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // RL
-    status.wheel_speed[2] = (-target_speed.vx + target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // RR
-    status.wheel_speed[3] = (-target_speed.vx - target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // FR
+    status.speed[0] = ( target_speed.vx - target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // FL
+    status.speed[1] = ( target_speed.vx + target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // RL
+    status.speed[2] = (-target_speed.vx + target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // RR
+    status.speed[3] = (-target_speed.vx - target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // FR
 }
 
 /**
@@ -419,31 +412,63 @@ void mecanum_wheel_class::forward_calculate_callback()
 {
     for (uint8_t i = 0; i < 4; i++)
     {
-        if (!isfinite(status.wheel_speed[i]))
+        if (!isfinite(status.speed[i]))
         {
             return;
         }
     }
 
-    robot_speed.vx = ( status.wheel_speed[0] + status.wheel_speed[1] - status.wheel_speed[2] - status.wheel_speed[3]) * Wheel_Radius / 4.0f;
-    robot_speed.vy = (-status.wheel_speed[0] + status.wheel_speed[1] + status.wheel_speed[2] - status.wheel_speed[3]) * Wheel_Radius / 4.0f;
-    robot_speed.vw = -(status.wheel_speed[0] + status.wheel_speed[1] + status.wheel_speed[2] + status.wheel_speed[3]) / sum_xy * Wheel_Radius / 4.0f;
+    robot_speed.vx = ( status.speed[0] + status.speed[1] - status.speed[2] - status.speed[3]) * Wheel_Radius / 4.0f;
+    robot_speed.vy = (-status.speed[0] + status.speed[1] + status.speed[2] - status.speed[3]) * Wheel_Radius / 4.0f;
+    robot_speed.vw = -(status.speed[0] + status.speed[1] + status.speed[2] + status.speed[3]) / sum_xy * Wheel_Radius / 4.0f;
 }
 
 /**
- * @brief 计算本帧各轮线位移 ds; 首帧只建基准并返回 false
+ * @brief 麦轮编码器里程计单步
+ * @param __use_imu_yaw true: 航向取 IMU; false: 航向由 dyaw 自持积分
+ * @retval true: 本帧已积分; false: 数据非法 / 首帧建基准 / 仍在死区内
  */
-bool mecanum_wheel_class::calc_wheel_ds()
+bool mecanum_wheel_class::encoder_odometry_step(const bool &__use_imu_yaw)
 {
-    return wheel_odom_calc_ds(wheel_angle, last_angle_rad, ds_cache, Wheel_Radius, first_fb_flag);
-}
+    if (__use_imu_yaw)
+    {
+        if (!isfinite(imu_yaw))
+        {
+            return false;
+        }
 
-/**
- * @brief 机体系位移 → 世界系, 累加到 encoder_pose
- */
-void mecanum_wheel_class::apply_body_step()
-{
-    wheel_odom_apply_body_step(encoder_pose, body_dx, body_dy);
+        // 航向直接取 IMU (首帧即以绝对航向对齐), 位移仍由编码器解算;
+        // 折到 [-π, π) 与编码器航向路线一致, 否则同一 pose.yaw 会出现两种取值范围
+        encoder_pose.yaw = basic_math_modulus_normalization(imu_yaw, 2.0f * PI);
+    }
+
+    float ds[4];
+    if (!wheel_odom_calc_ds(status.angle, last_angle_rad, ds, Wheel_Radius, first_fb_flag))
+    {
+        return false;
+    }
+
+    const float frame_dx = ( ds[0] + ds[1] - ds[2] - ds[3]) / 4.0f;
+    const float frame_dy = (-ds[0] + ds[1] + ds[2] - ds[3]) / 4.0f;
+    const float frame_dyaw = -(ds[0] + ds[1] + ds[2] + ds[3]) / (4.0f * sum_xy);
+
+    float step_dx = 0.0f, step_dy = 0.0f, step_dyaw = 0.0f;
+
+    // 累积-触发死区: 死区内的位移留在累积器里, 达阈值后连同历史位移一次积分
+    if (!wheel_odom_gate_step(frame_dx, frame_dy, frame_dyaw,
+                              odom_residual_dx, odom_residual_dy, odom_residual_dyaw,
+                              step_dx, step_dy, step_dyaw, Odom_Linear_Deadband, Odom_Angle_Deadband))
+    {
+        return false;
+    }
+
+    if (!__use_imu_yaw)
+    {
+        encoder_pose.yaw = basic_math_modulus_normalization(encoder_pose.yaw + step_dyaw, 2.0f * PI);
+    }
+
+    wheel_odom_apply_body_step(encoder_pose, step_dx, step_dy);
+    return true;
 }
 
 /**
@@ -451,25 +476,7 @@ void mecanum_wheel_class::apply_body_step()
  */
 void mecanum_wheel_class::encoder_odometry_callback()
 {
-    if (!calc_wheel_ds())
-    {
-        return;
-    }
-
-    const float frame_dx = ( ds_cache[0] + ds_cache[1] - ds_cache[2] - ds_cache[3]) / 4.0f;
-    const float frame_dy = (-ds_cache[0] + ds_cache[1] + ds_cache[2] - ds_cache[3]) / 4.0f;
-    const float frame_dyaw = -(ds_cache[0] + ds_cache[1] + ds_cache[2] + ds_cache[3]) / (4.0f * sum_xy);
-
-    // 累积-触发死区: 死区内的位移留在累积器里, 达阈值后连同历史位移一次积分
-    if (!wheel_odom_gate_step(frame_dx, frame_dy, frame_dyaw,
-                              odom_residual_dx, odom_residual_dy, odom_residual_dyaw,
-                              body_dx, body_dy, body_dyaw, Odom_Linear_Deadband, Odom_Angle_Deadband))
-    {
-        return;
-    }
-
-    encoder_pose.yaw = basic_math_modulus_normalization(encoder_pose.yaw + body_dyaw, 2.0f * PI);
-    apply_body_step();
+    encoder_odometry_step(false);
 }
 
 /**
@@ -477,32 +484,7 @@ void mecanum_wheel_class::encoder_odometry_callback()
  */
 void mecanum_wheel_class::imu_odometry_callback()
 {
-    if (!isfinite(imu_yaw))
-    {
-        return;
-    }
-
-    // 航向直接取 IMU (首帧即以绝对航向对齐), 位移仍由编码器解算;
-    // 折到 [-π, π) 与编码器航向路线一致, 否则同一 pose.yaw 会出现两种取值范围
-    encoder_pose.yaw = basic_math_modulus_normalization(imu_yaw, 2.0f * PI);
-
-    if (!calc_wheel_ds())
-    {
-        return;
-    }
-
-    const float frame_dx = ( ds_cache[0] + ds_cache[1] - ds_cache[2] - ds_cache[3]) / 4.0f;
-    const float frame_dy = (-ds_cache[0] + ds_cache[1] + ds_cache[2] - ds_cache[3]) / 4.0f;
-    const float frame_dyaw = -(ds_cache[0] + ds_cache[1] + ds_cache[2] + ds_cache[3]) / (4.0f * sum_xy);
-
-    if (!wheel_odom_gate_step(frame_dx, frame_dy, frame_dyaw,
-                              odom_residual_dx, odom_residual_dy, odom_residual_dyaw,
-                              body_dx, body_dy, body_dyaw, Odom_Linear_Deadband, Odom_Angle_Deadband))
-    {
-        return;
-    }
-
-    apply_body_step();
+    encoder_odometry_step(true);
 }
 
 /**
@@ -518,11 +500,7 @@ void mecanum_wheel_class::speed_odometry_callback()
  */
 void mecanum_wheel_class::reset_position()
 {
-    encoder_pose = {0.0f, 0.0f, 0.0f};
-    first_fb_flag = true;
-    odom_residual_dx = 0.0f;
-    odom_residual_dy = 0.0f;
-    odom_residual_dyaw = 0.0f; // 丢弃清零前的未积分位移
+    wheel_odom_reset_pose(encoder_pose, first_fb_flag, odom_residual_dx, odom_residual_dy, odom_residual_dyaw);
 }
 
 /**
@@ -530,13 +508,7 @@ void mecanum_wheel_class::reset_position()
  */
 void mecanum_wheel_class::set_position(const float &__x, const float &__y, const float &__yaw)
 {
-    if (!isfinite(__x) || !isfinite(__y) || !isfinite(__yaw))
-    {
-        return;
-    }
-    encoder_pose.x = __x;
-    encoder_pose.y = __y;
-    encoder_pose.yaw = __yaw;
+    wheel_odom_set_pose(encoder_pose, __x, __y, __yaw);
 }
 
 /**
@@ -552,13 +524,7 @@ void mecanum_wheel_class::reset_speed_position()
  */
 void mecanum_wheel_class::set_speed_position(const float &__x, const float &__y, const float &__yaw)
 {
-    if (!isfinite(__x) || !isfinite(__y) || !isfinite(__yaw))
-    {
-        return;
-    }
-    speed_pose.x = __x;
-    speed_pose.y = __y;
-    speed_pose.yaw = __yaw;
+    wheel_odom_set_pose(speed_pose, __x, __y, __yaw);
 }
 
 /*-----------------------------------steer_wheel-----------------------------------*/
@@ -701,12 +667,6 @@ void steer_wheel_class::init(const float &__target_max_step,
     odom_residual_dx = 0.0f;
     odom_residual_dy = 0.0f;
     odom_residual_dyaw = 0.0f;
-
-    ds_cache[0] = ds_cache[1] = ds_cache[2] = ds_cache[3] = 0.0f;
-
-    body_dx = 0.0f;
-    body_dy = 0.0f;
-    body_dyaw = 0.0f;
 }
 
 /**
@@ -886,27 +846,20 @@ void steer_wheel_class::forward_calculate_callback()
 }
 
 /**
- * @brief 计算本帧各轮线位移 ds; 首帧只建基准并返回 false
+ * @brief 由各轮线位移与舵向角解算机体系位移 (与正解投影一致)
+ * @retval true: 输出有效; false: 任一舵向角或轮位移非有限, 输出已清零
  */
-bool steer_wheel_class::calc_wheel_ds()
+bool steer_wheel_class::calc_body_displacement(const float *__ds, float &__dx, float &__dy, float &__dyaw) const
 {
-    return wheel_odom_calc_ds(wheel_angle, last_wheel_angle, ds_cache, Wheel_Radius, first_fb_flag);
-}
-
-/**
- * @brief 由 ds 与舵向角解算底盘位移 (与正解投影一致)
- */
-void steer_wheel_class::calc_body_displacement()
-{
-    body_dx = 0.0f;
-    body_dy = 0.0f;
-    body_dyaw = 0.0f;
+    __dx = 0.0f;
+    __dy = 0.0f;
+    __dyaw = 0.0f;
 
     for (uint8_t i = 0; i < 4; i++)
     {
-        if (!isfinite(steer_angle[i]) || !isfinite(ds_cache[i]))
+        if (!isfinite(steer_angle[i]) || !isfinite(__ds[i]))
         {
-            return;
+            return false;
         }
     }
 
@@ -918,22 +871,65 @@ void steer_wheel_class::calc_body_displacement()
         const float sin_steer = arm_sin_f32(steer);
         const float cos_steer = arm_cos_f32(steer);
 
-        vx_sum += ds_cache[i] * cos_steer;
-        vy_sum += ds_cache[i] * sin_steer;
-        vw_sum += ds_cache[i] * arm_sin_f32(steer - Wheel_Azimuth[i]) / distance_to_core[i]; // Σ = 4·dyaw
+        vx_sum += __ds[i] * cos_steer;
+        vy_sum += __ds[i] * sin_steer;
+        vw_sum += __ds[i] * arm_sin_f32(steer - Wheel_Azimuth[i]) / distance_to_core[i]; // Σ = 4·dyaw
     }
 
-    body_dx = vx_sum * 0.25f;
-    body_dy = vy_sum * 0.25f;
-    body_dyaw = vw_sum * 0.25f;
+    __dx = vx_sum * 0.25f;
+    __dy = vy_sum * 0.25f;
+    __dyaw = vw_sum * 0.25f;
+    return true;
 }
 
 /**
- * @brief 机体系位移 → 世界系, 累加到 encoder_pose
+ * @brief 舵轮编码器里程计单步
+ * @param __use_imu_yaw true: 航向取 IMU; false: 航向由 dyaw 自持积分
+ * @retval true: 本帧已积分; false: 数据非法 / 首帧建基准 / 仍在死区内
  */
-void steer_wheel_class::apply_body_step()
+bool steer_wheel_class::encoder_odometry_step(const bool &__use_imu_yaw)
 {
-    wheel_odom_apply_body_step(encoder_pose, body_dx, body_dy);
+    if (__use_imu_yaw)
+    {
+        if (!isfinite(imu_yaw))
+        {
+            return false;
+        }
+
+        // 航向直接取 IMU (首帧即以绝对航向对齐), 位移仍由编码器解算;
+        // 折到 [-π, π) 与编码器航向路线一致, 否则同一 pose.yaw 会出现两种取值范围
+        encoder_pose.yaw = basic_math_modulus_normalization(imu_yaw, 2.0f * PI);
+    }
+
+    float ds[4];
+    if (!wheel_odom_calc_ds(wheel_angle, last_wheel_angle, ds, Wheel_Radius, first_fb_flag))
+    {
+        return false;
+    }
+
+    float frame_dx = 0.0f, frame_dy = 0.0f, frame_dyaw = 0.0f;
+    if (!calc_body_displacement(ds, frame_dx, frame_dy, frame_dyaw))
+    {
+        return false;
+    }
+
+    float step_dx = 0.0f, step_dy = 0.0f, step_dyaw = 0.0f;
+
+    // 累积-触发死区: 死区内的位移留在累积器里, 达阈值后连同历史位移一次积分
+    if (!wheel_odom_gate_step(frame_dx, frame_dy, frame_dyaw,
+                              odom_residual_dx, odom_residual_dy, odom_residual_dyaw,
+                              step_dx, step_dy, step_dyaw, Odom_Linear_Deadband, Odom_Angle_Deadband))
+    {
+        return false;
+    }
+
+    if (!__use_imu_yaw)
+    {
+        encoder_pose.yaw = basic_math_modulus_normalization(encoder_pose.yaw + step_dyaw, 2.0f * PI);
+    }
+
+    wheel_odom_apply_body_step(encoder_pose, step_dx, step_dy);
+    return true;
 }
 
 /**
@@ -941,29 +937,7 @@ void steer_wheel_class::apply_body_step()
  */
 void steer_wheel_class::encoder_odometry_callback()
 {
-    if (!calc_wheel_ds())
-    {
-        return;
-    }
-
-    calc_body_displacement();
-
-    float step_dx = 0.0f, step_dy = 0.0f, step_dyaw = 0.0f;
-
-    // 累积-触发死区: 死区内的位移留在累积器里, 达阈值后连同历史位移一次积分
-    if (!wheel_odom_gate_step(body_dx, body_dy, body_dyaw,
-                              odom_residual_dx, odom_residual_dy, odom_residual_dyaw,
-                              step_dx, step_dy, step_dyaw, Odom_Linear_Deadband, Odom_Angle_Deadband))
-    {
-        return;
-    }
-
-    body_dx = step_dx;
-    body_dy = step_dy;
-    body_dyaw = step_dyaw;
-
-    encoder_pose.yaw = basic_math_modulus_normalization(encoder_pose.yaw + body_dyaw, 2.0f * PI);
-    apply_body_step();
+    encoder_odometry_step(false);
 }
 
 /**
@@ -971,36 +945,7 @@ void steer_wheel_class::encoder_odometry_callback()
  */
 void steer_wheel_class::imu_odometry_callback()
 {
-    if (!isfinite(imu_yaw))
-    {
-        return;
-    }
-
-    // 航向直接取 IMU (首帧即以绝对航向对齐), 位移仍由编码器解算;
-    // 折到 [-π, π) 与编码器航向路线一致, 否则同一 pose.yaw 会出现两种取值范围
-    encoder_pose.yaw = basic_math_modulus_normalization(imu_yaw, 2.0f * PI);
-
-    if (!calc_wheel_ds())
-    {
-        return;
-    }
-
-    calc_body_displacement();
-
-    float step_dx = 0.0f, step_dy = 0.0f, step_dyaw = 0.0f;
-
-    if (!wheel_odom_gate_step(body_dx, body_dy, body_dyaw,
-                              odom_residual_dx, odom_residual_dy, odom_residual_dyaw,
-                              step_dx, step_dy, step_dyaw, Odom_Linear_Deadband, Odom_Angle_Deadband))
-    {
-        return;
-    }
-
-    body_dx = step_dx;
-    body_dy = step_dy;
-    body_dyaw = step_dyaw;
-
-    apply_body_step();
+    encoder_odometry_step(true);
 }
 
 /**
@@ -1016,11 +961,7 @@ void steer_wheel_class::speed_odometry_callback()
  */
 void steer_wheel_class::reset_position()
 {
-    encoder_pose = {0.0f, 0.0f, 0.0f};
-    first_fb_flag = true; // 下一帧重建基准, 避免跳变
-    odom_residual_dx = 0.0f;
-    odom_residual_dy = 0.0f;
-    odom_residual_dyaw = 0.0f; // 丢弃清零前的未积分位移
+    wheel_odom_reset_pose(encoder_pose, first_fb_flag, odom_residual_dx, odom_residual_dy, odom_residual_dyaw);
 }
 
 /**
@@ -1028,13 +969,7 @@ void steer_wheel_class::reset_position()
  */
 void steer_wheel_class::set_position(const float &__x, const float &__y, const float &__yaw)
 {
-    if (!isfinite(__x) || !isfinite(__y) || !isfinite(__yaw))
-    {
-        return;
-    }
-    encoder_pose.x = __x;
-    encoder_pose.y = __y;
-    encoder_pose.yaw = __yaw;
+    wheel_odom_set_pose(encoder_pose, __x, __y, __yaw);
 }
 
 /**
@@ -1050,13 +985,7 @@ void steer_wheel_class::reset_speed_position()
  */
 void steer_wheel_class::set_speed_position(const float &__x, const float &__y, const float &__yaw)
 {
-    if (!isfinite(__x) || !isfinite(__y) || !isfinite(__yaw))
-    {
-        return;
-    }
-    speed_pose.x = __x;
-    speed_pose.y = __y;
-    speed_pose.yaw = __yaw;
+    wheel_odom_set_pose(speed_pose, __x, __y, __yaw);
 }
 
 /************************ COPYRIGHT(C) HNAU-Robot **************************/

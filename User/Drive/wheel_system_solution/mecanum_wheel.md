@@ -179,9 +179,8 @@ wheel.speed_odometry_callback();     // 必须在 forward_calculate_callback() �
 | 配置 | `set_projection_x(a)` / `set_projection_y(b)` | 拒绝 `a<0`、`a+b<=0`；同步刷新 `sum_xy` |
 | 配置 | `set_control_period(T)` | 仅影响速度里程计 |
 | 输入 | `update_robot_state({vx,vy,vw})` | 逆解目标速度 |
-| 输入 | `update_now_state({w0..w3})` | 轮速反馈（写 `status.wheel_speed`）；**须在正解之前写入**，逆解会覆盖同一字段 |
-| 输入 | `set_wheel_speed(i, w)` | 单轮写入 `status.wheel_speed` |
-| 输入 | `update_odom_state({θ0..θ3}, imu_yaw)` | 编码器累计角 + IMU 航向 |
+| 输入 | `update_now_state(wheel_state_t, imu_yaw = 0.0f)` | 唯一反馈入口：取 `speed[]` 写 `status.speed`（逐通道校验），取 `angle[]` 提交里程计快照（整帧校验）+ IMU 航向；**须在正解之前写入**，逆解会覆盖 `status.speed`；不传 `imu_yaw` 时按 0 处理，此时应走 `encoder_odometry_callback()` |
+| 输入 | `set_wheel_speed(i, w)` | 单轮写入 `status.speed[i]` |
 | 解算 | `inverse_calculate_callback()` | 输出四轮目标角速度 |
 | 解算 | `forward_calculate_callback()` | 输出 `robot_speed` |
 | 解算 | `encoder_odometry_callback()` / `imu_odometry_callback()` | 编码器里程计两种航向来源 |
@@ -207,22 +206,20 @@ void chassis_init(void)
 
 void chassis_task(void)                         // 1 kHz
 {
-    wheel_speed_t now{};
-    wheel_angle_t ang{};
+    wheel_state_t now{};   // 一份快照同时喂运动学(speed)与里程计(angle)
     for (uint8_t i = 0; i < 4; i++)
     {
-        now.wheel_speed[i] = motor[i].get_speed();
-        ang.angle[i]       = motor[i].get_total_angle();
+        now.speed[i] = motor[i].get_speed();
+        now.angle[i] = motor[i].get_total_angle();
     }
-    chassis_wheel.update_now_state(now);
-    chassis_wheel.update_odom_state(ang, imu.get_yaw());
+    chassis_wheel.update_now_state(now, imu.get_yaw());
 
     chassis_wheel.forward_calculate_callback();     // 先正解
     chassis_wheel.speed_odometry_callback();
     chassis_wheel.imu_odometry_callback();
 
     chassis_wheel.update_robot_state({vx_target, vy_target, vw_target});
-    chassis_wheel.inverse_calculate_callback();     // 后逆解（会覆盖 wheel_speed[]）
+    chassis_wheel.inverse_calculate_callback();     // 后逆解（会覆盖 status.speed[]）
 
     for (uint8_t i = 0; i < 4; i++)
     {

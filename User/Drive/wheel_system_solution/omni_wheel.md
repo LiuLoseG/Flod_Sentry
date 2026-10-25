@@ -98,7 +98,7 @@ w₃ = −( √2/2·( vx + vy) + d·vw ) / R
 
 ## 4. 正运动学（四轮角速度 → 底盘速度）
 
-代码先做一次整体取负 `wsᵢ = −wheel_speed[i]`（把电机角速度还原成 `uᵢ` 的符号族），再做加权求和。化简后为：
+代码先做一次整体取负 `wsᵢ = −status.speed[i]`（把电机角速度还原成 `uᵢ` 的符号族），再做加权求和。化简后为：
 
 ```
 vx =  (√2/4)·R·( w₀ + w₁ − w₂ − w₃)
@@ -106,7 +106,7 @@ vy =  (√2/4)·R·(−w₀ + w₁ + w₂ − w₃)
 vw = −(R / (4·d))·( w₀ + w₁ + w₂ + w₃)
 ```
 
-其中 `wᵢ` 即 `status.wheel_speed[i]`。
+其中 `wᵢ` 即 `status.speed[i]`。
 
 **逆/正解互逆性自检**：把 §3.2 的 `wᵢ` 代入上式应精确还原 `vx/vy/vw`。这是修改任何一处符号后必须跑的验证（本模块的逆解、正解、里程计三处符号是配套的）：
 
@@ -168,9 +168,8 @@ wheel.speed_odometry_callback();     // 必须在 forward_calculate_callback() �
 | 配置 | `set_distance_to_core(d)` | `d ≤ 0` 或非有限值被拒绝 |
 | 配置 | `set_control_period(T)` | `T ≤ 0` 或非有限值被拒绝 |
 | 输入 | `update_robot_state({vx,vy,vw})` | 逆解目标速度 |
-| 输入 | `update_now_state({w0..w3})` | 轮速反馈（写 `status.wheel_speed`）；**须在正解之前写入**，逆解会覆盖同一字段 |
-| 输入 | `set_wheel_speed(i, w)` | 单轮写入 `status.wheel_speed`，`i ≥ 4` 被丢弃 |
-| 输入 | `update_odom_state({θ0..θ3}, imu_yaw)` | 编码器累计角 + IMU 航向 |
+| 输入 | `update_now_state(wheel_state_t, imu_yaw = 0.0f)` | 唯一反馈入口：取 `speed[]` 写 `status.speed`（逐通道校验），取 `angle[]` 提交里程计快照（整帧校验）+ IMU 航向；**须在正解之前写入**，逆解会覆盖 `status.speed`；不传 `imu_yaw` 时按 0 处理，此时应走 `encoder_odometry_callback()` |
+| 输入 | `set_wheel_speed(i, w)` | 单轮写入 `status.speed[i]`，`i ≥ 4` 被丢弃 |
 | 解算 | `inverse_calculate_callback()` | 输出四轮目标角速度 |
 | 解算 | `forward_calculate_callback()` | 输出 `robot_speed` |
 | 解算 | `encoder_odometry_callback()` | 编码器里程计（dyaw 自持） |
@@ -198,15 +197,13 @@ void chassis_init(void)
 void chassis_task(void)                     // 1 kHz
 {
     // ① 反馈
-    wheel_speed_t now{};
-    wheel_angle_t ang{};
+    wheel_state_t now{};   // 一份快照同时喂运动学(speed)与里程计(angle)
     for (uint8_t i = 0; i < 4; i++)
     {
-        now.wheel_speed[i] = motor[i].get_speed();        // rad/s，电机侧符号
-        ang.angle[i]       = motor[i].get_total_angle();  // rad，多圈累计
+        now.speed[i] = motor[i].get_speed();        // rad/s，电机侧符号
+        now.angle[i] = motor[i].get_total_angle();  // rad，多圈累计
     }
-    chassis_wheel.update_now_state(now);
-    chassis_wheel.update_odom_state(ang, imu.get_yaw());
+    chassis_wheel.update_now_state(now, imu.get_yaw());
 
     // ② 正解 + 速度里程计
     chassis_wheel.forward_calculate_callback();

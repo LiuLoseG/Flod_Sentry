@@ -273,16 +273,16 @@ dy  = (1/4)·Σ Δs_i·sin(steer_i)
 dψ  = (1/4)·Σ Δs_i·sin(steer_i − φ_i)/d_i
 ```
 
-死区是**累积量**而非单帧量：三轴累积不足线 1e-4 m / 角 1e-3 rad 时本帧不积分，位移留在 `odom_residual_*` 里，等后续帧攒够再连同历史位移一次积分。慢速运动因此不会被整帧丢掉（最多滞后 1 个死区量），零位噪声的 `+n / −n` 抖动则互相抵消、不会触发。任一舵向角或轮位移非有限时整帧跳过（`calc_body_displacement()` 会先把 `body_dx/dy/dyaw` 清零再返回）。
+死区是**累积量**而非单帧量：三轴累积不足线 1e-4 m / 角 1e-3 rad 时本帧不积分，位移留在 `odom_residual_*` 里，等后续帧攒够再连同历史位移一次积分。慢速运动因此不会被整帧丢掉（最多滞后 1 个死区量），零位噪声的 `+n / −n` 抖动则互相抵消、不会触发。任一舵向角或轮位移非有限时整帧跳过（`calc_body_displacement()` 返回 false，本帧不进死区累积器）。
 
-**两个舵向角来源不要混**：
+**两个舵向角快照用途不同，不要混用**：
 
 | 字段 | 来源 | 用途 |
 |------|------|------|
-| `status.now_angle[]` | `update_now_state()` | 逆解/正解/死区判断（控制回路） |
-| `steer_angle[]` | `update_odom_state()` | 里程计 |
+| `status.now_angle[]` | `update_now_state()`（逐通道校验） | 逆解/正解/死区判断（控制回路） |
+| `steer_angle[]` | `update_now_state()`（整帧校验，与轮向角同批提交） | 里程计 |
 
-两者理论上同源（同一个编码器），但入口不同、更新时机可以不同。若里程计方向正确而控制方向反了（或反之），第一件事就是核对这两路是否接了同一个量、符号是否一致。
+两者同源（同一个编码器、同一次调用），差别只在**校验粒度**：坏通道只跳过控制回路的那一拍，而里程计快照要求轮/舵向角整帧有效才推进，避免用新旧混合快照算出虚假位移。若里程计方向正确而控制方向反了（或反之），第一件事就是核对这两路是否接了同一个量、符号是否一致。
 
 ### 6.2 两条航向路线与速度里程计
 
@@ -329,8 +329,7 @@ wheel.speed_odometry_callback();     // 必须在 forward_calculate_callback() �
 | 配置 | `set_cosine_optimize_enable()` / `set_nearest_optimize_enable()` / `set_target_step_limit_enable()` | 无条件写入 |
 | 配置 | `set_control_period(T)` | 仅速度里程计 |
 | 输入 | `update_robot_state({vx,vy,vw}, control_mode)` | 速度非法时**仍然**更新 `control_mode` |
-| 输入 | `update_now_state({now_angle}, {now_speed})` | 逐通道独立校验 |
-| 输入 | `update_odom_state({θ}, {舵向角}, imu_yaw)` | 轮向角 + 舵向角整帧有效才提交；IMU 航向独立校验 |
+| 输入 | `update_now_state(steer_state_t, wheel_state_t, imu_yaw = 0.0f)` | 唯一反馈入口：取 `steer.angle` / `wheel.speed` 写控制回路（逐通道校验），取两者 `angle` 提交里程计快照（整帧校验）+ IMU 航向；不传 `imu_yaw` 时按 0 处理，此时应走 `encoder_odometry_callback()` |
 | 解算 | `inverse_calculate_callback()` | 逆解 + 三级优化 + 限速 |
 | 解算 | `forward_calculate_callback()` | 正解 → `robot_speed` |
 | 解算 | `encoder_odometry_callback()` / `imu_odometry_callback()` | 编码器里程计 |
@@ -372,23 +371,16 @@ void chassis_init(void)
 void chassis_task(void)                       // 1 kHz
 {
     // ① 反馈
-    steer_angle_t now_angle{};
-    wheel_speed_t now_speed{};
+    steer_state_t now_steer{};   // 舵向：angle 喂正/逆解，speed 供舵向速度环
+    wheel_state_t now_wheel{};   // 轮向：speed 喂正/逆解，angle 喂里程计
     for (uint8_t i = 0; i < 4; i++)
     {
-        now_angle.angle[i]     = steer_motor[i].get_total_angle();
-        now_speed.wheel_speed[i] = drive_motor[i].get_speed();
+        now_steer.angle[i] = steer_motor[i].get_total_angle();
+        now_steer.speed[i] = steer_motor[i].get_speed();
+        now_wheel.angle[i] = drive_motor[i].get_total_angle();
+        now_wheel.speed[i] = drive_motor[i].get_speed();
     }
-    chassis_wheel.update_now_state(now_angle, now_speed);
-
-    wheel_angle_t wheel_angle{};
-    steer_angle_t steer_angle{};
-    for (uint8_t i = 0; i < 4; i++)
-    {
-        wheel_angle.angle[i] = drive_motor[i].get_total_angle();
-        steer_angle.angle[i] = steer_motor[i].get_total_angle();
-    }
-    chassis_wheel.update_odom_state(wheel_angle, steer_angle, imu.get_yaw());
+    chassis_wheel.update_now_state(now_steer, now_wheel, imu.get_yaw());
 
     // ② 正解 + 里程计
     chassis_wheel.forward_calculate_callback();

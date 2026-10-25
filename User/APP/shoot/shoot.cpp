@@ -455,8 +455,8 @@ void shoot_motor_calculate(void)
     // 拨盘电机控制计算
     shoot.trigger_motor.internal_calculate_callback(); 
 
-    bsp_can_1_to_4_transmit(&hfdcan2, 0x200, can2_0x200_tx_data, Can_transmit_frequency_1000Hz);
-    // bsp_can_1_to_4_transmit(&hfdcan3, 0x200, can3_0x200_tx_data, Can_transmit_frequency_1000Hz);
+    bsp_can_1_to_4_transmit(&hfdcan2, 0x200, can2_0x200_tx_data, Can_Transmit_Frequency_Div1);
+    // bsp_can_1_to_4_transmit(&hfdcan3, 0x200, can3_0x200_tx_data, Can_Transmit_Frequency_Div1);
 }
 
 /**
@@ -479,7 +479,7 @@ void shoot_motor_parameter_test(void)
     shoot.target_value.trigger_angle = wave_generator_calc(&trigger_wave);
     shoot.trigger_motor.set_target_angle(shoot.target_value.trigger_angle);
     shoot.trigger_motor.internal_calculate_callback();
-    bsp_can_1_to_4_transmit(&hfdcan3, 0x200, can3_0x200_tx_data, Can_transmit_frequency_1000Hz);
+    bsp_can_1_to_4_transmit(&hfdcan3, 0x200, can3_0x200_tx_data, Can_Transmit_Frequency_Div1);
 }
 
 /**

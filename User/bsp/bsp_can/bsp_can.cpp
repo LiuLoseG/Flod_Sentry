@@ -338,7 +338,7 @@ void bsp_can_1_to_4_transmit(FDCAN_HandleTypeDef *hfdcan, uint16_t can_tx_id, ui
     static uint16_t tick = 0;
 
     // 1000Hz: 每次调用都发送
-    if (frequency == Can_transmit_frequency_1000Hz)
+    if (frequency == Can_Transmit_Frequency_Div1)
     {
         bsp_fdcan_send(hfdcan, can_tx_id, tx_data, 8);
         return;
@@ -347,14 +347,14 @@ void bsp_can_1_to_4_transmit(FDCAN_HandleTypeDef *hfdcan, uint16_t can_tx_id, ui
     tick++;
 
     // 500Hz: 每2次调用发送1次（tick 为偶数时发送）
-    if (frequency == Can_transmit_frequency_500Hz && (tick % 2 == 0))
+    if (frequency == Can_Transmit_Frequency_Div2 && (tick % 2 == 0))
     {
         bsp_fdcan_send(hfdcan, can_tx_id, tx_data, 8);
         return;
     }
     
     // 250Hz: 每4次调用发送1次（tick 为4的倍数时发送）
-    else if (frequency == Can_transmit_frequency_250Hz && (tick % 4 == 0))
+    else if (frequency == Can_Transmit_Frequency_Div4 && (tick % 4 == 0))
     {
         bsp_fdcan_send(hfdcan, can_tx_id, tx_data, 8);
         return;
