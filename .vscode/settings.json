@@ -354,5 +354,5 @@
     "terminal.integrated.cursorStyle": "line",
     "terminal.integrated.cursorBlinking": true,
     "terminal.integrated.background": "#040610",
-    "emberprobe.sampleFrequencyHz": 100
+    "emberprobe.sampleFrequencyHz": 10
 }

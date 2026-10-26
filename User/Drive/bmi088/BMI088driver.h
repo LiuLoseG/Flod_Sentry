@@ -17,6 +17,14 @@
 #define BMI088_LONG_DELAY_TIME 80
 #define BMI088_COM_WAIT_SENSOR_TIME 150
 
+// 一帧数据的突发传输长度, 单位 字节
+#define BMI088_ACCEL_BURST_LEN 6
+#define BMI088_GYRO_BURST_LEN 8
+#define BMI088_TEMP_BURST_LEN 2
+
+// 温度寄存器是 11bit 有符号(MSB 字节全 8 位 + LSB 高 3 位)
+#define BMI088_TEMP_SIGN_BIT    1024
+
 
 #define BMI088_ACCEL_IIC_ADDRESSE (0x18 << 1)
 #define BMI088_GYRO_IIC_ADDRESSE (0x68 << 1)
@@ -80,6 +88,7 @@ enum
     BMI088_GYRO_CTRL_ERROR = 0x0B,
     BMI088_GYRO_INT3_INT4_IO_CONF_ERROR = 0x0C,
     BMI088_GYRO_INT3_INT4_IO_MAP_ERROR = 0x0D,
+    BMI088_COM_ERROR = 0x0E,            // SPI 传输失败/超时
 
     BMI088_SELF_TEST_ACCEL_ERROR = 0x80,
     BMI088_SELF_TEST_GYRO_ERROR = 0x40,
@@ -94,6 +103,38 @@ extern uint8_t BMI088_init(void);
 extern uint8_t bmi088_accel_init(void);
 extern uint8_t bmi088_gyro_init(void);
 
+/**
+ * @brief 读取加速度计 + 陀螺仪(不含温度)
+ * @param gyro  角速度, 单位 rad/s, 量程 ±2000 dps
+ * @param accel 加速度, 单位 m/s^2, 量程 ±3 g
+ * @retval BMI088_NO_ERROR 表示读取成功; 其他值见错误码枚举
+ * @note  1) 只有 2 次 SPI 突发事务(加速度 6B / 陀螺仪 8B), 是 1kHz 姿态采样的主路径
+ *        2) 失败时 gyro/accel 缓冲区保持调用前内容, 调用者应丢弃该帧而不是继续使用
+ */
+extern uint8_t BMI088_read_imu(float gyro[3], float accel[3]);
+
+/**
+ * @brief 仅读取芯片温度
+ * @param temperature 芯片温度, 单位 ℃
+ * @retval BMI088_NO_ERROR 表示读取成功
+ * @note  温度变化远慢于姿态, 不需要按 1kHz 采样; 由调用者降频读取可省下一整次 SPI 事务
+ */
+extern uint8_t BMI088_read_temperature(float *temperature);
+
+/**
+ * @brief 读取一帧 IMU 数据(加速度 + 角速度 + 温度)
+ * @param gyro        角速度, 单位 rad/s, 量程 ±2000 dps
+ * @param accel       加速度, 单位 m/s^2, 量程 ±3 g
+ * @param temperature 芯片温度, 单位 ℃
+ * @retval BMI088_NO_ERROR 表示读取成功; 其他值见错误码枚举
+ * @note  等价于 BMI088_read_imu() + BMI088_read_temperature(), 共 3 次 SPI 突发事务;
+ *        失败时输出缓冲区保持调用前内容
+ */
+extern uint8_t BMI088_read_status(float gyro[3], float accel[3], float *temperature);
+
+/**
+ * @brief 兼容旧接口的数据读取, 忽略错误码(读失败时保留上一帧数据)
+ */
 extern void BMI088_read(volatile float gyro[3], volatile float accel[3], volatile float *temperate);
 
 

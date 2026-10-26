@@ -77,6 +77,14 @@ void IMU_QuaternionEKF_Init(float process_noise1, float process_noise2, float me
 void IMU_QuaternionEKF_Update(float gx, float gy, float gz, float ax, float ay, float az);
 void IMU_QuaternionEKF_Reset(void);
 
+/**
+ * @brief 校验 EKF 内部矩阵缓冲区是否全部分配成功
+ * @return 1 全部有效; 0 存在空指针(RAM 不足), 此时禁止调用 Update
+ * @note  Kalman_Filter_Init 内部使用 pvPortMalloc, FreeRTOS 堆不足时会返回 NULL,
+ *        若不检查将导致矩阵运算全部落在地址 0, 姿态输出变为垃圾值
+ */
+uint8_t IMU_QuaternionEKF_IsReady(void);
+
 float Get_Pitch(void);//get pitch
 float Get_Roll(void);//get roll
 float Get_Yaw(void);//get yaw

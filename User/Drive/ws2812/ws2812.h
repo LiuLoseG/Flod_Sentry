@@ -24,12 +24,15 @@ class ws2812_class
 
         inline void set_color(const ws2812_color &color, const float &__brightness = 1.0f);
 
-        void ws2812_write_color(void);
+        bool ws2812_write_color(void);
+
+        static constexpr uint16_t frame_bytes = 24U;
+        static constexpr uint16_t total_bytes = frame_bytes + 1U;
 
     protected:
 
         // 绑定的SPI
-        spi_class_manager_object *spi_manager_object_;
+        spi_class_manager_object *spi_manager_object_ = nullptr;
 
         // 灯珠的逻辑码
         const uint8_t LEVEL_0_ = 0x60;
@@ -37,7 +40,7 @@ class ws2812_class
 
         // RGB颜色值
         // WS2812的RGB顺序是GRB, 为方便使用, 仍采用RGB顺序
-        ws2812_color color_;
+        ws2812_color color_ = {0, 0, 0};
 
 };
 

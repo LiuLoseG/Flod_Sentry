@@ -146,7 +146,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # User/APP/chassis/chassis.cpp
     # User/APP/steering_wheel/steering_wheel.cpp
     User/APP/gimbal/gimbal.cpp
-    # User/APP/imu_temp_ctrl/imu_temp_ctrl.cpp
+    User/APP/imu_temp_ctrl/imu_temp_ctrl.cpp
     User/APP/shoot/shoot.cpp
     User/APP/robot_decision/robot_decision.cpp
     User/APP/safe_daemon_process/safe_daemon_process.cpp
@@ -245,7 +245,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     User/APP/chassis
     # User/APP/steering_wheel
     User/APP/gimbal
-    # User/APP/imu_temp_ctrl
+    User/APP/imu_temp_ctrl
     User/APP/shoot
     User/APP/robot_decision
     User/APP/safe_daemon_process

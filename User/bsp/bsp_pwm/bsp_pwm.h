@@ -1,24 +1,26 @@
 #pragma once
 
 #include "tim.h"
-#include "stm32H7xx_hal.h"
+#include "stm32h7xx_hal.h"
 
 class pwm_class
 {
     public:
 
         static constexpr uint8_t channel_amount = 2;
-
         // 旧接口：设置PWM相关参数
         void set_tim_handle(TIM_HandleTypeDef *tim_handle) { tim_handle_[0] = tim_handle; };
 
         void set_pwm_channel(uint32_t pwm_channel) { pwm_channel_[0] = pwm_channel; };
 
+        // 设置通道最大占空比。限制只能收紧，不能通过后续调用放宽。
+        void set_max_duty_ratio(float max_duty_ratio);
+
         void set_duty_ration(float duty_ratio);
 
-        void start_pwm(void) { if (tim_handle_[0] != nullptr) { HAL_TIM_PWM_Start(tim_handle_[0], pwm_channel_[0]); } };
+        void start_pwm(void);
 
-        void stop_pwm(void) { if (tim_handle_[0] != nullptr) { HAL_TIM_PWM_Stop(tim_handle_[0], pwm_channel_[0]); } };
+        void stop_pwm(void);
 
         // 新接口：设置PWM相关参数
         void set_tim_handle(uint8_t handle_index, TIM_HandleTypeDef *tim_handle) 
@@ -37,23 +39,14 @@ class pwm_class
             }
         }
 
+        // 设置通道最大占空比。每个 pwm_class 实例独立配置，默认 100%。
+        void set_max_duty_ratio(uint8_t channel_index, float max_duty_ratio);
+
         void set_duty_ration(uint8_t channel_index, float duty_ratio);
 
-        void start_pwm(uint8_t channel_index)
-        {
-            if (tim_handle_[0] != nullptr && channel_index < channel_amount)
-            {
-                HAL_TIM_PWM_Start(tim_handle_[0], pwm_channel_[channel_index]);
-            }
-        }
+        void start_pwm(uint8_t channel_index);
 
-        void stop_pwm(uint8_t channel_index)
-        {
-            if (tim_handle_[0] != nullptr && channel_index < channel_amount)
-            {
-                HAL_TIM_PWM_Stop(tim_handle_[0], pwm_channel_[channel_index]);
-            }
-        }
+        void stop_pwm(uint8_t channel_index);
 
         TIM_HandleTypeDef* get_tim_handle(uint8_t handle_index) { return tim_handle_[handle_index]; }
 
@@ -72,11 +65,16 @@ class pwm_class
 
     private:
 
+        float sanitize_duty_ratio(uint8_t channel_index, float duty_ratio) const;
+        void write_duty_ratio(uint8_t channel_index, float duty_ratio);
+
         // PWM 句柄,handle0为pwm控制器的句柄，handle1为编码器的句柄
         TIM_HandleTypeDef *tim_handle_[channel_amount] = {nullptr, nullptr};    
 
         uint32_t pwm_channel_[channel_amount] = {0, 0};
 
         uint32_t pwm_value_[channel_amount] = {0, 0};
+
+        float max_duty_ratio_[channel_amount] = {1.0f, 1.0f};
 
 };

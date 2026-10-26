@@ -15,6 +15,7 @@
  */
 #include "QuaternionEKF.h"
 #include "arm_math.h"
+#include <math.h>
 
 QEKF_INS_t QEKF_INS={0};
 
@@ -65,7 +66,9 @@ void IMU_QuaternionEKF_Init(float process_noise1, float process_noise2, float me
     QEKF_INS.ConvergeFlag = 0;
     QEKF_INS.ErrorCount = 0;
     QEKF_INS.UpdateCount = 0;
-		QEKF_INS.dt = dt;
+    QEKF_INS.dt = dt;
+    // 加速度低通时间常数, s
+    QEKF_INS.accLPFcoef = (lpf > 0.0f) ? lpf : 0.0f;
     
 	if (lambda > 1)
     {
@@ -97,18 +100,50 @@ void IMU_QuaternionEKF_Init(float process_noise1, float process_noise2, float me
     memcpy(QEKF_INS.IMU_QuaternionEKF.P_data, IMU_QuaternionEKF_P, sizeof(IMU_QuaternionEKF_P));
 }
 
+/**
+ * @brief 校验 EKF 内部矩阵缓冲区是否全部分配成功
+ * @note  Kalman_Filter_Init 用 pvPortMalloc 分配, FreeRTOS 堆不足时返回 NULL.
+ *        一旦为空, 后续矩阵运算会写到地址 0, 姿态输出变成垃圾值且不会报错,
+ *        必须在接入姿态前显式检查.
+ */
+uint8_t IMU_QuaternionEKF_IsReady(void)
+{
+    const KalmanFilter_t *kf = &QEKF_INS.IMU_QuaternionEKF;
+
+    return ((kf->xhat_data != 0) && (kf->xhatminus_data != 0) && (kf->P_data != 0) &&
+            (kf->Pminus_data != 0) && (kf->F_data != 0) && (kf->FT_data != 0) &&
+            (kf->H_data != 0) && (kf->HT_data != 0) && (kf->Q_data != 0) &&
+            (kf->R_data != 0) && (kf->K_data != 0) && (kf->S_data != 0) &&
+            (kf->temp_matrix_data != 0) && (kf->temp_matrix_data1 != 0) &&
+            (kf->temp_vector_data != 0) && (kf->temp_vector_data1 != 0)) ? 1U : 0U;
+}
+
 void IMU_QuaternionEKF_Reset(void)
 {
+    QEKF_INS.UpdateCount = 0;
+    QEKF_INS.ConvergeFlag = 0;
+    QEKF_INS.StableFlag = 0;
+    QEKF_INS.YawRoundCount = 0;
+    QEKF_INS.YawTotalAngle = 0.0f;
+    QEKF_INS.YawAngleLast = 0.0f;
+
     // 初始化矩阵维度信息
     Kalman_Filter_Reset(&QEKF_INS.IMU_QuaternionEKF, 6, 0, 3);
 	
-		memcpy(IMU_QuaternionEKF_P, IMU_QuaternionEKF_P_Const, sizeof(IMU_QuaternionEKF_P));
+	memcpy(IMU_QuaternionEKF_P, IMU_QuaternionEKF_P_Const, sizeof(IMU_QuaternionEKF_P));
     
 	// 姿态初始化
     QEKF_INS.IMU_QuaternionEKF.xhat_data[0] = 1;
     QEKF_INS.IMU_QuaternionEKF.xhat_data[1] = 0;
     QEKF_INS.IMU_QuaternionEKF.xhat_data[2] = 0;
     QEKF_INS.IMU_QuaternionEKF.xhat_data[3] = 0;
+    QEKF_INS.q[0] = 1.0f;
+    QEKF_INS.q[1] = 0.0f;
+    QEKF_INS.q[2] = 0.0f;
+    QEKF_INS.q[3] = 0.0f;
+    QEKF_INS.Roll = 0.0f;
+    QEKF_INS.Pitch = 0.0f;
+    QEKF_INS.Yaw = 0.0f;
 
     // 设定标志位,用自定函数替换kf标准步骤中的SetK(计算增益)以及xhatupdate(后验估计/融合)
     QEKF_INS.IMU_QuaternionEKF.SkipEq3 = TRUE;
@@ -126,6 +161,15 @@ void IMU_QuaternionEKF_Reset(void)
  */
 void IMU_QuaternionEKF_Update(float gx, float gy, float gz, float ax, float ay, float az)
 {
+    if (!QEKF_INS.Initialized || !isfinite(gx) || !isfinite(gy) || !isfinite(gz) ||
+        !isfinite(ax) || !isfinite(ay) || !isfinite(az) ||
+        !isfinite(QEKF_INS.dt) || (QEKF_INS.dt <= 0.0f) || (QEKF_INS.dt > 0.01f))
+    {
+        QEKF_INS.ErrorCount++;
+        IMU_QuaternionEKF_Reset();
+        return;
+    }
+
     // 0.5(Ohm-Ohm^bias)*deltaT,用于更新工作点处的状态转移F矩阵
     volatile float halfgxdt, halfgydt, halfgzdt;
     volatile float accelInvNorm;
@@ -183,12 +227,36 @@ void IMU_QuaternionEKF_Update(float gx, float gy, float gz, float ax, float ay, 
     // set z,单位化重力加速度向量
     
 	QEKF_INS.accl_norm = sqrtf(QEKF_INS.Accel[0] * QEKF_INS.Accel[0] + QEKF_INS.Accel[1] * QEKF_INS.Accel[1] + QEKF_INS.Accel[2] * QEKF_INS.Accel[2]);
-	accelInvNorm = 1.0f / QEKF_INS.accl_norm;
 
+	// 数值安全: 加速度模长异常(通信异常/自由落体/撞击)时, 让量测方向等于预测方向
+	// 使新息为 0, 本拍不修正姿态, 避免 1/0 产生 NaN 污染整条状态链
+	if (!isfinite(QEKF_INS.accl_norm) ||
+	    (QEKF_INS.accl_norm < 1.0f) || (QEKF_INS.accl_norm > 100.0f))
+	{
+		// 用上一拍估计姿态推算重力方向(首次调用时四元数尚未建立, 退化为 +Z)
+		const float q_norm_sq = QEKF_INS.q[0] * QEKF_INS.q[0] + QEKF_INS.q[1] * QEKF_INS.q[1] +
+		                        QEKF_INS.q[2] * QEKF_INS.q[2] + QEKF_INS.q[3] * QEKF_INS.q[3];
+		if (q_norm_sq > 0.5f)
+		{
+			QEKF_INS.IMU_QuaternionEKF.MeasuredVector[0] = 2.0f * (QEKF_INS.q[1] * QEKF_INS.q[3] - QEKF_INS.q[0] * QEKF_INS.q[2]);
+			QEKF_INS.IMU_QuaternionEKF.MeasuredVector[1] = 2.0f * (QEKF_INS.q[0] * QEKF_INS.q[1] + QEKF_INS.q[2] * QEKF_INS.q[3]);
+			QEKF_INS.IMU_QuaternionEKF.MeasuredVector[2] = QEKF_INS.q[0] * QEKF_INS.q[0] - QEKF_INS.q[1] * QEKF_INS.q[1] - QEKF_INS.q[2] * QEKF_INS.q[2] + QEKF_INS.q[3] * QEKF_INS.q[3];
+		}
+		else
+		{
+			QEKF_INS.IMU_QuaternionEKF.MeasuredVector[0] = 0.0f;
+			QEKF_INS.IMU_QuaternionEKF.MeasuredVector[1] = 0.0f;
+			QEKF_INS.IMU_QuaternionEKF.MeasuredVector[2] = 1.0f;
+		}
+	}
+	else
+	{
+		accelInvNorm = 1.0f / QEKF_INS.accl_norm;
 
-	QEKF_INS.IMU_QuaternionEKF.MeasuredVector[0] = QEKF_INS.Accel[0] * accelInvNorm; // 用加速度向量更新量测值
-	QEKF_INS.IMU_QuaternionEKF.MeasuredVector[1] = QEKF_INS.Accel[1] * accelInvNorm;
-	QEKF_INS.IMU_QuaternionEKF.MeasuredVector[2] = QEKF_INS.Accel[2] * accelInvNorm;
+		QEKF_INS.IMU_QuaternionEKF.MeasuredVector[0] = QEKF_INS.Accel[0] * accelInvNorm; // 用加速度向量更新量测值
+		QEKF_INS.IMU_QuaternionEKF.MeasuredVector[1] = QEKF_INS.Accel[1] * accelInvNorm;
+		QEKF_INS.IMU_QuaternionEKF.MeasuredVector[2] = QEKF_INS.Accel[2] * accelInvNorm;
+	}
 
     // get body state
     QEKF_INS.gyro_norm = sqrtf(	QEKF_INS.Gyro[0] * QEKF_INS.Gyro[0] +
@@ -226,10 +294,45 @@ void IMU_QuaternionEKF_Update(float gx, float gy, float gz, float ax, float ay, 
     QEKF_INS.q[1] = QEKF_INS.IMU_QuaternionEKF.FilteredValue[1];
     QEKF_INS.q[2] = QEKF_INS.IMU_QuaternionEKF.FilteredValue[2];
     QEKF_INS.q[3] = QEKF_INS.IMU_QuaternionEKF.FilteredValue[3];
-		
-		arm_atan2_f32(QEKF_INS.q[0]*QEKF_INS.q[1] + QEKF_INS.q[2]*QEKF_INS.q[3], 0.5f - QEKF_INS.q[1]*QEKF_INS.q[1] - QEKF_INS.q[2]*QEKF_INS.q[2],&QEKF_INS.Roll);
-		QEKF_INS.Roll  *=57.29578f; 
-		QEKF_INS.Pitch =57.29578f * asinf(-2.0f * (QEKF_INS.q[1]*QEKF_INS.q[3] - QEKF_INS.q[0]*QEKF_INS.q[2]));
+
+    const float q_norm_sq = QEKF_INS.q[0] * QEKF_INS.q[0] + QEKF_INS.q[1] * QEKF_INS.q[1] +
+                            QEKF_INS.q[2] * QEKF_INS.q[2] + QEKF_INS.q[3] * QEKF_INS.q[3];
+
+    if (!isfinite(q_norm_sq))
+    {
+        // 数值已彻底损坏, 只能整机复位
+        QEKF_INS.ErrorCount++;
+        IMU_QuaternionEKF_Reset();
+        return;
+    }
+
+    if ((q_norm_sq < 0.25f) || (q_norm_sq > 4.0f))
+    {
+        // 模长异常但数值仍有限: 归一化救回本拍, 而不是整机复位.
+        // 整机复位会把 P 打回初值, 下一拍又得到同样的坏值, 形成"每帧复位"的死锁,
+        // 姿态将永久停在 0 且无法自愈.
+        if (q_norm_sq > 1e-6f)
+        {
+            const float inv_norm = invSqrt(q_norm_sq);
+            for (uint8_t i = 0; i < 4U; i++)
+            {
+                QEKF_INS.q[i] *= inv_norm;
+            }
+        }
+        else
+        {
+            // 四元数塌缩到 0 附近, 无法恢复方向
+            QEKF_INS.ErrorCount++;
+            IMU_QuaternionEKF_Reset();
+            return;
+        }
+    }
+
+    arm_atan2_f32(QEKF_INS.q[0]*QEKF_INS.q[1] + QEKF_INS.q[2]*QEKF_INS.q[3], 0.5f - QEKF_INS.q[1]*QEKF_INS.q[1] - QEKF_INS.q[2]*QEKF_INS.q[2],&QEKF_INS.Roll);
+    QEKF_INS.Roll  *=57.29578f;
+        float pitch_sin = -2.0f * (QEKF_INS.q[1]*QEKF_INS.q[3] - QEKF_INS.q[0]*QEKF_INS.q[2]);
+        pitch_sin = fminf(1.0f, fmaxf(-1.0f, pitch_sin));
+    QEKF_INS.Pitch =57.29578f * asinf(pitch_sin);
 		arm_atan2_f32(QEKF_INS.q[1]*QEKF_INS.q[2] + QEKF_INS.q[0]*QEKF_INS.q[3], 0.5f - QEKF_INS.q[2]*QEKF_INS.q[2] - QEKF_INS.q[3]*QEKF_INS.q[3],&QEKF_INS.Yaw); 
     QEKF_INS.Yaw   *=57.29578f; 
 		QEKF_INS.GyroBias[0] = QEKF_INS.IMU_QuaternionEKF.FilteredValue[4];

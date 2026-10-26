@@ -53,29 +53,33 @@ void ws2812_class::color_init(const uint8_t & __red, const uint8_t & __green, co
     color_.blue = __blue;
 }
 
-void ws2812_class::ws2812_write_color(void)
+/**
+ * @brief 发送当前颜色到 WS2812 灯珠
+ */
+bool ws2812_class::ws2812_write_color(void)
 {
     if (spi_manager_object_ == nullptr)
     {
-        return;
+        return false;
     }
 
     uint8_t *tmp_buffer = spi_manager_object_->get_tx_buffer();
     if (tmp_buffer == nullptr)
     {
-        return;
+        return false;
     }
 
-    memset(tmp_buffer, 0, SPI_BUFFER_SIZE); // 清空发送缓冲区
+    memset(tmp_buffer, 0, total_bytes); // 只清要发的 total_bytes 字节, 帧尾天然为低电平
 
     for (uint8_t i = 0; i < 8; i++) 
     {
         tmp_buffer[7 - i] = (color_.green & (1 << i)) ? LEVEL_1_ : LEVEL_0_;
-        tmp_buffer[15 - i] = (color_.red & (1 << i)) ? LEVEL_1_ : LEVEL_0_;
+        tmp_buffer[15 - i] = (color_.red & (1 << i)) ?  LEVEL_1_ : LEVEL_0_;
         tmp_buffer[23 - i] = (color_.blue & (1 << i)) ? LEVEL_1_ : LEVEL_0_;
     }
 
-    bsp_spi_transmit_data(spi_manager_object_->get_spi_handler(), nullptr, 0, GPIO_PIN_SET, 25);
+    const uint8_t status = bsp_spi_transmit_data(spi_manager_object_->get_spi_handler(), nullptr, 0, GPIO_PIN_SET, total_bytes);
+    return (status == 0U);
 }
 
 // void ws2812_color_flicker(void)

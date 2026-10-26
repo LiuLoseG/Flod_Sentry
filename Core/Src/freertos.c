@@ -47,10 +47,19 @@ typedef StaticTask_t osStaticThreadDef_t;
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
+/*------------------------------栈溢出现场记录--------------------------------*/
+/* configCHECK_FOR_STACK_OVERFLOW = 2 时, 内核在每次上下文切换中比对被换出任务栈尾部的
+   填充字(0xA5)是否被破坏, 一旦被覆盖就调用 vApplicationStackOverflowHook(见下方 USER CODE 4).
+   这些变量只写不读, 供调试器(Ozone/J-Link)在停机后直接查看定责. */
+volatile uint32_t           stack_overflow_count     = 0U;   /* 溢出累计次数 */
+volatile TaskHandle_t       stack_overflow_task      = NULL; /* 溢出的任务句柄 */
+volatile const char        *stack_overflow_task_name = NULL; /* 溢出的任务名 */
+volatile uint32_t           stack_overflow_psp       = 0U;   /* 溢出时任务 PSP, 用于定位越界深度 */
+
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
-uint32_t defaultTaskBuffer[ 128 ];
+uint32_t defaultTaskBuffer[ 256 ];
 osStaticThreadDef_t defaultTaskControlBlock;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
@@ -62,45 +71,87 @@ const osThreadAttr_t defaultTask_attributes = {
 };
 /* Definitions for test */
 osThreadId_t testHandle;
+uint32_t testBuffer[ 128 ];
+osStaticThreadDef_t testControlBlock;
 const osThreadAttr_t test_attributes = {
   .name = "test",
-  .stack_size = 128 * 4,
+  .cb_mem = &testControlBlock,
+  .cb_size = sizeof(testControlBlock),
+  .stack_mem = &testBuffer[0],
+  .stack_size = sizeof(testBuffer),
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for remote_control */
 osThreadId_t remote_controlHandle;
+uint32_t remote_controlBuffer[ 512 ];
+osStaticThreadDef_t remote_controlControlBlock;
 const osThreadAttr_t remote_control_attributes = {
   .name = "remote_control",
-  .stack_size = 512 * 4,
+  .cb_mem = &remote_controlControlBlock,
+  .cb_size = sizeof(remote_controlControlBlock),
+  .stack_mem = &remote_controlBuffer[0],
+  .stack_size = sizeof(remote_controlBuffer),
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for shoot */
 osThreadId_t shootHandle;
+uint32_t shootBuffer[ 512 ];
+osStaticThreadDef_t shootControlBlock;
 const osThreadAttr_t shoot_attributes = {
   .name = "shoot",
-  .stack_size = 512 * 4,
+  .cb_mem = &shootControlBlock,
+  .cb_size = sizeof(shootControlBlock),
+  .stack_mem = &shootBuffer[0],
+  .stack_size = sizeof(shootBuffer),
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for gimbal */
 osThreadId_t gimbalHandle;
+uint32_t gimbalBuffer[ 1024 ];
+osStaticThreadDef_t gimbalControlBlock;
 const osThreadAttr_t gimbal_attributes = {
   .name = "gimbal",
-  .stack_size = 1024 * 4,
+  .cb_mem = &gimbalControlBlock,
+  .cb_size = sizeof(gimbalControlBlock),
+  .stack_mem = &gimbalBuffer[0],
+  .stack_size = sizeof(gimbalBuffer),
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for decision_center */
 osThreadId_t decision_centerHandle;
+uint32_t decision_centerBuffer[ 1024 ];
+osStaticThreadDef_t decision_centerControlBlock;
 const osThreadAttr_t decision_center_attributes = {
   .name = "decision_center",
-  .stack_size = 1024 * 4,
+  .cb_mem = &decision_centerControlBlock,
+  .cb_size = sizeof(decision_centerControlBlock),
+  .stack_mem = &decision_centerBuffer[0],
+  .stack_size = sizeof(decision_centerBuffer),
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for safe_daemon */
 osThreadId_t safe_daemonHandle;
+uint32_t safe_daemonBuffer[ 256 ];
+osStaticThreadDef_t safe_daemonControlBlock;
 const osThreadAttr_t safe_daemon_attributes = {
   .name = "safe_daemon",
-  .stack_size = 256 * 4,
+  .cb_mem = &safe_daemonControlBlock,
+  .cb_size = sizeof(safe_daemonControlBlock),
+  .stack_mem = &safe_daemonBuffer[0],
+  .stack_size = sizeof(safe_daemonBuffer),
   .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for ins_task_rtos */
+osThreadId_t ins_task_rtosHandle;
+uint32_t ins_task_rtosBuffer[ 1024 ];
+osStaticThreadDef_t ins_task_rtosControlBlock;
+const osThreadAttr_t ins_task_rtos_attributes = {
+  .name = "ins_task_rtos",
+  .cb_mem = &ins_task_rtosControlBlock,
+  .cb_size = sizeof(ins_task_rtosControlBlock),
+  .stack_mem = &ins_task_rtosBuffer[0],
+  .stack_size = sizeof(ins_task_rtosBuffer),
+  .priority = (osPriority_t) osPriorityHigh,
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -115,9 +166,41 @@ void shoot_task(void *argument);
 void gimbal_task(void *argument);
 void decision_center_task(void *argument);
 void safe_daemon_task(void *argument);
+void imu_task(void *argument);
 
 extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
+
+/* Hook prototypes */
+void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
+
+/* USER CODE BEGIN 4 */
+void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName)
+{
+   /* Run time stack overflow checking is performed if
+   configCHECK_FOR_STACK_OVERFLOW is defined to 1 or 2. This hook function is
+   called if a stack overflow is detected. */
+
+   /* 此刻该任务栈已越界, 这里不调用 LOG_ERROR 之类的格式化输出: 那会再吃掉几百字节栈并
+      可能二次破坏内存, 反而掩盖真因. 改为"留现场 + 停住 CPU", 调试器读上面 4 个变量定责. */
+   taskDISABLE_INTERRUPTS();          /* 冻结现场: 阻止继续调度把证据冲掉 */
+
+   stack_overflow_task      = xTask;
+   stack_overflow_task_name = (const char *)pcTaskName;
+   stack_overflow_psp       = __get_PSP();
+   stack_overflow_count++;
+
+   /* 连着调试器时直接停在溢出现场; 裸跑时 BKPT 会被升级成 HardFault, 会掩盖真因, 故先判调试使能 */
+   if ((CoreDebug->DHCSR & CoreDebug_DHCSR_C_DEBUGEN_Msk) != 0U)
+   {
+      __asm volatile ("bkpt 0");
+   }
+
+   for (;;)
+   {
+   }
+}
+/* USER CODE END 4 */
 
 /**
   * @brief  FreeRTOS initialization
@@ -166,6 +249,9 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of safe_daemon */
   safe_daemonHandle = osThreadNew(safe_daemon_task, NULL, &safe_daemon_attributes);
+
+  /* creation of ins_task_rtos */
+  ins_task_rtosHandle = osThreadNew(imu_task, NULL, &ins_task_rtos_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -303,6 +389,24 @@ __weak void safe_daemon_task(void *argument)
     osDelay(1);
   }
   /* USER CODE END safe_daemon_task */
+}
+
+/* USER CODE BEGIN Header_imu_task */
+/**
+* @brief Function implementing the ins_task_rtos thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_imu_task */
+__weak void imu_task(void *argument)
+{
+  /* USER CODE BEGIN imu_task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END imu_task */
 }
 
 /* Private application code --------------------------------------------------*/

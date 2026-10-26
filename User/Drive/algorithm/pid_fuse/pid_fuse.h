@@ -27,7 +27,7 @@ typedef struct pid_config_struct
     float Kd;
     float Kf;                   // 前馈增益
 
-    // float time_step;            // 时间片步长
+    // float time_step;         // 时间片步长
     float dead_band;            // 死区范围
 
     float Ki_speed_A;           // 变速积分阀值A
