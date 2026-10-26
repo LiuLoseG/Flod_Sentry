@@ -171,37 +171,6 @@ void imu_task(void *argument);
 extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
-/* Hook prototypes */
-void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
-
-/* USER CODE BEGIN 4 */
-void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName)
-{
-   /* Run time stack overflow checking is performed if
-   configCHECK_FOR_STACK_OVERFLOW is defined to 1 or 2. This hook function is
-   called if a stack overflow is detected. */
-
-   /* 此刻该任务栈已越界, 这里不调用 LOG_ERROR 之类的格式化输出: 那会再吃掉几百字节栈并
-      可能二次破坏内存, 反而掩盖真因. 改为"留现场 + 停住 CPU", 调试器读上面 4 个变量定责. */
-   taskDISABLE_INTERRUPTS();          /* 冻结现场: 阻止继续调度把证据冲掉 */
-
-   stack_overflow_task      = xTask;
-   stack_overflow_task_name = (const char *)pcTaskName;
-   stack_overflow_psp       = __get_PSP();
-   stack_overflow_count++;
-
-   /* 连着调试器时直接停在溢出现场; 裸跑时 BKPT 会被升级成 HardFault, 会掩盖真因, 故先判调试使能 */
-   if ((CoreDebug->DHCSR & CoreDebug_DHCSR_C_DEBUGEN_Msk) != 0U)
-   {
-      __asm volatile ("bkpt 0");
-   }
-
-   for (;;)
-   {
-   }
-}
-/* USER CODE END 4 */
-
 /**
   * @brief  FreeRTOS initialization
   * @param  None
