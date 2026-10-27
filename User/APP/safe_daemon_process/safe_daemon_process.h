@@ -126,11 +126,13 @@ const safe_daemon_process_table_t *safe_daemon_process_get_table(uint8_t *count)
 
 /**
  * @brief 把设备成员函数 void T::alive_check() 适配成 safe_daemon_process_check_client_t
+ * @note  模板参数为设备指针类型(TPtr = T *), 而非 T 或 T&:
+ *        decltype(设备对象表达式) 得到的是引用类型, 直接用会形成"指向引用的指针"
  */
-template <typename T>
+template <typename TPtr>
 inline void safe_daemon_process_check_adapter(void *device)
 {
-    static_cast<T *>(device)->alive_check();
+    static_cast<TPtr>(device)->alive_check();
 }
 
 /**
@@ -166,12 +168,13 @@ struct safe_daemon_process_online_value<lk_motor_status>
 /**
  * @brief 把设备成员函数 get_status() 适配成 safe_daemon_process_status_client_t
  * @note 以 get_status() 的返回类型自动匹配"在线"枚举值, 因此业务侧无需再写状态适配函数
+ * @note 模板参数同上, 为设备指针类型(TPtr = T *)
  */
-template <typename T>
+template <typename TPtr>
 inline uint8_t safe_daemon_process_status_adapter(void *device)
 {
-    typedef decltype(static_cast<T *>(nullptr)->get_status()) status_enum_t;
-    return (static_cast<T *>(device)->get_status() == safe_daemon_process_online_value<status_enum_t>::value) ? 1 : 0;
+    typedef decltype(static_cast<TPtr>(nullptr)->get_status()) status_enum_t;
+    return (static_cast<TPtr>(device)->get_status() == safe_daemon_process_online_value<status_enum_t>::value) ? 1 : 0;
 }
 
 /**
@@ -183,8 +186,8 @@ inline uint8_t safe_daemon_process_status_adapter(void *device)
  */
 #define SAFE_DAEMON_PROCESS_REGISTER(name, obj, period_ms)                                   \
     safe_daemon_process_register((name), static_cast<void *>(&(obj)),                         \
-                                 &safe_daemon_process_check_adapter<decltype(obj)>,           \
-                                 &safe_daemon_process_status_adapter<decltype(obj)>,          \
+                                 &safe_daemon_process_check_adapter<decltype(&(obj))>,        \
+                                 &safe_daemon_process_status_adapter<decltype(&(obj))>,       \
                                  (period_ms))
 #endif
 

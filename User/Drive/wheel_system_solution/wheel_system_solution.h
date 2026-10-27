@@ -289,7 +289,7 @@ protected:
     // 常量
 
     // 驱动轮半径，m
-    static constexpr float Wheel_Radius = 0.0761f;
+    static constexpr float Wheel_Radius = 0.0485f;
     // 轮心在机体系 X/Y 方向的投影，m
     static constexpr float Wheel_Projection_X = 0.12f;
     static constexpr float Wheel_Projection_Y = 0.11f;
@@ -354,9 +354,9 @@ public:
     void init(const float &__target_max_step = 0.12f,
               const float &__max_wheel_speed = 25.0f,
               const float &__min_limit = 0.1f,
-              const float &__steer_angle_deadband = 0.05f,
+              const float &__steer_angle_deadband = 0.003f,
               const float &__flip_hysteresis = 0.1f,
-              const float &__control_period = 0.002f,
+              const float &__control_period = 0.001f,
               const bool &__cosine_optimize_enable = true,
               const bool &__nearest_optimize_enable = true,
               const bool &__target_step_limit_enable = true);
@@ -449,7 +449,7 @@ protected:
     // 常量
 
     // 驱动轮半径，m
-    static constexpr float Wheel_Radius = 0.0761f;
+    static constexpr float Wheel_Radius = 0.0485f;
     // 轮心到底盘中心的距离，m
     static constexpr float Wheel_Distance_To_Core = 0.239f;
 
@@ -463,10 +463,11 @@ protected:
     static constexpr float Speed_Odom_Angle_Deadband = 0.05f;
 
     // 编码器零位角, rad: 编码器读数为 0 时轮子实际指向相对 +X 的偏差
-    static constexpr float Enc_Zero_Angle[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    // 轮组方位角, rad ( PI/4, 3PI/4, 5PI/4, 7PI/4)
+    static constexpr float Enc_Zero_Angle[4] = {-0.972831547f, 0.0214757323f, 0.961134911f, 3.10228467f};
+    // 轮组方位角, rad ( PI/4, 3PI/4, 5PI/4, 7PI/4), 唯一事实来源: 逆解/正解/里程计都按它现算 sin/cos
     static constexpr float Wheel_Azimuth[4] = {PI / 4.0f, 3.0f * PI / 4.0f, 5.0f * PI / 4.0f, 7.0f * PI / 4.0f};
-    // 方位角 sin/cos
+    // 方位角方向余弦, 仅供参考(轮心位置 = d·(cosφ, sinφ)); 勿用于旋转耦合项!
+    // 本车舵向编码器正向与几何 CCW 相反, 耦合项是 d·(+sinφ, +cosφ), 对应正解 sin(θ+φ), 而非这里的 −sinφ
     static constexpr float Wheel_Azimuth_Sin[4] = {SQRT_2_2, SQRT_2_2, -SQRT_2_2, -SQRT_2_2};
     static constexpr float Wheel_Azimuth_Cos[4] = {SQRT_2_2, -SQRT_2_2, -SQRT_2_2, SQRT_2_2};
     // 各轮心到底盘中心的距离(旋转力臂半径), m

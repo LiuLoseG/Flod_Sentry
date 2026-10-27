@@ -180,6 +180,10 @@ v_c,i,x = vx − vw·d_i·sin φ_i        v_c,i,y = vy + vw·d_i·cos φ_i
 
 改符号的唯一正确做法：整车全反 → 改**上层电机符号**；单轮反 → 改**那一路电机**；绝不单独改逆解或单独改正解 / 里程计（三者符号配套，§3.6(d) 即为此设）。
 
+> **本车现状（舵向角符号）**：舵向编码器正向与几何 CCW 相反，`Wheel_Azimuth[i]` 在舵向角度坐标系里表现为镜像，因此**旋转耦合项取 `d·(+sinφᵢ, +cosφᵢ)`**：逆解 `vel_x = vx + vw·d·sinφ`、`vel_y = vy + vw·d·cosφ`，正解与编码器里程计配套写 `u·sin(θ+φ)/d`。
+> 这三处（逆解 / 正解 / 里程计）是**同一约定的三面**，任何一处单独取反，纯自旋时实测 `vw` 与 `dyaw` 都会变成 `0` 或反号。实测校核见 [steer_wheel.md §3.2](./steer_wheel.md)。
+> 上层保持 `+vw` 为左转（CCW 正），不要在 [`chassis_overall_mobile_control()`](../APP/chassis/chassis.cpp) 再对 `map_robot_speed.vw` 取反。
+
 ### 3.9 单位
 
 | 量 | 单位 | 备注 |

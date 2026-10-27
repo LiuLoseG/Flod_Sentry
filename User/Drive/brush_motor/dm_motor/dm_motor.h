@@ -56,8 +56,6 @@ typedef enum
 typedef enum
 {
     Motor_DM_Control_Method_Normal_MIT = 0,         // 传统模式, MIT控制报文
-    Motor_DM_Control_Method_Angle_MIT,              // 传统模式, MIT控制报文, 角度控制
-    Motor_DM_Control_Method_Omega_MIT,              // 传统模式, MIT控制报文, 角速度控制
 
     Motor_DM_Control_Method_Normal_Angle_Omega,     // 传统模式, 位置速度控制报文, 角度+角速度控制
     Motor_DM_Control_Method_Normal_Omega,           // 传统模式, 速度控制报文, 角速度控制

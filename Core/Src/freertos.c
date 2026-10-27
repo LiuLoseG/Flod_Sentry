@@ -93,30 +93,6 @@ const osThreadAttr_t remote_control_attributes = {
   .stack_size = sizeof(remote_controlBuffer),
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for shoot */
-osThreadId_t shootHandle;
-uint32_t shootBuffer[ 512 ];
-osStaticThreadDef_t shootControlBlock;
-const osThreadAttr_t shoot_attributes = {
-  .name = "shoot",
-  .cb_mem = &shootControlBlock,
-  .cb_size = sizeof(shootControlBlock),
-  .stack_mem = &shootBuffer[0],
-  .stack_size = sizeof(shootBuffer),
-  .priority = (osPriority_t) osPriorityNormal,
-};
-/* Definitions for gimbal */
-osThreadId_t gimbalHandle;
-uint32_t gimbalBuffer[ 1024 ];
-osStaticThreadDef_t gimbalControlBlock;
-const osThreadAttr_t gimbal_attributes = {
-  .name = "gimbal",
-  .cb_mem = &gimbalControlBlock,
-  .cb_size = sizeof(gimbalControlBlock),
-  .stack_mem = &gimbalBuffer[0],
-  .stack_size = sizeof(gimbalBuffer),
-  .priority = (osPriority_t) osPriorityNormal,
-};
 /* Definitions for decision_center */
 osThreadId_t decision_centerHandle;
 uint32_t decision_centerBuffer[ 1024 ];
@@ -153,6 +129,18 @@ const osThreadAttr_t ins_task_rtos_attributes = {
   .stack_size = sizeof(ins_task_rtosBuffer),
   .priority = (osPriority_t) osPriorityHigh,
 };
+/* Definitions for chassis */
+osThreadId_t chassisHandle;
+uint32_t chassisBuffer[ 1024 ];
+osStaticThreadDef_t chassisControlBlock;
+const osThreadAttr_t chassis_attributes = {
+  .name = "chassis",
+  .cb_mem = &chassisControlBlock,
+  .cb_size = sizeof(chassisControlBlock),
+  .stack_mem = &chassisBuffer[0],
+  .stack_size = sizeof(chassisBuffer),
+  .priority = (osPriority_t) osPriorityNormal,
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -162,11 +150,10 @@ const osThreadAttr_t ins_task_rtos_attributes = {
 void StartDefaultTask(void *argument);
 void test_task(void *argument);
 void remote_control_task(void *argument);
-void shoot_task(void *argument);
-void gimbal_task(void *argument);
 void decision_center_task(void *argument);
 void safe_daemon_task(void *argument);
 void imu_task(void *argument);
+void chassis_task(void *argument);
 
 extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
@@ -207,12 +194,6 @@ void MX_FREERTOS_Init(void) {
   /* creation of remote_control */
   remote_controlHandle = osThreadNew(remote_control_task, NULL, &remote_control_attributes);
 
-  /* creation of shoot */
-  shootHandle = osThreadNew(shoot_task, NULL, &shoot_attributes);
-
-  /* creation of gimbal */
-  gimbalHandle = osThreadNew(gimbal_task, NULL, &gimbal_attributes);
-
   /* creation of decision_center */
   decision_centerHandle = osThreadNew(decision_center_task, NULL, &decision_center_attributes);
 
@@ -221,6 +202,9 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of ins_task_rtos */
   ins_task_rtosHandle = osThreadNew(imu_task, NULL, &ins_task_rtos_attributes);
+
+  /* creation of chassis */
+  chassisHandle = osThreadNew(chassis_task, NULL, &chassis_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -288,42 +272,6 @@ __weak void remote_control_task(void *argument)
   /* USER CODE END remote_control_task */
 }
 
-/* USER CODE BEGIN Header_shoot_task */
-/**
-* @brief Function implementing the shoot thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_shoot_task */
-__weak void shoot_task(void *argument)
-{
-  /* USER CODE BEGIN shoot_task */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END shoot_task */
-}
-
-/* USER CODE BEGIN Header_gimbal_task */
-/**
-* @brief Function implementing the gimbal thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_gimbal_task */
-__weak void gimbal_task(void *argument)
-{
-  /* USER CODE BEGIN gimbal_task */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END gimbal_task */
-}
-
 /* USER CODE BEGIN Header_decision_center_task */
 /**
 * @brief Function implementing the decision_center thread.
@@ -376,6 +324,24 @@ __weak void imu_task(void *argument)
     osDelay(1);
   }
   /* USER CODE END imu_task */
+}
+
+/* USER CODE BEGIN Header_chassis_task */
+/**
+* @brief Function implementing the chassis thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_chassis_task */
+__weak void chassis_task(void *argument)
+{
+  /* USER CODE BEGIN chassis_task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END chassis_task */
 }
 
 /* Private application code --------------------------------------------------*/

@@ -52,9 +52,11 @@ static constexpr float Wheel_Azimuth_Sin[4] = { SQRT_2_2,  SQRT_2_2, -SQRT_2_2, 
 static constexpr float Wheel_Azimuth_Cos[4] = { SQRT_2_2, -SQRT_2_2, -SQRT_2_2,  SQRT_2_2 };
 ```
 
-改了方位角（例如不是标准正方形布局）就要按新角度重算这两个 sin/cos 表，否则逆解的旋转分量和正解的力矩分量会一起错。
+`Wheel_Azimuth` 是**唯一事实来源**：逆解 / 正解 / 里程计都用 `arm_sin_f32/arm_cos_f32(Wheel_Azimuth[i])` 现算（`arm_*_f32` 是 512 项查表 + 索引回绕，输入超出 `[-π, π]` 也正确，误差约 2e-5，对舵向角可忽略）。
 
-**编码器零位** `Enc_Zero_Angle[4]`（当前全 0）：舵向电机读数为 0 时，轮子实际指向与 +X 的偏差。逆解在把 `solution_angle` 变成下发目标时加它，正解/里程计在把 `now_angle`/`steer_angle` 变成几何角时减它。它是**编译期常量**：标定后改这个数组并重新编译，运行期不修改（因此同固件的所有实例共用同一组零位）。
+> ⚠️ `Wheel_Azimuth_Sin/Cos` 现在**没有任何调用点**，只作为"轮心位置方向余弦"的参考保留。**不要**用它们拼旋转耦合项：本车舵向编码器正向与几何 CCW 相反，耦合项是 `d·(+sinφ, +cosφ)`（见 §3.1），而 `Wheel_Azimuth_Sin` 是 `−sinφ`。改了方位角以 `Wheel_Azimuth` 为准。
+
+**编码器零位** `Enc_Zero_Angle[4]`（已按实车逐轮标定，见头文件当前值）：舵向电机读数为 0 时，轮子实际指向与 +X 的偏差。逆解在把 `solution_angle` 变成下发目标时加它，正解/里程计在把 `now_angle`/`steer_angle` 变成几何角时减它。它是**编译期常量**：标定后改这个数组并重新编译，运行期不修改（因此同固件的所有实例共用同一组零位）。
 
 ---
 
@@ -83,22 +85,24 @@ static constexpr float Wheel_Azimuth_Cos[4] = { SQRT_2_2, -SQRT_2_2, -SQRT_2_2, 
 
 ### 3.1 推导
 
-轮心位置 `rᵢ = dᵢ·(cosφᵢ, sinφᵢ)`，底盘角速度 `vw`，则轮心线速度
+轮心位置 `rᵢ = dᵢ·(cosφᵢ, sinφᵢ)`，底盘角速度 `vw`，右手系下轮心线速度为 `v_body + ω × rᵢ = ( vx − vw·dᵢ·sinφᵢ , vy + vw·dᵢ·cosφᵢ )`。
 
-```
-v_c,i = v_body + ω × rᵢ = ( vx − vw·dᵢ·sinφᵢ ,  vy + vw·dᵢ·cosφᵢ )
+**但本车的舵向编码器正向与几何 CCW 相反**，`Wheel_Azimuth[i]` 在舵向角度坐标系里表现为镜像（`φ → −φ`），于是耦合项变成 `dᵢ·(+sinφᵢ, +cosφᵢ)`：
+
+```cpp
+vel_x = vx + vw·dᵢ·sinφᵢ        // 实现: target_speed.vx + target_speed.vw * arm_sin_f32(Wheel_Azimuth[i]) * dᵢ
+vel_y = vy + vw·dᵢ·cosφᵢ        // 实现: target_speed.vy + target_speed.vw * arm_cos_f32(Wheel_Azimuth[i]) * dᵢ
 ```
 
 舵轮可以指向任意方向，所以不需要像全向轮/麦轮那样做投影——解算结果就是这个速度矢量的**极坐标**：
 
 ```
-vel_x = vx − vw·dᵢ·sinφᵢ        (实现里是 target_speed.vw * Wheel_Azimuth_Sin[i] * dᵢ)
-vel_y = vy + vw·dᵢ·cosφᵢ
-
 |v|   = √(vel_x² + vel_y²)        (arm_sqrt_f32)
 ωᵢ    = |v| / R                   → solution_speed[i]（恒 ≥ 0）
 θᵢ*   = atan2f(vel_y, vel_x)      → solution_angle[i]（单圈 [-π,π)）
 ```
+
+> **耦合项符号是配套约定，不能单改一侧。** 正解与编码器里程计对应写 `vᵢ·sin(θᵢ+φᵢ)/dᵢ`（见 §5、§6）；若逆解用 `+`、正解仍用 `sin(θᵢ−φᵢ)`，纯自旋时四轮贡献正负抵消，实测 `vw` 与里程计 `dyaw` 会恒为 0。
 
 `|v| = 0` 时 `atan2f(0,0)` 无意义，实现里保持当前舵向角（不是清零），避免舵向在零速瞬间乱指；写入的是折到单圈、并扣除零位后的**几何角** `wrap(now_angle − 零位)`，与 `atan2f` 分支同框。
 
@@ -107,10 +111,12 @@ vel_y = vy + vw·dᵢ·cosφᵢ
 `vx = vy = 0, vw ≠ 0` 时：
 
 ```
-|v| = |vw|·dᵢ ,   θᵢ* = φᵢ + 90°·sign(vw)
+|v| = |vw|·dᵢ ,   θᵢ* = 90° − φᵢ   (+180° when vw < 0)
 ```
 
 即四轮各自指向自己圆周的切线方向，速度大小与到中心距离成正比。用这个工况可以一次性校核方位角表与力臂是否正确。
+
+按当前方位角表，`vw > 0` 时轮 0~3 的解算角为 `{+45°, −45°, −135°, +135°}`，`vw < 0` 时整体差 180°。这个姿态是**两两反向平行的"叉状"**，视觉上对手性不敏感（两条对角线上的轮子互换位置而已），**不能靠肉眼看指向判断旋向，只能靠实际旋转方向确认**。
 
 ---
 
@@ -247,10 +253,10 @@ u_i     = now_speed[i] · R;                        // 轮子线速度
 
 vx = (1/4)·Σ u_i·cos(steer_i)
 vy = (1/4)·Σ u_i·sin(steer_i)
-vw = (1/4)·Σ u_i·sin(steer_i − φ_i) / d_i
+vw = (1/4)·Σ u_i·sin(steer_i + φ_i) / d_i
 ```
 
-推导：轮心速度 = 底盘速度 + 旋转速度，取轮子方向上的分量得 `u_i`，其中切向分量 `u_i·sin(θ_i−φ_i)` 全部来自底盘旋转（`= vw·d_i`），法向分量来自平移。因为 `Σsinφᵢ = Σcosφᵢ = 0`，四个轮子的平移项求和后旋转项恰好抵消，所以这组"1/4 平均"在**四轮数据相互一致**时是精确解，不需要矩阵求逆。
+推导：轮心速度 = 底盘速度 + 旋转速度，取轮子方向上的分量得 `u_i`，其中切向分量 `u_i·sin(θ_i+φ_i)` 全部来自底盘旋转（`= vw·d_i`），法向分量来自平移。因为 `Σsinφᵢ = Σcosφᵢ = 0`，四个轮子的平移项求和后旋转项恰好抵消，所以这组"1/4 平均"在**四轮数据相互一致**时是精确解，不需要矩阵求逆。`+φ` 与 §3.1 逆解的 `+sinφ/+cosφ` 耦合项严格配套。
 
 由此得到两个实用性结论：
 
@@ -270,7 +276,7 @@ vw = (1/4)·Σ u_i·sin(steer_i − φ_i) / d_i
 steer_i = wrap(steer_angle[i] − Enc_Zero_Angle[i], 2π)    // 舵向编码器实测角
 dx  = (1/4)·Σ Δs_i·cos(steer_i)
 dy  = (1/4)·Σ Δs_i·sin(steer_i)
-dψ  = (1/4)·Σ Δs_i·sin(steer_i − φ_i)/d_i
+dψ  = (1/4)·Σ Δs_i·sin(steer_i + φ_i)/d_i
 ```
 
 死区是**累积量**而非单帧量：三轴累积不足线 1e-4 m / 角 1e-3 rad 时本帧不积分，位移留在 `odom_residual_*` 里，等后续帧攒够再连同历史位移一次积分。慢速运动因此不会被整帧丢掉（最多滞后 1 个死区量），零位噪声的 `+n / −n` 抖动则互相抵消、不会触发。任一舵向角或轮位移非有限时整帧跳过（`calc_body_displacement()` 返回 false，本帧不进死区累积器）。

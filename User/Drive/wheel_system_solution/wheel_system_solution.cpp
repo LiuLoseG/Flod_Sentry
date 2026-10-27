@@ -683,9 +683,14 @@ void steer_wheel_class::inverse_calculate_callback()
     const bool cmd_zero = (fabsf(target_speed.vx) <= min_limit) && (fabsf(target_speed.vy) <= min_limit) && (fabsf(target_speed.vw) <= min_limit);
 
     // 逐轮逆解
+    // 旋转耦合项取 d·(+sinφ, +cosφ)·vw: 这是本车舵向编码器正向(与几何 CCW 相反)下的等效形式.
+    // 正解 / 编码器里程计必须用配套的 sin(θ+φ), 只改一侧会让实测 vw 与里程计 dyaw 变号.
     for (uint8_t i = 0; i < 4; i++)
     {
-        const float vel_x = target_speed.vx - target_speed.vw * Wheel_Azimuth_Sin[i] * distance_to_core[i];
+        // const float vel_x = target_speed.vx + target_speed.vw * arm_sin_f32(Wheel_Azimuth[i]) * distance_to_core[i];
+        // const float vel_y = target_speed.vy + target_speed.vw * arm_cos_f32(Wheel_Azimuth[i]) * distance_to_core[i];
+
+        const float vel_x = target_speed.vx + target_speed.vw * Wheel_Azimuth_Sin[i] * distance_to_core[i];
         const float vel_y = target_speed.vy + target_speed.vw * Wheel_Azimuth_Cos[i] * distance_to_core[i];
 
         float vel_modulus = 0.0f;
@@ -809,8 +814,9 @@ void steer_wheel_class::inverse_calculate_callback()
 
 /**
  * @brief 舵轮正运动学解算
- * @note  角速度分量直接取 sin(θ−φ), 与 θ 同源、形式直观; 代价是每轮多一次 arm_sin_f32 查表,
+ * @note  角速度分量直接取 sin(θ+φ), 与 θ 同源、形式直观; 代价是每轮多一次 arm_sin_f32 查表,
  *        sin/cos 已为 vx/vy 算过, 该调用相对整周期解算可忽略.
+ *        此处的 "+" 与逆解耦合项 d·(+sinφ, +cosφ) 配套, 不可写成 sin(θ−φ).
  */
 void steer_wheel_class::forward_calculate_callback()
 {
@@ -836,8 +842,10 @@ void steer_wheel_class::forward_calculate_callback()
 
         vx_sum += wheel_linear_speed * cos_steer;
         vy_sum += wheel_linear_speed * sin_steer;
-        // 角速度分量: v_i·sin(θ_i−φ_i)/R_i = ω, 四轮求和再平均即底盘角速度
-        vw_sum += wheel_linear_speed * arm_sin_f32(steer - Wheel_Azimuth[i]) / distance_to_core[i];
+        // 角速度分量: v_i·sin(θ_i+φ_i)/R_i = ω, 四轮求和再平均即底盘角速度.
+        // 符号必须与逆解的耦合项 d·(sinφ, cosφ) 配套(见 inverse_calculate_callback);
+        // 若写成 sin(θ_i−φ_i), 纯自旋时四轮贡献互相抵消, 实测 vw 恒为 0.
+        vw_sum += wheel_linear_speed * arm_sin_f32(steer + Wheel_Azimuth[i]) / distance_to_core[i];
     }
 
     robot_speed.vx = vx_sum * 0.25f;
@@ -873,7 +881,7 @@ bool steer_wheel_class::calc_body_displacement(const float *__ds, float &__dx, f
 
         vx_sum += __ds[i] * cos_steer;
         vy_sum += __ds[i] * sin_steer;
-        vw_sum += __ds[i] * arm_sin_f32(steer - Wheel_Azimuth[i]) / distance_to_core[i]; // Σ = 4·dyaw
+        vw_sum += __ds[i] * arm_sin_f32(steer + Wheel_Azimuth[i]) / distance_to_core[i]; // Σ = 4·dyaw, 符号与正解/逆解配套
     }
 
     __dx = vx_sum * 0.25f;
