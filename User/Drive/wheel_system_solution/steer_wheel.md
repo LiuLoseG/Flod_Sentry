@@ -44,19 +44,30 @@
 | 2 | RR | 225° | −√2/2 | −√2/2 |
 | 3 | FR | 315° | −√2/2 | +√2/2 |
 
-两组常量必须同步：
+单一事实来源，`φᵢ` 只以单位方向向量的形式存在（`(cosφᵢ, sinφᵢ)` 即轮心单位方向）：
 
 ```cpp
-static constexpr float Wheel_Azimuth[4]     = { PI/4, 3PI/4, 5PI/4, 7PI/4 };
-static constexpr float Wheel_Azimuth_Sin[4] = { SQRT_2_2,  SQRT_2_2, -SQRT_2_2, -SQRT_2_2 };
-static constexpr float Wheel_Azimuth_Cos[4] = { SQRT_2_2, -SQRT_2_2, -SQRT_2_2,  SQRT_2_2 };
+static constexpr float Wheel_Unit_Cos[4] = { SQRT_2_2, -SQRT_2_2, -SQRT_2_2,  SQRT_2_2 };
+static constexpr float Wheel_Unit_Sin[4] = { SQRT_2_2,  SQRT_2_2, -SQRT_2_2, -SQRT_2_2 };
 ```
 
-`Wheel_Azimuth` 是**唯一事实来源**：逆解 / 正解 / 里程计都用 `arm_sin_f32/arm_cos_f32(Wheel_Azimuth[i])` 现算（`arm_*_f32` 是 512 项查表 + 索引回绕，输入超出 `[-π, π]` 也正确，误差约 2e-5，对舵向角可忽略）。
+不再单独维护 `Wheel_Azimuth[4]` 角度表：逆解耦合项、正解与里程计的切向投影**只认这一组数**，手性由它们直接表达。头文件里配了两条 `static_assert` 手性守卫（FL/RL 在 `+Y` 半平面、FL/FR 在 `+X` 半平面）；若有人把这张表误写成顺时针（镜像），会**直接编译失败**，而不是留到台架上表现为"原地转不动"。
 
-> ⚠️ `Wheel_Azimuth_Sin/Cos` 现在**没有任何调用点**，只作为"轮心位置方向余弦"的参考保留。**不要**用它们拼旋转耦合项：本车舵向编码器正向与几何 CCW 相反，耦合项是 `d·(+sinφ, +cosφ)`（见 §3.1），而 `Wheel_Azimuth_Sin` 是 `−sinφ`。改了方位角以 `Wheel_Azimuth` 为准。
+> ⚠️ **历史坑（v1.2 及以前）**：旧实现用 `d·(+sinφ, +cosφ)` 作耦合项，理由是"舵向编码器正向与几何 CCW 相反"。这个推理不成立——`v + ω×r` 由底盘刚体几何决定，与编码器读数方向无关；编码器反向只该影响"编码器角 ↔ 几何角"的换算（`几何 = −(读数 − 零位)`、`目标读数 = 零位 − 解算角`），不会把旋转场变成镜像场。`(ωsinφ, ωcosφ)` 是散度与旋度都为 0 的剪切场，纯自旋时四轮推力两两对消，表现为**小陀螺憋死不转**。详见 §3.1。
 
-**编码器零位** `Enc_Zero_Angle[4]`（已按实车逐轮标定，见头文件当前值）：舵向电机读数为 0 时，轮子实际指向与 +X 的偏差。逆解在把 `solution_angle` 变成下发目标时加它，正解/里程计在把 `now_angle`/`steer_angle` 变成几何角时减它。它是**编译期常量**：标定后改这个数组并重新编译，运行期不修改（因此同固件的所有实例共用同一组零位）。
+**编码器零位与方向** `Enc_Zero_Angle[4]`（已按实车逐轮标定，见头文件当前值）：舵向电机读数为 `Enc_Zero_Angle[i]` 时，轮子指向 `+X`。它是**编译期常量**：标定后改这个数组并重新编译，运行期不修改（因此同固件的所有实例共用同一组零位）。
+
+方向由 `steer_encoder_direction`（`set_steer_encoder_direction(±1)`）单独表达，两者合成一条换算：
+
+```
+几何角 = dir · (读数 − Enc_Zero_Angle)        下发读数 = Enc_Zero_Angle + dir · 几何角
+```
+
+`dir = +1` 表示电机读数正向与几何 CCW 同向，`-1` 表示反向。**编码器反向时只改这一个量**——逆解、正解、里程计和舵向目标会自动一起保持一致。绝不要去翻逆解的耦合项：那会把旋转场变成镜像剪切场，小陀螺会原地憋死不转（见 §3.1）。
+
+> **本车配置**：`chassis_init()` 里通过 `chassis.steer_wheel.init(-1.0f)` 的首参指定极性为 −1（实车舵向编码器反向）。**上层不要再对 `vy`/`vw` 取反**——那是旧镜像逆解时代的补丁，与正确的运动学叠加会变成双重镜像。
+>
+> **上机首检**：只给 `vw > 0`（`vx = vy = 0`）。四轮应为风车姿态**且车体原地逆时针转**。若车体顺时针转、或平移左右反了，就是 `dir` 与实际极性不符，改这一个量即可。`dir` 错误不会报任何错——逆解/正解/里程计三者依然自洽，只是整台车镜像；而**里程计的 `vy` 与 `yaw` 会随之反向**，一旦接入闭环就会发散。
 
 ---
 
@@ -75,6 +86,7 @@ static constexpr float Wheel_Azimuth_Cos[4] = { SQRT_2_2, -SQRT_2_2, -SQRT_2_2, 
 | 余弦优化开关 | `cosine_optimize_enable` | `true` | 关闭后见 §4.4 的联动 |
 | 就近转位开关 | `nearest_optimize_enable` | `true` | 允许目标角加/减 π 并反转轮向 |
 | 斜坡限幅开关 | `target_step_limit_enable` | `true` | 关闭后直接下发解算角 |
+| 舵向编码器方向 | `steer_encoder_direction` | +1 | +1 = 读数正向与几何 CCW 同向，-1 = 反向；由 `init()` 首参指定（非法值按 +1），运行期可用 setter 覆盖 |
 | 编码器里程计位移累积死区 | — | 1e-4 m | 累积到该值才积分（抖动互抵，慢速不丢） |
 | 编码器里程计角度累积死区 | — | 1e-3 rad | 同上 |
 | 速度里程计线/角死区 | — | 0.01 m/s / 0.05 rad/s | 速度口径，与调用频率无关 |
@@ -85,14 +97,14 @@ static constexpr float Wheel_Azimuth_Cos[4] = { SQRT_2_2, -SQRT_2_2, -SQRT_2_2, 
 
 ### 3.1 推导
 
-轮心位置 `rᵢ = dᵢ·(cosφᵢ, sinφᵢ)`，底盘角速度 `vw`，右手系下轮心线速度为 `v_body + ω × rᵢ = ( vx − vw·dᵢ·sinφᵢ , vy + vw·dᵢ·cosφᵢ )`。
-
-**但本车的舵向编码器正向与几何 CCW 相反**，`Wheel_Azimuth[i]` 在舵向角度坐标系里表现为镜像（`φ → −φ`），于是耦合项变成 `dᵢ·(+sinφᵢ, +cosφᵢ)`：
+轮心位置 `rᵢ = dᵢ·(cosφᵢ, sinφᵢ)`，底盘角速度 `vw`，右手系下轮心线速度为 `v_body + ω × rᵢ = ( vx − vw·dᵢ·sinφᵢ , vy + vw·dᵢ·cosφᵢ )`：
 
 ```cpp
-vel_x = vx + vw·dᵢ·sinφᵢ        // 实现: target_speed.vx + target_speed.vw * arm_sin_f32(Wheel_Azimuth[i]) * dᵢ
-vel_y = vy + vw·dᵢ·cosφᵢ        // 实现: target_speed.vy + target_speed.vw * arm_cos_f32(Wheel_Azimuth[i]) * dᵢ
+vel_x = vx − vw·dᵢ·sinφᵢ        // 实现: target_speed.vx - target_speed.vw * Wheel_Unit_Sin[i] * dᵢ
+vel_y = vy + vw·dᵢ·cosφᵢ        // 实现: target_speed.vy + target_speed.vw * Wheel_Unit_Cos[i] * dᵢ
 ```
+
+> ⚠️ **`vel_x` 的 `−` 不能改成 `+`。** 这是刚体运动学的固有形式，与舵向编码器读数方向无关。若舵向编码器正向与几何 CCW 相反，正确做法是在"编码器角 ↔ 几何角"换算处取负（`几何 = −(读数 − 零位)`、`目标读数 = 零位 − 解算角`），而不是把耦合项翻成 `d·(+sinφ, +cosφ)`——后者是散度与旋度都为 0 的**镜像剪切场**，不是旋转场，纯自旋时四轮推力两两对消，车原地不动而电流顶满。
 
 舵轮可以指向任意方向，所以不需要像全向轮/麦轮那样做投影——解算结果就是这个速度矢量的**极坐标**：
 
@@ -102,21 +114,23 @@ vel_y = vy + vw·dᵢ·cosφᵢ        // 实现: target_speed.vy + target_speed
 θᵢ*   = atan2f(vel_y, vel_x)      → solution_angle[i]（单圈 [-π,π)）
 ```
 
-> **耦合项符号是配套约定，不能单改一侧。** 正解与编码器里程计对应写 `vᵢ·sin(θᵢ+φᵢ)/dᵢ`（见 §5、§6）；若逆解用 `+`、正解仍用 `sin(θᵢ−φᵢ)`，纯自旋时四轮贡献正负抵消，实测 `vw` 与里程计 `dyaw` 会恒为 0。
+> **耦合项符号是配套约定，不能单改一侧。** 正解与编码器里程计对应写 `vᵢ·sin(θᵢ−φᵢ)/dᵢ`（见 §5、§6）；若逆解用 `−sinφ`、正解仍用 `sin(θᵢ+φᵢ)`，纯自旋时四轮贡献正负抵消，实测 `vw` 与里程计 `dyaw` 会恒为 0。
 
 `|v| = 0` 时 `atan2f(0,0)` 无意义，实现里保持当前舵向角（不是清零），避免舵向在零速瞬间乱指；写入的是折到单圈、并扣除零位后的**几何角** `wrap(now_angle − 零位)`，与 `atan2f` 分支同框。
 
 ### 3.2 纯旋转校核
 
-`vx = vy = 0, vw ≠ 0` 时：
+`vx = vy = 0, vw ≠ 0` 时，代入 `vel_x = −vw·dᵢ·sinφᵢ`、`vel_y = vw·dᵢ·cosφᵢ` 得：
 
 ```
-|v| = |vw|·dᵢ ,   θᵢ* = 90° − φᵢ   (+180° when vw < 0)
+|v| = |vw|·dᵢ ,   θᵢ* = 90° + φᵢ   (+180° when vw < 0)
 ```
 
-即四轮各自指向自己圆周的切线方向，速度大小与到中心距离成正比。用这个工况可以一次性校核方位角表与力臂是否正确。
+即四轮各自指向**自己圆周的切线方向**（切向单位向量 `tᵢ = (−sinφᵢ, cosφᵢ)`，其方位角正是 `90° + φᵢ`），速度大小与到中心距离成正比，四轮合力矩全部同号，车体绕中心 CCW 旋转。用这个工况可以一次性校核方位角表与力臂是否正确。
 
-按当前方位角表，`vw > 0` 时轮 0~3 的解算角为 `{+45°, −45°, −135°, +135°}`，`vw < 0` 时整体差 180°。这个姿态是**两两反向平行的"叉状"**，视觉上对手性不敏感（两条对角线上的轮子互换位置而已），**不能靠肉眼看指向判断旋向，只能靠实际旋转方向确认**。
+`vw > 0` 时轮 0~3 的解算角为 `{+135°, +225°, +315°, +45°}`（等价写作 `{135°, −135°, −45°, 45°}`），即**标准"风车"姿态**：四轮严格垂直于各自半径、沿逆时针环绕。
+
+> **台架最快判定**：只给 `vw > 0`（`vx = vy = 0`）。正确实现四轮应呈上述风车形且车体原地逆时针转；若看到 `{45°, −45°, −135°, 135°}`（每轮沿对角线朝外/朝内）且车体不动，就是耦合项镜像了。**只测直行（`vx > 0`）查不出这个问题**——纯平移时两种写法给出的解完全相同。
 
 ---
 
@@ -169,12 +183,26 @@ target = clamp(desired, prev − target_max_step, prev + target_max_step);
 
 ### 4.4 舵向死区（`steer_angle_deadband`）
 
-命中条件：`cosine_optimize_enable` 为真 **且** `|真实未对齐角| < 死区` **且** `control_mode != 2`。命中时锁当前角、`error = 0`、`k = 1`（不修舵、不削减轮速）。
+命中条件：`cosine_optimize_enable` 为真 **且** `|真实未对齐角| < 死区` **且** `control_mode != 2`。命中时 **只把 `k` 置 1（不削减轮速）**，舵向目标**照常朝解算角收敛**。
+
+> ⚠️ **死区绝不能把目标改写成 `now_angle`。** 早期实现这么写（"命中时锁当前角"），等于把残余误差**永久放弃**：四轮各自锁在距目标至多 `deadband` 的任意位置，机械摩擦/齿隙/刚度不同 → 锁定位置不同 → 形成静态的指向不一致。
+>
+> 失效方向高度不对称，这是"**vx 走直线、vy 走圆弧**"的根因：
+>
+> | 指令 | 四轮目标 | 死区锁定的后果 |
+> |------|----------|----------------|
+> | `vx`（前进） | 都在零位 0° | 本来就不用转舵，残余误差≈0，四轮一致 → **直线** |
+> | `vy`（横移） | 都要转到 90° | 四轮在不同时刻进入死区、锁在不同位置 → 前后不对称 → 持续净力矩 → **圆弧** |
+>
+> 仿真复现（`deadband = 0.05 rad`，四轮起步参差）：旧实现 vy 时三轮收敛到 90.01°、FR 锁在 87.44°，**单轮差 2.6° 就产生 `ω = 0.032 rad/s`**，1 m 行程横漂约 16 mm 且持续弯曲。修复后四轮最大偏差 0.01°，`ω = 0`。
+>
+> 敏感度：前后反向静差 1° → `ω ≈ 0.059 rad/s`；3° → `ω ≈ 0.177 rad/s`（1 m 行程漂 88 mm）。
 
 判据必须用**真实未对齐角**（解算目标 − 当前舵向，见 §4.6），不能用斜坡后的目标误差：斜坡每拍只放行一小步，用斜坡误差会让"正在大角度换向"被误判成"已对齐"，从而放行满轮速。
 
 - **只在余弦开关为真时生效**：关掉余弦优化会连带失去防抖。若要"满轮速 + 防抖"，保留余弦开关并调小死区即可。
 - `control_mode == 2`（小陀螺）跳过死区，否则舵向会被锁死无法跟随旋转。取值沿用 `chassis_mode_e`：`0` 无力、`1` 跟随、`2` 小陀螺。
+- 死区只影响"是否削减轮速"，**不影响舵向精度**：目标永远是解算角，位置环（纯 P）+ 速度环（PI）会把误差消到只剩各轮物理静摩擦（实测 < 0.4°）。
 
 ### 4.5 余弦优化（`cosine_optimize_enable`）
 
@@ -235,7 +263,7 @@ k       = constrain(cos_use³, 0, 1);
 
 全局限速：`max|optimize_speed| > max_wheel_speed` 时四轮按同一比例缩放（`solution_speed` 同步缩放，避免下游改读它绕过限速），不改变运动形态。
 
-`error_angle[]` 记录的是**真实未对齐角** `e_eff`（公式与逐项含义见 §4.5；已折到所选方向分支，0 表示对齐；落在死区内时被清零），可以直接用来判断"是否已对齐"：
+`error_angle[]` 记录的是**真实未对齐角** `e_eff`（公式与逐项含义见 §4.5；已折到所选方向分支，0 表示对齐）。它**恒为真实值，不会因落在死区内被清零**——这样遥测能直接看到残余误差，而不是被伪装成 0：
 
 ```
 |error_angle[i]| < 阈值   ⇔   |wrap(solution_angle[i] + 零位 − now_angle[i], 2π)| < 阈值      (dir = +1)
@@ -248,15 +276,23 @@ k       = constrain(cos_use³, 0, 1);
 ## 5. 正运动学
 
 ```cpp
-steer_i = wrap(now_angle[i] − Enc_Zero_Angle[i], 2π);
-u_i     = now_speed[i] · R;                        // 轮子线速度
+steer_i = wrap(dir·(now_angle[i] − Enc_Zero_Angle[i]), 2π);   // dir = steer_encoder_direction
+u_i     = now_speed[i] · R;                                    // 轮子线速度
 
 vx = (1/4)·Σ u_i·cos(steer_i)
 vy = (1/4)·Σ u_i·sin(steer_i)
-vw = (1/4)·Σ u_i·sin(steer_i + φ_i) / d_i
+vw = (1/4)·Σ u_i·sin(steer_i − φ_i) / d_i
 ```
 
-推导：轮心速度 = 底盘速度 + 旋转速度，取轮子方向上的分量得 `u_i`，其中切向分量 `u_i·sin(θ_i+φ_i)` 全部来自底盘旋转（`= vw·d_i`），法向分量来自平移。因为 `Σsinφᵢ = Σcosφᵢ = 0`，四个轮子的平移项求和后旋转项恰好抵消，所以这组"1/4 平均"在**四轮数据相互一致**时是精确解，不需要矩阵求逆。`+φ` 与 §3.1 逆解的 `+sinφ/+cosφ` 耦合项严格配套。
+推导：轮心速度 = 底盘速度 + 旋转速度。取轮子方向上的分量得 `u_i`，再取该速度在"绕中心的切向" `t_i = (−sinφ_i, cosφ_i)` 上的分量即得该轮的 `vw·d_i`：
+
+```
+u_i·(p_i · t_i) = u_i·[cosθ_i·(−sinφ_i) + sinθ_i·cosφ_i] = u_i·sin(θ_i − φ_i) = vw·d_i
+```
+
+`−φ` 与 §3.1 逆解的 `−sinφ/+cosφ` 耦合项严格互为逆运算。实现上不额外查表：`sin(θ−φ) = sinθ·cosφ − cosθ·sinφ`，直接复用已算好的 `sin/cos` 与 `Wheel_Unit_Sin/Cos`。
+
+精度条件：`vx/vy` 的等权平均要求四轮轮心对称（`Σr_i = 0`），`vw` 的等权平均要求四轮力臂相等。本车四轮对称且 `distance_to_core` 全为同一个值，两个条件都满足，因此上式是**精确解**。若将来给某几轮设了不同的力臂，`vw` 需改为加权形式 `Σ d_i·u_i·sin(θ_i−φ_i) / Σ d_i²`。
 
 由此得到两个实用性结论：
 
@@ -272,14 +308,19 @@ vw = (1/4)·Σ u_i·sin(steer_i + φ_i) / d_i
 舵轮里程计比另外两种多一步：轮位移必须投影到**实测舵向角**上（不能用目标角）。
 
 ```
-Δs_i   = (θᵢ − θᵢ_prev)·R                                // 轮向编码器差分
-steer_i = wrap(steer_angle[i] − Enc_Zero_Angle[i], 2π)    // 舵向编码器实测角
+Δs_i    = (θᵢ − θᵢ_prev)·R                                    // 轮向编码器差分
+steer_i = wrap(dir·(steer_angle[i] − Enc_Zero_Angle[i]), 2π)   // 舵向编码器实测角(几何化)
+
 dx  = (1/4)·Σ Δs_i·cos(steer_i)
 dy  = (1/4)·Σ Δs_i·sin(steer_i)
-dψ  = (1/4)·Σ Δs_i·sin(steer_i + φ_i)/d_i
+dψ  = (1/4)·Σ Δs_i·sin(steer_i − φ_i) / d_i
 ```
 
+三轴合成与 §5 形式完全一致，只把 `u_i` 从"轮子线速度"换成"本帧线位移"。
+
 死区是**累积量**而非单帧量：三轴累积不足线 1e-4 m / 角 1e-3 rad 时本帧不积分，位移留在 `odom_residual_*` 里，等后续帧攒够再连同历史位移一次积分。慢速运动因此不会被整帧丢掉（最多滞后 1 个死区量），零位噪声的 `+n / −n` 抖动则互相抵消、不会触发。任一舵向角或轮位移非有限时整帧跳过（`calc_body_displacement()` 返回 false，本帧不进死区累积器）。
+
+**编码器跳变保护**：`wheel_odom_calc_ds()` 对每轮做 `|Δθ| > π`（半圈）判定。100 Hz 下半圈已相当于 314 rad/s 以上，任何真实轮速都达不到，出现即说明编码器丢帧 / 上电复位 / 多圈计数跳变（C620 的 `total_round` 是帧间差分统计的，一帧丢包就会跳整圈，约 `2πR/19 ≈ 16 mm`）。命中时**整帧重建基准并丢弃本帧**，而不是只丢坏的那一轮——只丢单轮会让其余三轮照常积分，算出一个方向错误却"看起来合理"的位移。
 
 **两个舵向角快照用途不同，不要混用**：
 
@@ -307,7 +348,7 @@ wheel.speed_odometry_callback();     // 必须在 forward_calculate_callback() �
 | `target_max_step` | 舵向响应快、电流尖峰大 | 舵向平滑、换向变慢 | 按舵向电机最大角速度 × `T` 取，如 20 rad/s × 1 ms = 0.02 |
 | `max_wheel_speed` | 允许更高车速 | 更保守，容易触发等比缩放 | 按轮向电机额定角速度，如 25 rad/s ≈ 1.9 m/s |
 | `min_limit` | 更容易判为"静止"，小指令被吞 | 静止时可能仍有细微爬行 | 0.05 ~ 0.1 |
-| `steer_angle_deadband` | 抖动少、对准精度差 | 对准精度高、易抖 | 0.03 ~ 0.06 rad |
+| `steer_angle_deadband` | 轮速削减更晚结束（对舵向精度无影响） | 换向过程中更早按 `cos³` 削减轮速 | 0.03 ~ 0.06 rad（**不影响指向精度**，见 §4.4） |
 | `flip_hysteresis` | 边界更稳定、±90° 附近略偏"不反转" | 换向更灵、易在 90° 边界抖动 | 0.05 ~ 0.15 rad（须 < 90°） |
 | `cosine_optimize_enable` | — | — | 保持 `true`（同时启用死区） |
 | `nearest_optimize_enable` | — | — | 保持 `true`（换向更快） |
@@ -327,15 +368,16 @@ wheel.speed_odometry_callback();     // 必须在 forward_calculate_callback() �
 
 | 分类 | 接口 | 说明 |
 |------|------|------|
-| 初始化 | `init(max_step, max_speed, min_limit, deadband, flip_hyst, T, cos_en, nearest_en, step_en)` | 非法值回退默认 |
+| 初始化 | `init(enc_dir, max_step, max_speed, min_limit, deadband, flip_hyst, T, cos_en, nearest_en, step_en)` | 首选参数为舵向编码器极性（非法值按 +1）；其余非法值回退默认 |
 | 配置 | `set_target_max_step()` / `set_max_wheel_speed()` | 必须 > 0 |
 | 配置 | `set_min_limit()` / `set_steer_angle_deadband()` | 允许 0（关闭判定/死区） |
 | 配置 | `set_flip_hysteresis(h)` | 就近转位翻转迟滞，须在 `[0, π/2)`，否则拒绝 |
 | 配置 | `set_distance_to_core(i, d)` | 逐轮力臂，`d ≤ 0` 被拒绝 |
 | 配置 | `set_cosine_optimize_enable()` / `set_nearest_optimize_enable()` / `set_target_step_limit_enable()` | 无条件写入 |
+| 配置 | `set_steer_encoder_direction(±1)` | 舵向编码器极性，非 ±1 / 非有限被拒绝；`init()` 首参已可指定，此接口用于运行期改（会覆盖 init 的设置） |
 | 配置 | `set_control_period(T)` | 仅速度里程计 |
 | 输入 | `update_robot_state({vx,vy,vw}, control_mode)` | 速度非法时**仍然**更新 `control_mode` |
-| 输入 | `update_now_state(steer_state_t, wheel_state_t, imu_yaw = 0.0f)` | 唯一反馈入口：取 `steer.angle` / `wheel.speed` 写控制回路（逐通道校验），取两者 `angle` 提交里程计快照（整帧校验）+ IMU 航向；不传 `imu_yaw` 时按 0 处理，此时应走 `encoder_odometry_callback()` |
+| 输入 | `update_now_state(steer_state_t, wheel_state_t, imu_yaw = NAN)` | 唯一反馈入口：取 `steer.angle` / `wheel.speed` 写控制回路（逐通道校验），取两者 `angle` 提交里程计快照（整帧校验）+ IMU 航向；`imu_yaw` 默认 `NAN` = 不更新，未接 IMU 时航向保持原值而非被钉成 0 |
 | 解算 | `inverse_calculate_callback()` | 逆解 + 三级优化 + 限速 |
 | 解算 | `forward_calculate_callback()` | 正解 → `robot_speed` |
 | 解算 | `encoder_odometry_callback()` / `imu_odometry_callback()` | 编码器里程计 |
@@ -357,7 +399,8 @@ static steer_wheel_class chassis_wheel;
 
 void chassis_init(void)
 {
-    chassis_wheel.init(/*max_step*/ 0.02f,
+    chassis_wheel.init(/*enc_dir*/ -1.0f,     // 舵向编码器极性, 本车反向; 同向填 +1
+                       /*max_step*/ 0.02f,
                        /*max_speed*/ 25.0f,
                        /*min_limit*/ 0.1f,
                        /*deadband*/ 0.05f,
@@ -412,7 +455,7 @@ void chassis_task(void)                       // 1 kHz
 |------|------------|------|
 | 舵向位置环 | `get_optimize_angle(i)` | **多圈**、含零位、已做就近转位 + 斜坡限幅 |
 | 轮向速度环 | `get_optimize_speed(i)` | 已含余弦削减与方向符号（±1） |
-| 对齐判定 | `get_error_angle(i)` | `abs(error_angle) < 阈值` 即已对齐（已折到所选方向分支、死区内清零） |
+| 对齐判定 | `get_error_angle(i)` | `abs(error_angle) < 阈值` 即已对齐（已折到所选方向分支，恒为真实值） |
 | 诊断 / 日志 | `get_solution_*`、`get_error_angle`、`get_cosine_optimize`、`get_optimize_direction` | 只读，不下发 |
 | 底盘速度反馈 | `get_robot_speed_vx/vy/vw()` | 舵向大幅调整的过渡期只是估计值 |
 
@@ -428,16 +471,20 @@ void chassis_task(void)                       // 1 kHz
 
 1. **编码器零位**：手动把四轮摆到指向 `+X`，读舵向编码器值写入 `Enc_Zero_Angle[4]` 常量并重新编译（约定"编码器角 = 几何角 + 零位"，逆解加、正解减）。
 2. **力臂**：原地 `vw = 1 rad/s` 转 2π，航向超转 → 力臂偏小。
-3. **方位角表**：单独给 `vx`，四轮目标角应收敛到 45°/135°/225°/315°。都偏同一角度 → 零位问题；两两偏不同角度 → 方位角表问题。
-4. **轮速上限**：给一个明显超限的车速，确认四轮等比缩小且比例一致。
-5. **斜坡 / 死区**：从 §7 起手值出发，按"抖动 ↔ 响应"折中微调。
+3. **方位角 / 手性**：单独给 `vx`，四轮目标角应收敛到 0°（都朝前）。再单独给 `vw > 0`，四轮应为风车姿态 135°/225°/315°/45° 且**车体原地逆时针转**——这一项才能查出耦合项镜像，只测直行查不出来。
+4. **编码器极性**：上一步若车体转向相反，把 `init()` 首参改为 `+1`（或运行期调 `set_steer_encoder_direction(+1)`）重测，不要改耦合项。
+5. **轮速上限**：给一个明显超限的车速，确认四轮等比缩小且比例一致。
+6. **斜坡 / 死区**：从 §7 起手值出发，按"抖动 ↔ 响应"折中微调。
 
 ### 10.2 常见问题（舵轮特有）
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
-| 四轮指向成 90° 交叉（本该对边平行） | 方位角表与 sin/cos 表不一致，或某轮电机方向反 | 先核对常量，再逐轮点动 |
-| 转向呈"风车"状 | 方位角符号约定反（φ 应按 CCW 正） | 检查方位角递增顺序 |
+| 四轮指向成 90° 交叉（本该对边平行） | 方位角表与正逆解不配套，或某轮电机方向反 | 先核对 `Wheel_Unit_*` 与手性守卫，再逐轮点动 |
+| 纯自旋（小陀螺）电流顶满、车原地不转 | 旋转耦合项写成了镜像场 `d·(+sinφ, +cosφ)` | 逆解必须是 `vx − ω·d·sinφ`；正解必须是 `sin(θ−φ)` |
+| 只给 `vw` 时四轮呈"朝外/朝内的叉状"（45°/−45°/−135°/135°） | 同上，耦合项镜像 | 正确姿态是风车形 135°/225°/315°/45° |
+| 原地转的方向与指令相反、或平移 `vy` 反向 | `steer_encoder_direction` 与实际极性不符 | 改 `init()` 首参为 `+1`（或 `set_steer_encoder_direction(+1)`），别动耦合项 |
+| **`vx` 走直线、`vy` 走圆弧** | 死区把目标改写成 `now_angle`，四轮锁在各自不同的残余误差上（见 §4.4） | 死区只控制轮速削减，目标必须继续朝解算角收敛 |
 | 停车后舵向自己摆动 | 未命中静止判定（`min_limit` 太小） | 提高 `min_limit`，或检查上位是否在停车时发噪声 |
 | 小速度时舵向原地抖 | 死区太小，或余弦开关被关 | 提高死区；保持余弦开关为真 |
 | 慢速爬行（应停未停） | `min_limit` 与有效小指令量级重叠 | 在 0.05 ~ 0.1 之间二分 |

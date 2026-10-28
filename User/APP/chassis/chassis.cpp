@@ -108,7 +108,7 @@ void chassis_init(void)
     // 3. 初始化速度斜坡函数
     chassis.slope_speed[0].init(0.0045f, 0.0045f ,Slope_First_TARGET); // X轴速度斜坡
     chassis.slope_speed[1].init(0.0045f, 0.0045f ,Slope_First_TARGET); // Y轴速度斜坡
-    chassis.slope_speed[2].init(0.0045f, 0.0120f, Slope_First_TARGET); // 角速度斜坡
+    chassis.slope_speed[2].init(0.0120f, 0.0120f, Slope_First_TARGET); // 角速度斜坡
 
     // 4. 初始化滤波器（一阶IIR低通，截止频率30Hz，采样周期1ms）
     for (uint8_t i = 0; i < 4; i++)
@@ -125,14 +125,14 @@ void chassis_init(void)
 
     for (uint8_t i = 0; i < 4; i++)
     {
-        chassis.pid_steer_angle[i].init(8.5f, 0.0f, 0.0f, 0.0f, 1.0f, 12.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机角度环PID初始化
+        chassis.pid_steer_angle[i].init(10.5f, 0.00f, 0.1f, 0.0f, 1.0f, 12.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机角度环PID初始化
         chassis.pid_steer_omega[i].init(0.038f, 0.56f, 0.0f, 0.0f, 0.85f, 1.2f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机速度环PID初始化
     }
 
     // 轮向电机角速度PID控制
     for (uint8_t i = 0; i < 4; i++)
     {
-        chassis.pid_wheel_omega[i].init(0.85f, 0.0f, 0.0f, 0.0f, 0.5f, 2.5f, 0.002f, 0.08f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机速度环PID初始化
+        chassis.pid_wheel_omega[i].init(0.92f, 0.12f, 0.0f, 0.0f, 0.5f, 2.5f, 0.002f, 0.08f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机速度环PID初始化
     }
 
     // 6. 设置底盘锁定模式
@@ -155,7 +155,7 @@ void chassis_init(void)
     }
 
     // 8. 初始化舵轮底盘的优化和控制参数
-    chassis.steer_wheel.init();
+    chassis.steer_wheel.init(-1.0f);
 
     wave_generator_init(&motor_wave, WAVE_SINE, 0.1f, 2.0f, 0.0f);
     wave_generator_enable(&motor_wave);

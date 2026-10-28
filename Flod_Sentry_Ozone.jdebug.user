@@ -1,29 +1,35 @@
 
 
-GraphedExpression="((imu_frame).euler_angle).yaw", Color=#e56a6f, Show=0
-GraphedExpression="((chassis).now_steer_state).speed[2]", Color=#35792b, Show=0
-GraphedExpression="((chassis).tgr_steer_state).speed[2]", Color=#769dda, Show=0
-GraphedExpression="((chassis).tgr_steer_state).angle[2]", Color=#b14f0d
-GraphedExpression="((chassis).now_steer_state).angle[2]", Color=#b3c38e
+GraphedExpression="(imu_frame).temperature", Color=#e56a6f, Show=0
+GraphedExpression="((chassis).odom_position).x", Color=#35792b, Show=0
+GraphedExpression="((chassis).odom_position).y", Color=#769dda, Show=0
+GraphedExpression="((chassis).odom_position).yaw", Color=#b14f0d, Show=0
+GraphedExpression="((chassis).slope_output_speed).vx", Color=#b3c38e
+GraphedExpression="((chassis).slope_output_speed).vy", Color=#ab7b05
+GraphedExpression="((chassis).slope_output_speed).vw", Color=#7fd3b7
+GraphedExpression="((chassis).now_robot_speed).vx", Color=#50328f, Show=0
+GraphedExpression="((chassis).now_robot_speed).vy", Color=#c587a5, Show=0
+GraphedExpression="((chassis).now_robot_speed).vw", Color=#999401, Show=0
+GraphedExpression="((chassis).now_steer_state).angle[3]", Color=#aa1d24, Show=0
+GraphedExpression="((chassis).now_steer_state).speed[3]", Color=#86d27e, Show=0
+GraphedExpression="((chassis).tgr_steer_state).angle[3]", Color=#2a5191, Show=0
+GraphedExpression="((chassis).tgr_steer_state).speed[3]", Color=#f49758, Show=0
 OpenDocument="main.c", FilePath="C:/Users/35928/Desktop/Flod_Sentry/Core/Src/main.c", Line=65
-OpenDocument="freertos.c", FilePath="C:/Users/35928/Desktop/Flod_Sentry/Core/Src/freertos.c", Line=312
-OpenDocument="imu_temp_ctrl.cpp", FilePath="C:/Users/35928/Desktop/Flod_Sentry/User/APP/imu_temp_ctrl/imu_temp_ctrl.cpp", Line=90
-OpenDocument="chassis.cpp", FilePath="C:/Users/35928/Desktop/Flod_Sentry/User/APP/chassis/chassis.cpp", Line=6
+OpenDocument="chassis.cpp", FilePath="C:/Users/35928/Desktop/Flod_Sentry/User/APP/chassis/chassis.cpp", Line=25
 OpenToolbar="Debug", Floating=0, x=0, y=0
-OpenWindow="Disassembly", DockArea=RIGHT, x=0, y=0, w=1301, h=1167, TabPos=1, TopOfStack=0, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
-OpenWindow="Watched Data 1", DockArea=LEFT, x=0, y=0, w=965, h=1219, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
-OpenWindow="Code Profile", DockArea=LEFT, x=0, y=1, w=965, h=355, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, GroupByFiles=0, SortRespectsFilters=0, ParentRelativeLoad=0
-OpenWindow="Data Sampling", DockArea=RIGHT, x=0, y=1, w=1301, h=370, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VisibleTab=0, UniformSampleSpacing=0
-OpenWindow="Timeline", DockArea=RIGHT, x=0, y=0, w=1301, h=1167, TabPos=0, TopOfStack=1, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=1, DataPaneShown=1, PowerPaneShown=0, CodePaneShown=0, PinCursor="Cursor Movable", TimePerDiv="1 s / Div", TimeStampFormat="Time", DataGraphDrawAsPoints=0, DataGraphLegendShown=1, DataGraphUniformSampleSpacing=0, DataGraphLegendPosition="596;720", DataGraphShowNamesAtCursor=0, PowerGraphDrawAsPoints=0, PowerGraphLegendShown=0, PowerGraphAvgFilterTime=Off, PowerGraphAvgFilterLen=Off, PowerGraphUniformSampleSpacing=0, PowerGraphLegendPosition="948;-133", CodeGraphLegendShown=0, CodeGraphLegendPosition="981;0"
+OpenWindow="Disassembly", DockArea=RIGHT, x=0, y=0, w=1247, h=1130, TabPos=1, TopOfStack=0, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Watched Data 1", DockArea=LEFT, x=0, y=0, w=882, h=1179, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Code Profile", DockArea=LEFT, x=0, y=1, w=882, h=395, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, GroupByFiles=0, SortRespectsFilters=0, ParentRelativeLoad=0
+OpenWindow="Data Sampling", DockArea=RIGHT, x=0, y=1, w=1247, h=407, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VisibleTab=1, UniformSampleSpacing=0
+OpenWindow="Timeline", DockArea=RIGHT, x=0, y=0, w=1247, h=1130, TabPos=0, TopOfStack=1, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=1, DataPaneShown=1, PowerPaneShown=0, CodePaneShown=0, PinCursor="Cursor Movable", TimePerDiv="1 s / Div", TimeStampFormat="Time", DataGraphDrawAsPoints=0, DataGraphLegendShown=1, DataGraphUniformSampleSpacing=0, DataGraphLegendPosition="110;0", DataGraphShowNamesAtCursor=0, PowerGraphDrawAsPoints=0, PowerGraphLegendShown=0, PowerGraphAvgFilterTime=Off, PowerGraphAvgFilterLen=Off, PowerGraphUniformSampleSpacing=0, PowerGraphLegendPosition="894;-133", CodeGraphLegendShown=0, CodeGraphLegendPosition="927;0"
 SmartViewPlugin="", Page="", Toolbar="Hidden", Window="SmartView 1"
 TableHeader="Code Profile", SortCol="File / Function", SortOrder="ASCENDING", VisibleCols=["File / Function";"Source Coverage";"Inst. Coverage";"Run Count";"Fetch Count";"Load"], ColWidths=[2344;219;230;148;172;152]
-TableHeader="Data Sampling Table", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";" ((imu_frame).euler_angle).yaw";" ((chassis).now_steer_state).speed[2]";" ((chassis).tgr_steer_state).speed[2]";" ((chassis).tgr_steer_state).angle[2]";" ((chassis).now_steer_state).angle[2]"], ColWidths=[100;100;100;100;100;100;100]
-TableHeader="Data Sampling Setup", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Type";"Value";"Min";"Max";"Average";"# Changes";"Min. Change";"Max. Change"], ColWidths=[658;103;254;254;238;254;171;254;238]
+TableHeader="Data Sampling Setup", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Type";"Value";"Min";"Max";"Average";"# Changes";"Min. Change";"Max. Change"], ColWidths=[482;103;117;238;254;143;171;200;199]
+TableHeader="Data Sampling Table", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";" (imu_frame).temperature";" ((chassis).odom_position).x";" ((chassis).odom_position).y";" ((chassis).odom_position).yaw";" ((chassis).slope_output_speed).vx";" ((chassis).slope_output_speed).vy";" ((chassis).slope_output_speed).vw";" ((chassis).now_robot_speed).vx";" ((chassis).now_robot_speed).vy";" ((chassis).now_robot_speed).vw";" ((chassis).now_steer_state).angle[3]";" ((chassis).now_steer_state).speed[3]";" ((chassis).tgr_steer_state).angle[3]";" ((chassis).tgr_steer_state).speed[3]"], ColWidths=[100;100;100;100;100;100;100;100;100;100;100;100;100;100;100;100]
 TableHeader="Power Sampling", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";"Ch 0"], ColWidths=[100;100;100]
 TableHeader="Task List", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Name";"Run Count";"Priority";"Status";"Timeout";"Stack Info";"ID";"Mutex Count";"Notified Value";"Notify State"], ColWidths=[110;110;110;110;110;110;110;110;110;110]
-TableHeader="Watched Data 1", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Value";"Location";"Refresh";"Access"], ColWidths=[440;264;116;116;158]
+TableHeader="Watched Data 1", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Value";"Location";"Refresh";"Access"], ColWidths=[295;192;139;256;115]
 TableHeader="RegisterSelectionDialog", SortCol="None", SortOrder="ASCENDING", VisibleCols=[], ColWidths=[]
-TableHeader="TargetExceptionDialog", SortCol="Name", SortOrder="ASCENDING", VisibleCols=["Name";"Value";"Address";"Description"], ColWidths=[200;243;100;570]
 WatchedExpression="imu_frame", RefreshRate=5, Window=Watched Data 1
 WatchedExpression="temperature_pid", RefreshRate=5, Window=Watched Data 1
 WatchedExpression="chassis", RefreshRate=5, Window=Watched Data 1
