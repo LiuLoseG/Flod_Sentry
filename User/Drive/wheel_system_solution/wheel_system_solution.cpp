@@ -17,6 +17,10 @@
 
 /*-----------------------------------文件内静态辅助函数-----------------------------------*/
 
+// 编码器里程计单帧允许的最大轮转角变化量, rad.
+// 半圈在 100 Hz 下已相当于 314 rad/s 以上, 远超任何实际轮速, 出现即判定为编码器丢帧/复位/多圈计数跳变.
+static constexpr float Odom_Max_Frame_Angle = PI;
+
 /** @brief 计算本帧各轮线位移 ds 并更新基准; 首帧只建基准并返回 false
  *  @param __wheel_angle 当前轮转角
  *  @param __last_angle 上一帧轮转角
@@ -24,7 +28,7 @@
  *  @param __radius 轮子半径
  *  @param __first_flag 首帧标志
  *  @retval true: 成功计算并更新了位移
- *  @retval false: 计算失败或首帧
+ *  @retval false: 计算失败、首帧, 或检测到编码器跳变(已重建基准)
  */
 static bool wheel_odom_calc_ds(const float *__wheel_angle, float *__last_angle, float *__ds, const float &__radius, bool &__first_flag)
 {
@@ -44,6 +48,20 @@ static bool wheel_odom_calc_ds(const float *__wheel_angle, float *__last_angle, 
         }
         __first_flag = false;
         return false;
+    }
+
+    // 跳变检测必须整帧判定: 单轮跳变时若只丢掉该轮, 另三轮照常积分, 会算出一个方向错误却"看起来合理"的位移.
+    // 这里整帧重建基准并丢弃本帧, 恢复后位移从新基准继续累计, 不会把一整圈的假位移打进位姿.
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        if (fabsf(__wheel_angle[i] - __last_angle[i]) > Odom_Max_Frame_Angle)
+        {
+            for (uint8_t j = 0; j < 4; j++)
+            {
+                __last_angle[j] = __wheel_angle[j];
+            }
+            return false;
+        }
     }
 
     for (uint8_t i = 0; i < 4; i++)
@@ -594,6 +612,7 @@ static float steer_limit_target_step(const float &__target, const float &__curre
 
 /**
  * @brief 舵轮初始化
+ * @param __steer_encoder_direction 舵向编码器方向, ±1: 读数正向与几何 CCW 同向取 +1, 反向取 -1; 其它值按 +1
  * @param __target_max_step       舵向目标单周期最大变化量(斜坡斜率), rad
  * @param __max_wheel_speed       轮向电机最大角速度, rad/s
  * @param __min_limit             静止判定阈值, m/s 与 rad/s
@@ -605,13 +624,16 @@ static float steer_limit_target_step(const float &__target, const float &__curre
  * @param __target_step_limit_enable  舵向目标斜坡限幅开关
  * @note  驱动轮半径固定为编译期常量 Wheel_Radius, 不在 init 内设置.
  */
-void steer_wheel_class::init(const float &__target_max_step,
+void steer_wheel_class::init(const float &__steer_encoder_direction,
+                             const float &__target_max_step,
                              const float &__max_wheel_speed, const float &__min_limit,
                              const float &__steer_angle_deadband, const float &__flip_hysteresis,
                              const float &__control_period,
                              const bool &__cosine_optimize_enable, const bool &__nearest_optimize_enable,
                              const bool &__target_step_limit_enable)
 {
+    steer_encoder_direction = (isfinite(__steer_encoder_direction) && __steer_encoder_direction < 0.0f) ? -1.0f : 1.0f;
+
     target_max_step = (isfinite(__target_max_step) && __target_max_step > 0.0f) ? __target_max_step : 0.20f;
     max_wheel_speed = (isfinite(__max_wheel_speed) && __max_wheel_speed > 0.0f) ? __max_wheel_speed : 25.0f;
     min_limit = (isfinite(__min_limit) && __min_limit >= 0.0f) ? __min_limit : 0.1f;
@@ -682,11 +704,10 @@ void steer_wheel_class::inverse_calculate_callback()
 
     const bool cmd_zero = (fabsf(target_speed.vx) <= min_limit) && (fabsf(target_speed.vy) <= min_limit) && (fabsf(target_speed.vw) <= min_limit);
 
-    // 逐轮逆解
     for (uint8_t i = 0; i < 4; i++)
     {
-        const float vel_x = target_speed.vx - target_speed.vw * Wheel_Azimuth_Sin[i] * distance_to_core[i];
-        const float vel_y = target_speed.vy + target_speed.vw * Wheel_Azimuth_Cos[i] * distance_to_core[i];
+        const float vel_x = target_speed.vx - target_speed.vw * Wheel_Unit_Sin[i] * distance_to_core[i];
+        const float vel_y = target_speed.vy + target_speed.vw * Wheel_Unit_Cos[i] * distance_to_core[i];
 
         float vel_modulus = 0.0f;
         arm_sqrt_f32(vel_x * vel_x + vel_y * vel_y, &vel_modulus);
@@ -696,7 +717,7 @@ void steer_wheel_class::inverse_calculate_callback()
         // 这里要折成几何角(单圈、不含零位), 否则与其它分支的坐标系不一致
         status.solution_angle[i] = (vel_modulus > 0.0f)
                                    ? atan2f(vel_y, vel_x)
-                                   : basic_math_modulus_normalization(status.now_angle[i] - Enc_Zero_Angle[i], 2.0f * PI);
+                                   : steer_encoder_direction * basic_math_modulus_normalization(status.now_angle[i] - Enc_Zero_Angle[i], 2.0f * PI);
     }
 
     // 舵向目标规划: 就近转位 + 斜坡限幅 + 死区 + 余弦削减
@@ -715,7 +736,7 @@ void steer_wheel_class::inverse_calculate_callback()
         }
 
         float optimize_direction = 1.0f;
-        const float solution_target = status.solution_angle[i] + Enc_Zero_Angle[i];
+        const float solution_target = steer_encoder_direction * status.solution_angle[i] + Enc_Zero_Angle[i];
         float target;
 
         if (nearest_optimize_enable)
@@ -809,8 +830,10 @@ void steer_wheel_class::inverse_calculate_callback()
 
 /**
  * @brief 舵轮正运动学解算
- * @note  角速度分量直接取 sin(θ−φ), 与 θ 同源、形式直观; 代价是每轮多一次 arm_sin_f32 查表,
- *        sin/cos 已为 vx/vy 算过, 该调用相对整周期解算可忽略.
+ * @note  角速度分量取轮速在"绕底盘中心的切向" t_i = (−sinφ_i, cosφ_i) 上的投影除以力臂:
+ *        u_i·(p_i·t_i)/d_i = u_i·sin(θ_i−φ_i)/d_i. 实现上复用已算好的 sin/cos:
+ *        sin(θ−φ) = sinθ·cosφ − cosθ·sinφ, 不额外查表.
+ *        此处的 "−φ" 与逆解耦合项 (vx − ω·d·sinφ, vy + ω·d·cosφ) 严格互为逆运算.
  */
 void steer_wheel_class::forward_calculate_callback()
 {
@@ -828,16 +851,16 @@ void steer_wheel_class::forward_calculate_callback()
     {
         const float wheel_linear_speed = status.now_speed[i] * Wheel_Radius; // 轮向电机角速度 → 轮子线速度, m/s
 
-        // 反向扣除零位, 同时归一化到 [-pi,pi) 防止多圈精度退化
-        const float steer = basic_math_modulus_normalization(status.now_angle[i] - Enc_Zero_Angle[i], 2.0f * PI);
+        // 反向扣除零位并按编码器方向换算成几何角, 同时归一化到 [-pi,pi) 防止多圈精度退化
+        const float steer = basic_math_modulus_normalization(steer_encoder_direction * (status.now_angle[i] - Enc_Zero_Angle[i]), 2.0f * PI);
 
         const float sin_steer = arm_sin_f32(steer);
         const float cos_steer = arm_cos_f32(steer);
 
         vx_sum += wheel_linear_speed * cos_steer;
         vy_sum += wheel_linear_speed * sin_steer;
-        // 角速度分量: v_i·sin(θ_i−φ_i)/R_i = ω, 四轮求和再平均即底盘角速度
-        vw_sum += wheel_linear_speed * arm_sin_f32(steer - Wheel_Azimuth[i]) / distance_to_core[i];
+        // 角速度分量: 轮速在切向 t_i = (−sinφ, cosφ) 上的投影 / 力臂 = u·sin(θ−φ)/d
+        vw_sum += wheel_linear_speed * (sin_steer * Wheel_Unit_Cos[i] - cos_steer * Wheel_Unit_Sin[i]) / distance_to_core[i];
     }
 
     robot_speed.vx = vx_sum * 0.25f;
@@ -866,14 +889,14 @@ bool steer_wheel_class::calc_body_displacement(const float *__ds, float &__dx, f
     float vx_sum = 0.0f, vy_sum = 0.0f, vw_sum = 0.0f;
     for (uint8_t i = 0; i < 4; i++)
     {
-        // 扣除零位; sin/cos 对整圈不敏感
-        const float steer = basic_math_modulus_normalization(steer_angle[i] - Enc_Zero_Angle[i], 2.0f * PI);
+        // 扣除零位并按编码器方向换算成几何角; sin/cos 对整圈不敏感
+        const float steer = basic_math_modulus_normalization(steer_encoder_direction * (steer_angle[i] - Enc_Zero_Angle[i]), 2.0f * PI);
         const float sin_steer = arm_sin_f32(steer);
         const float cos_steer = arm_cos_f32(steer);
 
         vx_sum += __ds[i] * cos_steer;
         vy_sum += __ds[i] * sin_steer;
-        vw_sum += __ds[i] * arm_sin_f32(steer - Wheel_Azimuth[i]) / distance_to_core[i]; // Σ = 4·dyaw
+        vw_sum += __ds[i] * (sin_steer * Wheel_Unit_Cos[i] - cos_steer * Wheel_Unit_Sin[i]) / distance_to_core[i];
     }
 
     __dx = vx_sum * 0.25f;

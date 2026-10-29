@@ -121,7 +121,8 @@ public:
     inline void update_robot_state(const wheel_robot_speed_t &__target_speed);
 
     // 四轮当前测量状态 + IMU 航向: speed 喂正/逆解, angle 喂编码器里程计
-    inline void update_now_state(const wheel_state_t &__now_state, const float &__imu_yaw_rad = 0.0f);
+    // IMU 默认取 NAN = 不更新: 未接 IMU 的调用点不能把航向悄悄钉成 0
+    inline void update_now_state(const wheel_state_t &__now_state, const float &__imu_yaw_rad = NAN);
 
     // 逆运动学解算
     void inverse_calculate_callback();
@@ -253,7 +254,8 @@ public:
     inline void update_robot_state(const wheel_robot_speed_t &__target_speed);
 
     // 更新当前底盘状态
-    inline void update_now_state(const wheel_state_t &__now_state, const float &__imu_yaw_rad = 0.0f);
+    // IMU 默认取 NAN = 不更新: 未接 IMU 的调用点不能把航向悄悄钉成 0
+    inline void update_now_state(const wheel_state_t &__now_state, const float &__imu_yaw_rad = NAN);
 
     // 逆运动学解算
     void inverse_calculate_callback();
@@ -289,7 +291,7 @@ protected:
     // 常量
 
     // 驱动轮半径，m
-    static constexpr float Wheel_Radius = 0.0761f;
+    static constexpr float Wheel_Radius = 0.0485f;
     // 轮心在机体系 X/Y 方向的投影，m
     static constexpr float Wheel_Projection_X = 0.12f;
     static constexpr float Wheel_Projection_Y = 0.11f;
@@ -351,12 +353,14 @@ class steer_wheel_class
 {
 public:
 
-    void init(const float &__target_max_step = 0.12f,
+    void init(
+              const float &__steer_encoder_direction = 1.0f,
+              const float &__target_max_step = 0.12f,
               const float &__max_wheel_speed = 25.0f,
               const float &__min_limit = 0.1f,
-              const float &__steer_angle_deadband = 0.05f,
+              const float &__steer_angle_deadband = 0.003f,
               const float &__flip_hysteresis = 0.1f,
-              const float &__control_period = 0.002f,
+              const float &__control_period = 0.001f,
               const bool &__cosine_optimize_enable = true,
               const bool &__nearest_optimize_enable = true,
               const bool &__target_step_limit_enable = true);
@@ -405,13 +409,17 @@ public:
     inline void set_nearest_optimize_enable(const bool &__enable);
     // 舵向目标单周期最大变化量限制开关
     inline void set_target_step_limit_enable(const bool &__enable);
+    // 舵向编码器方向: +1 电机读数正向与几何 CCW 同向, -1 反向(读数增大时轮子顺时针转).
+    // 只改这一处, 逆解/正解/里程计/舵向目标会自动保持一致; 传入 0 或非有限值则忽略
+    inline void set_steer_encoder_direction(const float &__direction);
     // 控制周期(里程计回调调用间隔), s; 仅速度里程计积分使用
     inline void set_control_period(const float &__control_period);
 
     // 更新底盘目标速度和控制模式
     inline void update_robot_state(const wheel_robot_speed_t &__target_speed, const uint8_t &__control_mode);
     // 各轮状态更新
-    inline void update_now_state(const steer_state_t &__now_steer_state, const wheel_state_t &__now_wheel_state, const float &__imu_yaw_rad = 0.0f);
+    // IMU 默认取 NAN = 不更新: 未接 IMU 的调用点不能把航向悄悄钉成 0
+    inline void update_now_state(const steer_state_t &__now_steer_state, const wheel_state_t &__now_wheel_state, const float &__imu_yaw_rad = NAN);
 
     // 逆运动学解算
     void inverse_calculate_callback();
@@ -449,9 +457,9 @@ protected:
     // 常量
 
     // 驱动轮半径，m
-    static constexpr float Wheel_Radius = 0.0761f;
+    static constexpr float Wheel_Radius = 0.0485f;
     // 轮心到底盘中心的距离，m
-    static constexpr float Wheel_Distance_To_Core = 0.239f;
+    static constexpr float Wheel_Distance_To_Core = 0.12f;
 
     // 编码器里程计位移累积死区, m: 单帧位移不足该值时只累积不积分, 累积到该值后一次吐出
     static constexpr float Odom_Linear_Deadband = 0.0001f;
@@ -463,12 +471,11 @@ protected:
     static constexpr float Speed_Odom_Angle_Deadband = 0.05f;
 
     // 编码器零位角, rad: 编码器读数为 0 时轮子实际指向相对 +X 的偏差
-    static constexpr float Enc_Zero_Angle[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    // 轮组方位角, rad ( PI/4, 3PI/4, 5PI/4, 7PI/4)
-    static constexpr float Wheel_Azimuth[4] = {PI / 4.0f, 3.0f * PI / 4.0f, 5.0f * PI / 4.0f, 7.0f * PI / 4.0f};
-    // 方位角 sin/cos
-    static constexpr float Wheel_Azimuth_Sin[4] = {SQRT_2_2, SQRT_2_2, -SQRT_2_2, -SQRT_2_2};
-    static constexpr float Wheel_Azimuth_Cos[4] = {SQRT_2_2, -SQRT_2_2, -SQRT_2_2, SQRT_2_2};
+    static constexpr float Enc_Zero_Angle[4] = {-1.07455f, -0.02924f, 1.01923f, -3.11878f};
+    // 轮心单位方向向量 e_i = (cos φ_i, sin φ_i), φ_i = {45°, 135°, 225°, 315°} 为几何 CCW 方位角.
+    static constexpr float Wheel_Unit_Cos[4] = {SQRT_2_2, -SQRT_2_2, -SQRT_2_2, SQRT_2_2};
+    static constexpr float Wheel_Unit_Sin[4] = {SQRT_2_2, SQRT_2_2, -SQRT_2_2, -SQRT_2_2};
+
     // 各轮心到底盘中心的距离(旋转力臂半径), m
     float distance_to_core[4] = {Wheel_Distance_To_Core, Wheel_Distance_To_Core,
                                  Wheel_Distance_To_Core, Wheel_Distance_To_Core};
@@ -492,6 +499,9 @@ protected:
     bool nearest_optimize_enable = true;
     // 舵向目标斜坡限幅开关, true: 目标角按 target_max_step 逐拍逼近; false: 直接下发解算角
     bool target_step_limit_enable = true;
+
+    // 舵向电机方向(与解算正方向一致为正±1)
+    float steer_encoder_direction = 1.0f;
 
     // 写变量(输入)
 
@@ -990,6 +1000,17 @@ inline void steer_wheel_class::set_nearest_optimize_enable(const bool &__enable)
 inline void steer_wheel_class::set_target_step_limit_enable(const bool &__enable)
 {
     target_step_limit_enable = __enable;
+}
+
+inline void steer_wheel_class::set_steer_encoder_direction(const float &__direction)
+{
+    // 只接受 ±1: 其它值既不是"同向"也不是"反向", 直接忽略避免引入莫名的比例缩放
+    if (!isfinite(__direction) || __direction == 0.0f)
+    {
+        return;
+    }
+
+    steer_encoder_direction = (__direction > 0.0f) ? 1.0f : -1.0f;
 }
 
 inline void steer_wheel_class::set_control_period(const float &__control_period)

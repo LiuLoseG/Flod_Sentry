@@ -25,8 +25,8 @@
 
 #include "robot_decision.h"
 
-#include "power.h"
-#include "chassis_power.h"
+// #include "power.h"
+// #include "chassis_power.h"
 #include "chassis_power_rls.h"
 #include "safe_daemon_process.h"
 
@@ -60,7 +60,7 @@ typedef struct
     // 遥控器对象指针
     crsf_class *crsf; 
     
-    volatile power_data_t *power; // 功率计对象指针
+    // volatile power_data_t *power; // 功率计对象指针
 
     // 机器人决策对象指针
     robot_decision_class *decision; 
@@ -69,6 +69,9 @@ typedef struct
     chassis_power_rls control_power; 
 
 /*------------------------------------底盘整体目标和状态观测量---------------------------------------------*/
+
+    // 底盘里程计
+    wheel_robot_position_t odom_position; // 里程计位置, m / rad    
 
     // 底盘整体控制结构体
     steer_wheel_class steer_wheel;
@@ -112,8 +115,8 @@ typedef struct
 
 /*------------------------------------电机对象创建---------------------------------------------*/
     dji_c620_motor_class wheel_motor[4]; // 轮电机对象数组
-    dji_gm6020_motor_class steer_motor[4]; // 转向电机对象
-
+    // dji_gm6020_motor_class steer_motor[4]; // 转向电机对象
+    dm_motor_normal_class steer_motor[4]; // 转向电机对象
 /*------------------------------------功率对象创建---------------------------------------------*/
     float motor_target_output[4]; // 电机输出值数组, A
     float motor_target_omega[4];  // 电机目标角速度值数组, rad/s
