@@ -17,6 +17,7 @@
 | G3 | 固件与 PC 同源 | 无堆分配、无 OS 依赖、无可变全局状态 |
 | G4 | 坏数据不扩散 | 入口校验（运动学反馈逐通道跳过、里程计快照整帧提交）+ 解算整帧校验 + 输出保持 |
 | G5 | 里程计可交叉验证 | 编码器里程计与速度里程计各自独立维护位姿 |
+| G6 | 力控与逆解同源 | 力分配矩阵是逆解矩阵的转置，逆解结果喂回力控可还原原等效力 |
 
 ### 1.2 范围
 
@@ -26,12 +27,13 @@
 | 正解：执行器反馈 → 底盘速度 | 电机速度环、位置环 PID（驱动层） |
 | 里程计：位移差分 + 速度积分 | 底盘行为状态机（上层 chassis，本模块只接收模式号） |
 | 舵轮优化：就近转位 / 斜坡 / 余弦 / 死区 / 限速 | 路径规划、定位融合（决策 / 导航层） |
+| 力控：目标加速度 → 四轮轮端力矩分配（含舵向对齐） | 加速度规划、功率限制与电流环（决策层、功率控制、驱动层） |
 | 参数校验与数值健壮性 | 云台、发射、悬挂（其它模块）；打滑与地形建模（不建模） |
 
 ### 1.3 非目标
 
 - **不追求"一套公式通吃"**：三种轮系几何差异太大，强行抽象只会让符号更难核对。
-- **不提供在线标定**：几何量运行中改变会破坏逆解 / 正解 / 里程计三者的一致性。
+- **不做在线标定入口**：几何量（轮径、轮心距离、轮心投影）一律是编译期常量，改就要重编——它们同时进入逆解 / 正解 / 里程计 / 力分配，运行中改一定会破坏四者的一致性。
 - **不内置里程计融合**：融合会掩盖打滑诊断信息，两套位姿都交给上层。
 
 ---
@@ -64,7 +66,7 @@
 
 1. **二自由度平面刚体**：状态量仅 `x / y / yaw`，不建模 `z`、`roll`、`pitch`。
 2. **四轮着地、纯滚动**：无纵向滑移。全向轮 / 麦轮靠辊子获得横向自由度，舵轮靠主动转向消除横向约束；滑移不建模，只体现为里程计误差。
-3. **瞬时几何关系**：单周期内轮径、力臂、轮心投影、方位角视为常量，几何量变更必须重新初始化。
+3. **瞬时几何关系**：单周期内轮径、力臂、轮心投影、方位角视为常量。全向轮/麦轮的这几项是**编译期常量**（改后重编）；舵轮力臂可运行时逐轮设定，但改完需重做纯旋转标定。
 
 ### 3.2 坐标系清单
 
@@ -171,14 +173,16 @@ v_c,i,x = vx − vw·d_i·sin φ_i        v_c,i,y = vy + vw·d_i·cos φ_i
 |---|------|------------|
 | 1 | `vw > 0` = 左转（CCW 正） | 原地旋转反向，平移正常 |
 | 2 | 轮位逆时针编号 `FL→RL→RR→FR` | 特定方向斜走，旋转时四轮速度异常 |
-| 3 | 全向轮电机正方向与切向相反 | 整车 `vx/vy` 全反 |
-| 4 | 麦轮电机正方向与驱动方向相同 | 整车 `vx/vy` 全反 |
+| 3 | 全向轮电机正方向与轮心切向同向（本车为反向，`dir = -1`） | 整车 `vx/vy` 全反 |
+| 4 | 麦轮电机正方向与驱动方向相同（本车，`dir = +1`） | 整车 `vx/vy` 全反 |
 | 5 | 舵向角以 `+X` 为 0、CCW 正 | 四轮指向呈"风车"或交叉 |
 | 6 | 舵轮下发的轮速已含方向符号 | 下游再取绝对值 → 反向跑 |
 | 7 | 舵轮下发的舵向目标已含零位、是多圈量 | 下游再折返 → 在 ±π 处来回翻转 |
 | 8 | IMU 航向为 `+X` 为 0、CCW 正 | 航向镜像，位置绕错方向 |
 
-改符号的唯一正确做法：整车全反 → 改**上层电机符号**；单轮反 → 改**那一路电机**；绝不单独改逆解或单独改正解 / 里程计（三者符号配套，§3.6(d) 即为此设）。
+改符号的唯一正确做法：整车全反 → **无舵向轮系用 `init()` 第二参 `__wheel_encoder_direction = -1`**（舵轮用 `__steer_encoder_direction`）给整车翻转，模块内逆解/正解/里程计/力分配会一起翻；单轮反 → 改**那一路电机**；绝不单独改逆解或单独改正解 / 里程计（三者符号配套，§3.6(d) 即为此设）。
+
+> **极性参数的覆盖面**：`wheel_encoder_direction` 同时作用于四处——逆解输出（几何→电机域）、正解输入（电机→几何域）、编码器里程计位移、力控轮端力。**公式里不再内嵌任何极性**（全向轮原生的整体负号已删），所以"不传参"与旧行为一致靠的是默认值：全向轮默认 `-1`（本车电机正方向与轮心切向相反）、麦轮默认 `+1`。
 
 > **本车现状（舵向角符号）**：旋转耦合项取刚体运动学的标准形式 `d·(−sinφᵢ, +cosφᵢ)`：逆解 `vel_x = vx − vw·d·sinφ`、`vel_y = vy + vw·d·cosφ`，正解与编码器里程计配套写 `u·sin(θ−φ)/d`。
 > 这三处（逆解 / 正解 / 里程计）是**同一约定的三面**，任何一处单独取反，纯自旋时实测 `vw` 与 `dyaw` 都会变成 `0` 或反号。实测校核见 [steer_wheel.md §3.2](./steer_wheel.md)。
@@ -212,12 +216,14 @@ v_c,i,x = vx − vw·d_i·sin φ_i        v_c,i,y = vy + vw·d_i·cos φ_i
 | 逆解代价 | 一行乘加 | 一行乘加 | 开方 + 反正切 + 优化流水线 |
 | 关键约束 | 只能感知切向分量 | 等效驱动方向为对角，横向以 ±1 权重进入 | **不可解耦**：舵向角决定轮速有效性 |
 | 需要反馈 | 轮速、轮向多圈角、（可选）IMU | 同左 | 舵向多圈角、轮速、轮向多圈角、（可选）IMU |
-| 关键参数 | 轮半径、力臂 `d` | 轮半径、轮心 X/Y 投影（其和决定旋转项） | 轮半径、逐轮力臂、方位角表、零位、斜坡步长、轮速上限、静止阈值、舵向死区、三开关 |
+| 关键参数 | 轮半径、力臂 `d`（均为常量） | 轮半径、轮心 X/Y 投影（其和决定旋转项，均为常量） | 轮半径、逐轮力臂数组、方位角表、零位为常量；斜坡步长、轮速上限、静止阈值、舵向死区、三开关可配 |
 | 输出 | 4 路轮速 | 4 路轮速 | 舵向多圈目标 + 轮向目标（含符号），另有纯几何解供诊断 |
 | 内置限幅 / 过渡过程 | 无 / 无 | 无 / 无 | 斜坡 + 余弦削减 + 全局限速 / 有（舵向对齐期） |
 | 里程计精度潜力 | 高 | 中（打滑） | 高（依赖实测舵向角） |
 | 承载 / 越障 · 机械复杂度 | 低 · 中 | 中 · 低 | 高 · 高 |
 | 调试难点 | 符号矩阵 | 辊子朝向 | 优化流水线联动 |
+| 力控 | 常量矩阵转置，四轮分配系数 `√2/4` | 常量矩阵转置，四轮分配系数 `1/4` | 先按 `F/4 + fw·d·t/Σd²` 分矢量，再按 `cos³e` 削减出力（三系力分配均以中心对称布局为前提） |
+| 力控额外输出 | 无（只有力矩） | 无（只有力矩） | 舵向对齐目标（就近转位 + 斜坡 + 死区 + 余弦削减，与速控同口径，写同一组 `optimize_*` 字段） |
 
 ### 4.2 各系要点
 
@@ -236,7 +242,8 @@ v_c,i,x = vx − vw·d_i·sin φ_i        v_c,i,y = vy + vw·d_i·cos φ_i
    →  等周期循环（每 T）：采反馈 → 正解 → 里程计 → 目标 → 逆解 → 下发
 ```
 
-- 初始化只做两件事：写入可配参数、清零并把首帧标志置位。**轮径、方位角、编码器零位是编译期量**，不在初始化里设置；力臂是可运行时调整的量（`init()` 形参非法时回退到编译期默认值）。
+- 初始化只做两件事：写入可配参数、清零并把首帧标志置位。**轮径、方位角、编码器零位、力臂、轮心投影全是编译期常量**，既不在初始化里设置，也不提供运行期 setter；改几何量必须改常量并重编。
+- 所有可配参数（通用 + 速控 + 力控）由**一次 `init()` 写齐**，不需要先 init 再逐块配，也**不提供任何运行期改参旁路**（要改就重新 `init`）。
 - 循环内每类动作**每周期恰好一次**，不重入、不合并、不跳帧（例外见 §5.3）。
 - 初始化后前若干帧处于**基准建立期**：编码器里程计首帧只记录基准不产生位移；IMU 路线首帧直接对齐绝对航向。
 
@@ -309,6 +316,30 @@ v_c,i,x = vx − vw·d_i·sin φ_i        v_c,i,y = vy + vw·d_i·cos φ_i
 | 坏数据隔离 | 内置 | 内置 |
 
 用等比缩放而非逐轮截断：逐轮截断会改变运动形态（如原地旋转被截成"边走边转"），等比缩放只降速、保持方向与形态。
+
+### 5.6 力控编排
+
+控制方式在 `init()` 首参选定一次，之后三种方式**用法完全一致**：初始化 → 每拍喂参数 → 调对应流水线（`speed_calculate_callback()` / `force_calculate_callback()` / `mixed_calculate_callback()`）。
+
+初始化只需调一次 `init()`，形参按「控制模式和控制参数 → 速控参数 → 力控死区和最大力矩限制 → 优化开关」分组并加注释分隔（全部带默认值，见各分册 API 表）。校验口径分两种，因为两类参数性质不同：**速控参数逐项校验**（改斜坡不会让限速失效，单项非法只跳过该项），**力控两项整份校验**（力矩上限与死区是一套，任一项非法则两项全不改）。底盘质量/惯量与几何量一样是**编译期常量**（`Chassis_Mass` / `Chassis_Inertia`），不进 `init`。全向轮/麦轮没有舵向流水线，故只有「控制模式和控制参数 / 力控死区和最大力矩限制」两组，顺序与舵轮保持一致。
+
+**优化开关（余弦削减 / 就近转位 / 斜坡限幅）是一份舵向能力配置，速控与力控共用**：它连同被它开关的 `target_max_step` / `flip_hysteresis` / `steer_angle_deadband` 一起，同时作用于逆解流水线与力控流水线。原因是舵向机械能力只有一套——同一个开关若只关掉一边，同一条指令在速控与力控下的舵向行为就会不一致，切换控制方式时表现突变。
+
+| 方式 | `init` 首参 | 每拍喂什么 | 输出 |
+|------|-------------|-----------|------|
+| 纯速控 | `Wheel_Speed_Control_Method` | `update_robot_state({vx,vy,vw})` | `get_optimize_speed(i)` / `get_optimize_angle(i)`；力矩为 0 |
+| 纯力控 | `Wheel_Force_Control_Method` | `set_robot_accel_x/y/w()` | `get_wheel_torque(i)`；舵轮另取 `get_optimize_angle(i)` |
+| 力速混控 | `Wheel_Mixed_Control_Method` | 两者都喂 | 力矩前馈 + 轮速/舵向目标 |
+
+五条约束：
+
+1. **控制方式只在 init 给一次**：属整机配置而非逐拍决策。逐拍在三条回调间切换会让舵向目标、余弦系数与斜坡基准在两套流水线之间来回踩，状态不连续。控制方式由**上层自己持有**（同一个常量既传给 `init()`，也用于自己的分支判断），模块不提供回读接口。
+2. **纯力控必须切除轮向速度环**：力控直接给轮端力矩，若速度环仍在追 `optimize_speed`（纯力控下恒为 0），两个环互相顶，合力与设定值无关。上层用自己持有的控制方式常量分支即可（见 `chassis_motor_calculate()`）。
+3. **混控不覆盖舵向**：舵轮混控的舵向目标由速度逆解给出，力矩按**当前实测轮向**的 `cos³e` 削减，加速度前馈不会把舵向拽到力方向。
+4. **两条流水线写同一组目标字段**（舵轮）：`optimize_angle` / `optimize_speed` / `optimize_direction` / `cosine_optimize` / `error_angle` 永远代表"本拍生效的目标"，因此切换路径时斜坡基准天然连续。
+5. **舵轮纯力控必须先 `update_now_state()`**：轮端力矩要投影到实测轮向，缺反馈时舵向角停留在上电值，投影方向错误。
+
+三条流水线 `speed_calculate_callback()` / `force_calculate_callback()` / `mixed_calculate_callback()` 均公开，由上层按控制方式自己挑一个调（模块不再内部分派）；`inverse_calculate_callback()` 是**protected 内部函数**，只供前两条流水线复用。
 
 ---
 
@@ -383,6 +414,19 @@ IMU 路线要求外部航向与本模块约定一致（`+X` 为 0、CCW 正）�
 
 **并发模型**：单写者。一个实例只在一个上下文（一个 task 或一个 ISR）内被完整调用，内部无锁、无临界区。跨上下文读输出须自行加快照或临界区；把解算拆到两个上下文会直接违反 §5.3。
 
+**力控接口**（与运动学接口同一套范式，不新增 class）
+
+| 取舍 | 选择 | 理由 |
+|------|------|------|
+| 放在哪个类 | 三系各自内建，不抽公共类 | 力分配是三系各自雅可比的转置，抽公共类只能靠参数拼装，符号更难核对（同 §1.3 第 1 条） |
+| 输入单位 | 加速度（m/s²、rad/s²），不是力 | 与参考实现 `Chassis_Force(ax, ay, aw)` 一致；质量/惯量属本模块配置（编译期常量），上层只规划加速度 |
+| 输出单位 | 轮端力矩 N·m（不是电流 raw） | 驱动层已按 `Current_To_Torque` 换算，本模块不持有电机参数 |
+| 是否内置限幅 | 仅单轮力矩上限（不做加速度限幅） | 加速度是上层规划量，限到多大属整车能力，由上层裁剪；力控直接对电机出力，故输出端必须留住力矩上限防过流；逐轮截断（非等比缩放）不影响运动形态 |
+| 输出结构 | 各类内的 `float wheel_torque[4]`，不包结构体 | 只有一组四轮力矩，包结构体只多一层 `torque.wheel[i]` 的绕弯；更关键的是**不存输入副本**（加速度不限幅，存副本必然与输入重复），也**不设饱标志位**（输出已限幅在 ±`max_wheel_torque` 内，与该上限一比即知） |
+| 配置放哪 | 力矩上限/死区作为各类**运行期成员**（`init()` 两形参写入）；质量/惯量作为**编译期常量** | 前两项需要现场试凑（过流边界、抖动阈值），留运行期入口；质量/惯量由配重和几何决定，改一次就要重做力标定，运行期入口无收益，与几何量（§1.3）同一口径。不抽配置结构体：只有两个标量、只在本类内用，包一层只换来一次拷贝和多一个名字 |
+| 是否内置指令超时 | **不内置**，使能边界显式给定 | 力控与速控同构：不喂参数就不该解算。超时只能靠 `control_period` 软件累加（非真实时间），调用周期一变门限即失真；且隐式超时会把“上层忘关”掩盖成“到点归零”，排查时看不到根因。使能边界就是**目标加速度是否为零**：`set_robot_accel_x/y/w()` 写入、`speed_calculate_callback()` 入口清零，不另存使能位 |
+| 是否复用逆解参数 | 舵轮复用 `target_max_step` / `flip_hysteresis` / `steer_angle_deadband` | 同一台车的舵向机械能力只有一套，两套参数会互相矛盾 |
+
 ---
 
 ## 8. 移植与联调
@@ -393,13 +437,14 @@ IMU 路线要求外部航向与本模块约定一致（`+X` 为 0、CCW 正）�
 
 | 序 | 项目 | 要点 |
 |----|------|------|
-| 1 | 轮半径 | 实测直径 / 2；比例误差直接映射为里程误差 |
-| 2 | 力臂 / 轮心投影 | **中心到轮心**，不是半轴距、不是半轮距 |
+| 1 | 轮半径 | 实测直径 / 2；比例误差直接映射为里程误差；改 `Wheel_Radius` 常量后重编 |
+| 2 | 力臂 / 轮心投影 | **中心到轮心**，不是半轴距、不是半轮距；全向轮改 `Wheel_Distance_To_Core`、麦轮改 `Wheel_Projection_X,Y`、舵轮改 `Wheel_Distance_To_Core[4]`（均为常量，改后重编） |
 | 3 | 舵轮方位角 | 角度表与三角表必须同步重算 |
 | 4 | 编码器零位 | 舵向电机读数为 0 时轮子实际指向与 `+X` 的偏差；改 `Enc_Zero_Angle[4]` 常量后重新编译 |
-| 5 | 电机正方向 | 单轮反改那一路；整车全反改上层符号 |
-| 6 | 控制周期 | 必须与实际调用间隔一致 |
-| 7 | 优化参数 | 斜坡、死区、静止阈值、限速上限（见舵轮分册） |
+| 5 | 电机正方向 | 无舵向轮系：整车全反用 `init()` 第二参 `__wheel_encoder_direction = -1`；单轮反改那一路电机 |
+| 6 | 控制周期 | 必须与实际调用间隔一致（`init()` 第三参） |
+| 7 | 优化参数 | 斜坡、死区、静止阈值、限速上限，走 `init()` 的速控段（见舵轮分册） |
+| 8 | 力控参数 | 单轮力矩上限、力死区走同一个 `init()` 的力控段；整车等效质量/惯量是常量（`Chassis_Mass` / `Chassis_Inertia`，改后重编）；只用速控可不管 |
 | 8 | 轮位映射 | 下标 → 物理轮位 → 电机 ID 三方一致 |
 
 **符号红线**：无舵向轮系的逆解、正解、里程计三处符号相互校验（逆解结果喂回正解应还原原速度），只改一处会让"正逆解互逆"与"里程计方向"同时失效。
@@ -413,7 +458,7 @@ IMU 路线要求外部航向与本模块约定一致（`+X` 为 0、CCW 正）�
 | 正解速度 ≡ 目标速度 | 先逆解后正解（§5.3 约束 2） |
 | 里程计直线漂移 | 轮半径未标定（跑 1 m 直行做比例校验） |
 | 里程计转向漂移 | 力臂用了半轴距而非中心到轮心距离 |
-| 里程计方向与实际相反 | 电机符号；无舵向轮系注意实现中的整体取负 |
+| 里程计方向与实际相反 | 电机符号；无舵向轮系看 `__wheel_encoder_direction` 是否给对（不要改公式） |
 | 慢速时位姿略微滞后（毫米级） | 编码器里程计累积-触发死区的正常表现（§6.2），长时间静止后停止输出 |
 | 位姿完全不动、速度里程计正常 | 编码器里程计被跳帧或未调用（§5.3 约束 5） |
 | 位姿逐周期翻倍 / 停滞 | 里程计每周期调用次数 ≠ 1（§5.3 约束 5） |
@@ -438,6 +483,72 @@ IMU 路线要求外部航向与本模块约定一致（`+X` 为 0、CCW 正）�
 
 | 版本 | 说明 |
 |------|------|
+| code 1.44 | **力控解算的命名与处理方式对齐运动学逆解**：①轮端力方向先换成**电机域**目标角 `force_target = steer_encoder_direction·atan2f(force_y, force_x) + Enc_Zero_Angle[i]`，之后就近转位 / 单圈折算 / `align_error` / `effective_error` / 斜坡限幅与 `inverse_calculate_callback()` **逐行同构**，删掉几何域的 `steer` / `target_angle` / `delta_angle` / `target_motor` 四个局部量；②局部量改名对齐逆解：`force_magnitude`→`force_modulus`（与 `vel_modulus` 同一命名口径）、`direction`→`optimize_direction`、混控的 `cos_effective`→`cos_angle_raw`（再 `cos_angle`）；③**死区直接比力幅** `force_modulus <= force_deadband`，与下游 `wheel_force_force_to_torque()` 的 `force_modulus <= deadband` 完全同形，不再中转 `force_modulus_sq` / `force_deadband_sq`（4 次 `VSQRT` 在 1 kHz 下约 56 周期/拍，可忽略；且 `arm_sqrt_f32` 的判据是 `in >= 0`，NaN 输入得到 0 ⇒ 落进死区分支"锁舵向、不出力"，比"先比平方"的失效方向更安全）；④斜坡输出改成与逆解同为三元表达式，`optimize_angle_valid[i] = true` 不再分两个分支。副作用只有一处：`error_angle` 在 `steer_encoder_direction = −1` 时从几何角变为电机角（解析上两者恰好互为相反数，`\|error\|` 与 `cos³` 零差异），从此与逆解同一个坐标域。验证：力矩 / 多圈舵向目标 / 余弦系数在 force+mixed × dir±1 × 正方形/长方形 × 8 组开关组合下差 ≤ 2.2e-15；20 万样本域变换一致（dir=+1 差 1.2e-14，dir=−1 200000/200000 恰好取反）；两项死区判据 4 万样本 × 4 档死区零分支差异 |
+| code 1.43 | **删除 `force_calculate_core()` 内的局部量 `plan_steer`**，三处直接用 `(control_method != Wheel_Mixed_Control_Method)`：它只读一个成员、无副作用、求值代价为一次比较，不值得为它多一个名字（与此前"不抽 `const float vx = ...` 中间变量"的既有偏好一致） |
+| code 1.42 | **余弦削减内联进 `force_calculate_core()`**：删除独立的 `force_cosine_optimize()`（它只有 core 一处调用，保留函数只是多一层调用与一个 `float&` 出参）。`effective_error` 与 `cosine` 改在循环内直接算并写入 `status`；死区条件由 `\|e\| < db` 取反为 `\|e\| >= db` 以便让 `cosine` 保持初值 1。语义完全不变（50 万随机样本 + 门限边界：cosine 与 `effective_error` 均**零差异**），代码体积不变 |
+| code 1.41 | **`force_calculate_core()` 改为无参函数**，与 `forward_calculate_callback()` 同形：读 `target_accel` / 写 `status`，不再传递 `(fx, fy, mz, plan_steer)`。两条公开入口各自退化为一行转发；加速度合法性校验与非法输入分支**合并进 core**（之前 `force_` 与 `mixed_` 各写一份，`force_` 清全部目标字段、`mixed_` 只清力矩——现在用 `plan_steer` 区分，行为不变）。`plan_steer` 改由 `control_method` 判定，因此**新增一条契约**：`init()` 首参须与实际调用的入口一致（`Force`↔`force_calculate_callback`，`Mixed`↔`mixed_calculate_callback`）；若 `init` 成 `Speed`/`Force` 却调 `mixed_`，core 会按 Force 语义重新规划舵向、把逆解刚算好的舵向目标覆盖掉（已实测确认）。契约写在 `control_method` 与 `force_calculate_core()` 两处注释 |
+| code 1.40 | **舵轮力控合并为单循环单函数** `force_calculate_core()`：力分配 / 舵向规划 / 出力在同一循环内串行，与运动学逆解「一行直写输出」同形。删除 `force_wheel_force_vector()` 与 `force_project_torque()`，去掉 `wheel_force_x[4]` / `y[4]` 两个中间数组与两趟遍历。力分配公式与出力公式各只出现一次，纯力控与混控通过 `__plan_steer` 参数区分（true = 由力方向规划舵向，false = 舵向已由速度逆解给出）。code 1.36 定的「唯一出力入口」原则不变，只是从「两个函数」收拢为「一个函数一次循环」。验证：与三趟批处理版**状态零差异**、力矩差 2.2e-16 |
+| code 1.39 | **舵轮 `force_wheel_force_vector()` 改为循环 + 符号表现算轮心坐标**：code 1.38 的四轮展开写法把 `Wheel_Sign_X/Y` 表拄成了第二份字面量（`±Ly` / `±Lx` 手写），改符号表时这里会静默失配——与此前硬编码 `±√2/2` 是同一类错误。改为 `for` 循环后，逆解 / 正解 / 位移解算 / 力分配四处**均只认「Lx / Ly / 符号表」这一份几何来源**。验证：循环版与展开版 float32 逐位零差异（240 万个数），守恒误差 ≤ 7e-15 |
+| code 1.38 | **舵轮几何改为半轴距/半轮距形式，支持长方形布局**：新增 `Wheel_Projection_X`（= `Lx`，前后半轴距）/ `Wheel_Projection_Y`（= `Ly`，左右半轮距）+ `Wheel_Sign_X/Y[4]` 符号表；删除 `Wheel_Distance_To_Core[4]`、`Wheel_Unit_Cos[4]`、`Wheel_Unit_Sin[4]` 三张表。轮心坐标直接取 `(±Lx, ±Ly)`，角速度相关公式只用 `Wheel_D2 = Lx²+Ly²`，**全程无需开方**，换构型只改两个数。逆解 / 正解 / 位移解算 / 力分配四处统一，数值验证：正方形 / 长方形 / 窄长 / 高窄四组布局，逆解→正解互逆误差 ≤ 4e-15、力分配守恒误差 ≤ 7e-15。**⚠ 行为变化**：原来 `0.12` 被当作径向距离 `d` 使用（等价于 `Lx=Ly=0.0849`，17 cm 见方），现在按半轴距解释（`Lx=Ly=0.12`），`d` 由 0.12 变为 0.16971 —— 纯偏航轮速大 41%、同样轮速下正解 `vw` 小 29%、偏航力减半。这是 code 1.37 里存疑的正确语义 |
+| code 1.37 | **舵轮力分配切向改回查 `Wheel_Unit_Cos/Sin` 表**：code 1.34 硬编码 `±√2/2` 是错的写法——表才是几何的唯一真值源，逆解/正解/位移解算都查表；硬编码只在正方形布局下恰好一致，布局改矩形后会**静默偏小**（0.15/0.10 时 −1.9%，0.20/0.08 时 −8.1%）且与逆解矛盾。另在 `Wheel_Distance_To_Core[4]` 注释与分册里明确 **`d` 是径向距离而非半轴距**：填错会让偏航轮速与里程计航向按互为倒数的比例同时失真（半轴距→指令 70.7%、里程计 141%），而正逆解自身仍自洽，极难从数据上发现 |
+| code 1.36 | **舵轮出力入口统一**（参考 Horizon `Swerve_Force_Torque` 的结构）：`force_project_torque()` 成为纯力控与混控**共用的唯一出力入口**——死区门限、模长、方向符号、力矩上限只定义一份，两条流水线不会各自漂移。`force_calculate_callback()` 退化为纯“舵向规划”（目标角/方向/余弦系数/未对齐角），末尾调 `force_project_torque(fx, fy, status.cosine_optimize)`；混控调 `force_project_torque(fx, fy)` 走内部点积。同时死区改**平方比较**（`\|F\|² ≤ deadband²`），死区轮免开方。验证：死区边界 50 万 ±1e-6 样本零差异；纯力控重构前后逐位一致（1.8e-15）；混控 vs 纯力控仍一致（1.3e-14） |
+| code 1.35 | **动力学（力控）解算重整**：①`force_cosine_optimize()` 内联死区判断（它本就依赖刚落出的 `effective_error`），调用方不再重写那 5 行——之前漏写导致同一死区在纯力控/混控两条流水线生效范围不同；②`force_project_torque()` 改用**点积直取** `cos e = dir·F·û(θ)/\|F\|`，省掉 `atan2f`、`arm_cos_f32` 回算与两次角度归一化，四轮合计约 800 周期/拍；③死区判据换算到余弦域 `cos e > cos(deadband)`（循环外只算一次），与纯力控的角度判据严格等价（六档 deadband × 30 万样本，偏差 ≤ 1e-14）；④力区判据统一为 `<=` 与扣除式同门限。**关键坑**：死区不能用 `\|cos e\|` 判断——`\|cos\|` 在 [0, π] 非单调，会把“反转后的接近对齐”与“正向的大失配”混为一谈，必须带方向折回 |
+| code 1.34 | **舵轮 `force_wheel_force_vector()` 改为与运动学逆解同形**：四轮逐行展开、带 `φᵢ` 轮位注释，切向直接写成 `±√2/2`（不再查 `Wheel_Unit_Cos/Sin` 表），`Σdᵢ²` 写在分母里、不再写 `sum_d2` 求和循环。与旧实现**数值逐位一致**（0 误差），仅书写风格变化 |
+| code 1.33 | **舵轮 `force_wheel_force_vector()` 化简**：①偏航力增益 `mz/Σd²` 提到循环外，只算一次除法（原先每轮一次）；②删除 `if (Σdᵢ² > 1e-6f)` 判据——分母由常量表求和，恒正，该判据恒真，属假保护。改动全部收在 `.cpp` 函数内，头文件常量区未新增任何内容 |
+| code 1.32 | **`.cpp` 目录结构改为"一个轮系一段"**：力控实现（`speed_/force_/mixed_calculate_callback` 与 `force_wheel_force_vector` 等力分配辅助函数）从文件末尾的独立分区移入各自轮系段，紧跟该类的里程计/位姿接口之后；删除三段 `xxx 力控` 分区标题，文件只剩 4 个分区（静态辅助 + 三系）。纯排版调整，行为与代码体积不变 |
+| code 1.31 | **删除舵轮 `init()` 末尾重复清 `status.wheel_torque` 的循环**：舵轮的力矩在 `status` 内，前面那轮逐字段清零已经覆盖；全向轮/麦轮的 `wheel_torque` 是**类成员、不在 `status` 内**（且它们用 `status = {}` 整体清），才需要单独补一段。原代码是从 omni/mecanum 直抄过来的，属纯冗余 |
+| doc 2.29 | 同 code 1.30：三份分册参数表增补 `Chassis_Mass` / `Chassis_Inertia` 两行（标为编译期常量），§3.3 力控说明、API 表、调用示例去掉 mass/inertia 形参 |
+| code 1.30 | **底盘质量/转动惯量改为编译期常量**：`static constexpr float Chassis_Mass` / `Chassis_Inertia`，从三系 `init()` 形参中删除，也不再是运行期成员。理由：这两项只由整车配重与几何决定，改一次就要重做力标定，留运行期入口没有实际收益（与 code 1.20/1.29 的几何量同一口径）；`init()` 里只剩力矩上限与死区需校验，`wheel_force_config_valid()` 缩为两项。RAM −24 B |
+| doc 2.28 | 同 code 1.29：舵轮分册参数表 / API 表 / 示例的逐轮力臂改为常量数组；总纲 §1.3、§4.1、§5.1、§8.1 措辞统一为"几何量一律编译期常量" |
+| code 1.29 | **舵轮逐轮力臂也改为编译期常量**：`static constexpr float Wheel_Distance_To_Core[4]`，删除 `float distance_to_core[4]` 成员与 `set_distance_to_core(i,d)`，`init()` 的逐轮校验循环一并删除。公式里全部改用 `Wheel_Distance_To_Core[i]`；力分配仍按 `mz·dᵢ/Σd²`（Σd² 由常量表求和，编译器可折叠）。至此**三系的几何量全部只作编译期常量**，code 1.20 留下的"舵轮例外"作废。四轮不等距时直接改这 4 个常量值即可，代价是重新编译而不是多一个运行期接口（RAM −16 B） |
+| doc 2.27 | 同 code 1.28：三份分册力控输入行改为 `set_robot_accel_x/y/w(v)` 并删除诊断 getter 行，示例与说明同步；总纲 §5.6 表同步 |
+| code 1.28 | **加速度输入改为三轴 setter** `set_robot_accel_x/y/w(const float&)`：与 `set_wheel_speed(i, w)` 同形，取代 `update_robot_acceleration(struct)` 与三个诊断用 getter。理由：三轴本就独立（不存在需要整份校验的耦合），包成结构体参数反而多一层搬运；而把它们改回 setter 后，写入面与“零加速度 = 不出力”的语义合为一处，也不再需要单独的诊断 getter（上层自己就是写入方）。单轴非有限值只跳过该轴；`wheel_robot_accel_t` 保留为内部存储类型 |
+| doc 2.26 | 同 code 1.27：三份分册与总纲把"力控使能位"表述改为"**零加速度 = 不出力**"，`update_robot_acceleration` 说明补"非法值保持上一拍" |
+| code 1.27 | **删除三类的 `bool force_enable`**：它从未与 `target_accel` 分离写入（`init()` / `speed_calculate_callback()` 同时清两者，`update_robot_acceleration()` 同时写两者），而零加速度经 `F = m·a` 解出的力本就是零，力矩也必为零 —— 使能位不携带任何额外信息。删除后 `force_calculate_callback()` 的判据只剩 `wheel_force_wrench_from_accel()` 的合法性检查，`get_robot_accel_x/y/w()` 直接返回 `target_accel`（速控入口已将其清零，因此"读回 0"仍等价于"本拍没出力"）。舵轮零力的情形仍在下方 `|F| < force_deadband` 分支里锁住当前舵向，行为不变 |
+| doc 2.25 | 同 code 1.26：三份分册 API 表把 `inverse_calculate_callback()` 标为 protected 内部函数；总纲 §5.6 去掉“上层可直接调纯逆解”的说法 |
+| code 1.26 | **`inverse_calculate_callback()` 收进 protected**（三系）：它只服务 `speed_`/`mixed_calculate_callback()` 的内部复用，对外暴露只会让调用方误以为可以绕过“关断力控输出”这一步。对外仅保留三条流水线（`speed` / `force` / `mixed`）+ 输入输出接口 |
+| doc 2.24 | 同 code 1.25：三份分册 API 表补 `inverse` / `speed` 的分工说明；舵轮分册补"混控不能调 speed"的原因 |
+| code 1.25 | **舵轮 `speed_calculate_callback()` 补上"关断力控输出"**：此前只是 `inverse_calculate_callback()` 的纯转发，漏了 `force_enable = false` 与 `target_accel` 清零 —— 从力控/混控切回速控后使能仍为 true，`get_robot_accel_x/y/w()` 会继续读回上一拍旧值，诊断与"本拍是否出力"脱节。至此三系 `speed` 语义一致（关断 + 逆解）。同时明确两者分工：`inverse_calculate_callback()` 是**纯逆运动学、不碰力控状态**，混控必须用它（加速度刚写入，不能被关断），速控才用 `speed` |
+| doc 2.23 | 同 code 1.24：三份分册 API 表删除 `torque_feedforward_calculate_callback` / `zero_force_calculate_callback` 两行，“无隐式超时”改为“使能由 `update_robot_acceleration()` 置位、`speed_calculate_callback()` 关断” |
+| code 1.24 | **删除三类的 `torque_feedforward_calculate_callback()` 与 `zero_force_calculate_callback()`**：前者的功能已被 `mixed_calculate_callback()` 内联（全向轮/麦轮直接复用等价的 `force_calculate_callback()`，舵轮因需保留舵向目标而内联前馈段）；后者的“关断力控输出”并入 `speed_calculate_callback()` 入口。理由：两个函数都只服务于内部流程，对外暴露只会多出“调用顺序错了就静默失效”的陷阱；收拢后对外只剩三条流水线，调用面与概念数一致 |
+| doc 2.22 | 同 code 1.23：三份分册的 API 表与调用示例改用 `speed_calculate_callback` / `mixed_calculate_callback`；总纲 §5.6 改为“上层挑流水线” |
+| code 1.23 | **三条流水线改名 + 取消内部分派**：`control_calculate_callback()` → `speed_calculate_callback()`（速控 = 关断力控输出 + 逆解），`mixed_control_calculate_callback()` → `mixed_calculate_callback()`；模块不再按 `control_method` 分派，上层直接调对应的一个。理由：控制方式本来就由上层持有（code 1.22），模块内再 switch 一次等于把同一个事实表达两遍；改名后三个入口对称，不再有一个叫 “control” 的“统一入口” 与三条流水线并列。`inverse_calculate_callback()` 保留为纯逆运动学（舵轮入口自带清力矩） |
+| doc 2.21 | 同 code 1.22：总纲 §5.6 五条约束改为“控制方式由上层持有”，删除 `get_control_method()` 提法 |
+| code 1.22 | **删除三类的 `get_control_method()`**：控制方式由上层自己持有（同一常量既传给 `init()`，也用于自己的分支判断），模块不再回读。理由：它只是为了回答“我当初给的是哪种方式”，而这个事实本来就属于上层配置，模块里再存一份、再开一个 getter 只多一条需要保持同步的路径；`chassis.cpp` 因此改为文件级 `Chassis_Wheel_Control_Method` 常量，`init()` 与两处分支共用 |
+| doc 2.20 | 同 code 1.21：三份分册的 API 表删除 `set_force_config` 行、力控调用示例改为 `init()` 四形参；总纲 §5.1 / §7 同步“无运行期改参旁路” |
+| code 1.21 | **删除三类的 `set_force_config()`**：力控四项（质量/惯量/力矩上限/死区）只在 `init()` 里整份校验后写入，不再另开运行期改参旁路。理由：这四项是互相配合的一整套值，单独改一两项（如只调力矩上限、质量仍是旧的）会留下物理上不自洽的组合；而改参本来就要重做标定，走一次 `init()` 并不多余。`wheel_force_config_valid()` 静态辅助函数保留，`init()` 直接调用它做整份校验 |
+| doc 2.19 | 同 code 1.20：全向轮/麦轮分册的参数表 / API 表 / 调用示例去掉几何 setter，改为编译期常量；舵轮分册保留 `set_distance_to_core(i,d)` 与逐轮设力臂示例；总纲 §1.3、§3.1、§4.1、§5.1、§8.1 的几何措辞同步 |
+| code 1.20 | **全向轮/麦轮的几何量只做编译期常量**：删除 `omni::set_distance_to_core()`、`mecanum::set_projection_x/y()` 与对应运行期成员（`distance_to_core` / `projection_x` / `projection_y` / `sum_xy`），公式里直接用 `Wheel_Distance_To_Core` / `Wheel_Projection_X,Y`；麦轮新增 `Wheel_Sum_XY = a + b` 常量替代旧 `sum_xy` 缓存。理由：这两系的几何是整车常量（轮心全在同一圆/同一矩形上），运行中改一定会破坏逆解/正解/里程计/力分配的一致性。**舵轮例外**：实车四轮可能不等距，保留 `distance_to_core[4]` 与 `set_distance_to_core(i,d)`，力分配仍按 `mz·dᵢ/Σd²` 加权 |
+| doc 2.18 | 同 code 1.19：全向轮分册 §3.1–3.3、§4、§5.1、§8 的公式去掉硬编码负号，改为 `σ` 表示；总纲 §3.8 红线 3/4 与极性覆盖面说明同步 |
+| code 1.19 | **全向轮公式去掉硬编码负号，极性只由 `wheel_encoder_direction` 承担**：逆解改 `wᵢ = σ·uᵢ/R`（`uᵢ = t̂ᵢ·vᵢ` 为轮心切向投影），正解 `wsᵢ = σ·status.speed[i]`、里程计 `dsᵢ ×= σ`、力分配同步翻号，四处严格互逆（数值验证：逆解→正解/里程计精确还原 `vx/vy/vw`，力分配精确还原 `(fx, fy, fw)`）。全向轮 `init()` 第二参默认值改为 `-1.0f`（本车电机正方向与切向相反），因此"不传参"仍与旧行为一致；麦轮默认保持 `+1.0f` |
+| doc 2.17 | 同步 code 1.18：全向轮/麦轮分册参数表补轮向电机方向、几何项改注"编译期默认值 + setter"，API 表与示例改新签名；总纲 §3.8 符号红线与改法、§8.1 换车清单同步 |
+| code 1.18 | **无舵向轮系的 init 去掉几何形参、改为轮向电机极性**：全向轮删 `__distance_to_core`、麦轮删 `__projection_x/y`，两者统一加第二参 `__wheel_encoder_direction`（四个轮向电机共用一个 ±1），与舵轮 `__steer_encoder_direction` 对称。方向系数在**逆解 / 正解 / 里程计位移 / 力控轮端力**四处一起生效。几何量彻底移出初始化（code 1.20 进一步改为纯编译期常量） |
+| doc 2.16 | 同步 code 1.17：舵轮分册 §4.4 补"两条死区分支都已改为只置 `k`、不碰 `optimize_angle`"、`error_angle` 保留真实残差、力控同口径，并列出真正"锁当前角"的三类无输出分支 |
+| code 1.17 | **死区不再改写成 `now_angle`**（速控 + 力控两条路径）：命中死区时只把 `k` 置 1（不削减出力），`optimize_angle` 照常经斜坡朝解算角/力方向收敛。原因：把目标改成 `now_angle` 等于永久放弃残余误差，四轮各自锁在死区内距目标至多 `deadband` 的任意位置，摩擦/齿隙不同 → 锁定位置不同 → 静态指向不一致；前进时四轮本就在零位附近（一致，走直线），横移时四轮要齐步转到 90° 却锁在不同位置 → 前后不对称 → 持续净力矩 → 横移走圆弧。同时 `error_angle` 不再被死区清零（保留真实残差供遥测） |
+| doc 2.15 | 同步 code 1.16：舵轮分册参数表与 §3.3 / §4.2 / §4.3 明确三个优化开关（及被它们开关的 `target_max_step` / `flip_hysteresis` / `steer_angle_deadband`）**速控与力控共用**；总纲 §5.6 补同一说明 |
+| code 1.16 | **就近转位开关补齐到力控路径**：`force_calculate_callback()` 原先无条件调 `steer_select_nearest_target()`，`nearest_optimize_enable = false` 对纯力控无效（`cosine_optimize_enable` / `target_step_limit_enable` 本已共用）。现改为与速控同口径：开关打开→就近转位 + 翻转迟滞；关闭→舵向只转力方向本体、`dir` 恒 `+1`。三个开关至此在两条流水线上完全对称 |
+| doc 2.14 | 同步 code 1.15：三系 `init` 形参统一按「控制模式和控制参数 → 速控参数 → 力控死区和最大力矩限制 → 优化开关 → 车体质量和转动惯量」分组加注释；omni/mecanum 分册 API 表与示例补力控四项，舵轮示例按新顺序重排 |
+| code 1.15 | **三系 `init` 形参顺序统一**：omni/mecanum 的 `init` 改为 `(method, 几何…, period, max_torque, force_deadband, mass, inertia)`，与舵轮的分组顺序（力控限幅在优化开关之前、车体质量惯量在最后）对齐；仅排版与参数次序调整，行为不变 |
+| code 1.14 | **力控配置并回 `init()`**：舵轮 `init` 接收全部十五项（通用 3 + 速控 8 + 力控 4），omni/mecanum 的 `init` 也加力控 4 项，三系再次同构；删除 `set_speed_config()`（速控八项回到 init）；`set_force_config()` 当时保留为旁路，已在 code 1.21 删除。校验口径不变：速控逐项、力控整份 |
+| doc 2.12 | 同步 code 1.13：总纲 §5.1 加"可配参数分三块"，§5.6 补三块初始化表，§8.1 换车清单补"力控参数"项；舵轮分册 API 表按 `init` / `set_speed_config` / `set_force_config` 三块重排、§9 示例改三段式，并修正"编码器极性是 `init()` 首参"的错述（实为第二参） |
+| code 1.13 | **初始化参数按用途拆成三块**（舵轮）：`init(method, enc_dir, period)` 只留通用项；速控专有八项收进 `set_speed_config(max_step, max_speed, min_limit, deadband, flip_hyst, cos_en, nearest_en, step_en)`；力控专有四项仍由 `set_force_config()` 写入。理由：原 `init()` 十一个形参把三种用途混在一起，末三位还是布尔开关，调用处只能靠注释辨认；拆开后"用哪种控制方式就配哪块"，纯力控不必再看舵向优化参数。校验策略也按性质区分：速控八项互不耦合，逐项走各自 setter（单项非法只跳过该项）；力控四项互相配合，仍整份校验 |
+| doc 2.11 | 同步 code 1.12：三份分册 API 表删 `get_wheel_torque_saturated(i)` 行，配置行/诊断说明统一为“力矩与 `max_wheel_torque` 比即可”；总纲 §7 “输出结构”行改写 |
+| code 1.12 | **删除力矩结构体**：`wheel_torque_t` 整体删除（含 `saturated[4]`），轮端力矩改为各类内的 `float wheel_torque[4]`（舵轮在 `status.wheel_torque[4]`），与 `wheel_state_t` 的 `angle/speed` 同范式；`get_wheel_torque(i)` 不变，删除 `get_wheel_torque_saturated(i)`。理由：①原来是 `torque.wheel[i]` 的双重命名，语义绕弯且与既有 `xxx_state_t` 命名体系不符；②力矩已限幅在 ±`max_wheel_torque` 内，“是否截断”直接比较值即可，再维护一份布尔标志只会多一处可能与实际值不同步的状态；③`wheel_force_force_to_torque()` 改回写 `float*`，并新增 `wheel_torque_clear()` 统一清零 |
+| doc 2.10 | 同步 code 1.11：三份分册 API 表把力控配置行改为四形参 `set_force_config(mass, inertia, max_torque, deadband)`、删掉 `get_force_config()` 行、示例改四实参；总纲 §7 补“配置放哪”取舍行 |
+| code 1.11 | **力控配置去结构体**：删除 `wheel_force_config_t`，四个字段（`chassis_mass` / `chassis_inertia` / `max_wheel_torque` / `force_deadband`）直接作为各轮系类成员并带默认值（当时引入的 `set_force_config()` 已在 code 1.21 删除）；删除 `get_force_config()`（四项属整车配置，由上层自己掌握；诊断已有 `get_wheel_torque` / `get_robot_accel_x/y/w`）。理由：只有四个标量、且只在本类内解算，包一层结构体只多出一次拷贝与一个名字，与 `pid_class` / `slope_class` 的标量形参风格也不一致 |
+| code 1.10 | 力控默认值下沉：结构体四个字段改为**默认成员初始化**（`chassis_mass = 10.0f` 等），删除命名空间级常量 `Wheel_Force_Config_Default`，消除“改一处忘两处”的不一致风险 |
+| code 1.9 | **导出结构体重整**：按「基础量 → 配置 → 输入快照 → 输出」四段重排，每个类型补齐单位/取值域/正方向说明；`wheel_force_status_t`（已只剩一个力矩数组）更名为 `wheel_torque_t`，字段改为 `wheel[4]` + `saturated[4]`——用“力矩是否被上限截断”的**真实诊断位**代替已失去意义的加速度副本（死区扣除不置位，只有真正被 `max_wheel_torque` 截断才置位）；三个类的成员统一按「配置 / 输入 / 内部状态 / 输出」四段排列并同步命名（`force_status` / `status.force` → `torque` / `status.torque`）；`wheel_force_force_to_torque()` 改为整份接收 `wheel_torque_t`，不再单传裸数组；**删除 `force_timeout` / `force_age` / `wheel_force_watchdog_step()`**：力控与速控同构，不喂参数就不该解算，使能边界改由 `update_robot_acceleration()`（置位）与 `zero_force_calculate_callback()`（清零）**显式**给定——原超时靠 `control_period` 软件累加而非真实时间，调用周期一变门限就失真，且会把“上层忘关”掩盖成“到点自动归零” |
+| doc 2.9 | 同步 code 1.9：三份分册 API 表补 `get_wheel_torque_saturated(i)`、删掉 `force_timeout`/`指令超时` 表述，舵轮分册 §3.3 把“超时看门狗”换成“无隐式超时”的显式契约说明 |
+| doc 2.8 | 同步 code 1.7 / 1.8：总览 §1.1 补 G6（力分配为逆解转置）、§1.2 加力控范围、§4.1 加三系力控行、§5.6 力控编排、§7 力控接口取舍；三份分册补 §3.3 力控推导与 API 表（加速度输入、统一 `control_calculate_callback()`、诊断 getter 改 `get_robot_accel_x/y/w()`）；同步删除加速度限幅的全部表述（含 §1.2 / §7 的"仅力矩上限"口径），并说明力控状态只存力矩、加速度由 `target_accel` 派生 |
+| code 1.8 | **删除加速度限幅**：`max_linear_accel` / `max_angular_accel` 从 `wheel_force_config_t` 移除（整份校验中的对应项同步删除），加速度改由上层按整车能力裁剪，模块内只保留输出端的单轮力矩上限 `max_wheel_torque`；不限幅后「参与解算的加速度」恒等于下发值，再存一份只会多出两份值不同步的隐患，因此 `wheel_force_status_t` **不再存加速度副本**（只剩 `wheel_torque[4]`），`get_robot_accel_x/y/w()` 改为由 `target_accel` + `force_enable` 派生（未出力时为 0），`wheel_force_wrench_from_accel()` 同步去掉冗余的执行值出参；同时补齐麦轮 / 舵轮的 `force_timeout` 看门狗（原先只有全向轮有，超时保护对另两系实际失效），三系现在都在每拍解算前统一过 `wheel_force_watchdog_step()` |
+| code 1.7 | ① **控制方式收归 `init()` 首参**：新增 `wheel_control_method_e`（速控/力控/力速混控），三系统一入口 `control_calculate_callback()` 按方式分派，上层不再逐拍挑回调（当时配套的 `get_control_method()` 已在 code 1.22 删除）；② `set_force_config()` 由逐项合并改为**整份校验**（任一字段非法则整份拒绝），避免留下物理上不自洽的参数组合；③ 新增 `force_timeout` 加速度指令超时保护（`update_robot_acceleration()` 每次写入即重新计时）；④ 力死区由硬截断改**扣除式**，消除门限处的力矩跳变；⑤ `wheel_force_status_t` 的诊断量由等效力/力矩改为**限幅后实际执行的加速度** `ax/ay/aw`，与下发值同量纲、可直接对照看出限幅是否生效（getter 同步改为 `get_robot_accel_x/y/w()`）；⑥ 力控输出收进 `steer_wheel_status_t::force` 子结构，三类共用同一份 `wheel_force_status_t` 定义 |
+| code 1.6 | 力控输入改回**目标加速度** `update_robot_acceleration({ax, ay, aw})`（与参考实现 `Chassis_Force(ax, ay, aw)` 一致）：模块内按 `F = m·a`、`M = J·α` 换算成等效力/力矩，质量与惯量回归 `wheel_force_config_t`（`set_chassis_mass` / `set_chassis_inertia`），输入端限幅由合力/合力矩改为线/角加速度限幅 |
+| code 1.5 | `steer_wheel_status_t` 合并力控输出：速控与力控写同一组目标字段（`optimize_*` / `cosine_optimize` / `error_angle`），消除 `force_status` 与 `force_steer_target` / `force_steer_direction` 三份重复状态；删除舵轮 `get_force_steer_angle` / `get_force_wheel_speed` / `get_force_cosine` 与两系恒 0 的 `get_force_steer_angle`，统一走 `get_optimize_*` / `get_cosine_optimize`；`wheel_force_status_t` 精简为力矩 + 等效力诊断 |
+| code 1.4 | 舵轮力控加入余弦修舵：出力改为 `\|Fᵢ\|·\|cos e\|³·dir`（与速控同口径），并复用舵向死区、翻转迟滞与斜坡限幅 |
+| code 1.3 | 三种轮系内建力控：目标加速度经质量/惯量换算后分配到四轮，输出轮端力矩 N·m；力分配为对应逆解矩阵的转置；舵轮纯力控额外给舵向对齐目标 |
+| doc 2.7 | 同步 code 1.6：三份分册 §3.3 与 API 表改回加速度输入，总览 §1.2 / §5.6 / §7 同步 |
+| doc 2.6 | 同步 code 1.4 / 1.5：总览 §5.6 重写编排约束，三份分册 §3.3 与 API 表跟进统一状态字段 |
+| doc 2.5 | 同步 code 1.3：总览补 §5.6 力控编排与 §7 力控接口取舍，三份分册补 §3.3 力控推导与 API 表 |
 | doc 2.4 | 同步 code 2.1：`init()` 增加 `flip_hysteresis` 形参，§8 接口表与 §9 示例同步 |
 | code 2.1 | `init()` 增加 `flip_hysteresis` 形参（非法值含 `>= π/2` 回退 0.1 rad），迟滞不再只能靠 setter 配置 |
 | doc 2.3 | 同步 code 2.0：§1.1 G4、§5.2、§8.2 改为"里程计快照整帧提交"，分册输入表同步 |

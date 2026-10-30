@@ -14,23 +14,19 @@
 #include <stdint.h>
 #include "bsp_uart.h"
 
-/* ---------- 协议常量 ---------- */
-
-#define POWER_HEADER          0xAAu     /**< 帧头 */
-#define POWER_TAIL            0x55u     /**< 帧尾 */
-#define POWER_FRAME_LENGTH    15u       /**< 整帧字节数 */
-#define POWER_CHECKSUM_LEN    13u       /**< 校验和覆盖的字节数（头+3个float） */
-
-/* ---------- 数据结构 ---------- */
+#define POWER_HEADER          0xAAu     // 帧头
+#define POWER_TAIL            0x55u     // 帧尾 
+#define POWER_FRAME_LENGTH    15u       // 整帧字节数
+#define POWER_CHECKSUM_LEN    13u       // 校验和覆盖的字节数
 
 /**
- * @brief 功率计解析结果（浮点值，可直接使用）
+ * @brief 功率计解析结果
  */
 typedef struct
 {
-    float voltage;    /**< 电压, V */
-    float current;    /**< 电流, A */
-    float power;      /**< 功率, W */
+    float voltage;     
+    float current;    
+    float power;     
 } power_data_t;
 
 extern volatile power_data_t power_data;

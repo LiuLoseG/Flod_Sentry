@@ -38,7 +38,7 @@
 | 2 | RR | −a | −b | −1 | +1 |
 | 3 | FR | +a | −b | −1 | −1 |
 
-`a = projection_x`（半轴距），`b = projection_y`（半轮距），`S = a + b`。
+`a = Wheel_Projection_X`（半轴距），`b = Wheel_Projection_Y`（半轮距），`S = Wheel_Sum_XY = a + b`。
 
 ---
 
@@ -47,16 +47,19 @@
 | 参数 | 符号 | 默认值 | 类型 | 修改方式 |
 |------|------|--------|------|----------|
 | 驱动轮半径 | `R` | 0.0761 m | 编译期常量 | 改 `Wheel_Radius`，需重新编译 |
-| 轮心 X 向投影（半轴距） | `a` | 0.12 m | 运行时可改 | `init()` 或 `set_projection_x()` |
-| 轮心 Y 向投影（半轮距） | `b` | 0.11 m | 运行时可改 | `init()` 或 `set_projection_y()` |
-| 投影和 | `S = a+b` | 0.23 m | 运行时缓存 | 两个 setter 会同步刷新 `sum_xy` |
+| 轮心 X 向投影（半轴距） | `a` | 0.12 m | 编译期常量 | 改 `Wheel_Projection_X`，需重新编译（无 setter） |
+| 轮心 Y 向投影（半轮距） | `b` | 0.11 m | 编译期常量 | 改 `Wheel_Projection_Y`，需重新编译（无 setter） |
+| 轮向电机方向 | `wheel_encoder_direction` | +1 | 运行时可改 | +1 = 电机读数正向与辊子驱动方向同向，-1 = 反向；由 `init()` **第二参**指定，四个轮向电机共用一个极性 |
+| 投影和 | `S = a+b` | 0.23 m | 编译期常量 | `Wheel_Sum_XY`，由 `a`/`b` 自动推导 |
+| 底盘等效质量 | `m` | 10.0 kg | 编译期常量 | 改 `Chassis_Mass`，换配重后重编（仅力控/混控用） |
+| 绕 Z 轴等效转动惯量 | `J` | 0.35 kg·m² | 编译期常量 | 改 `Chassis_Inertia`（仅力控/混控用） |
 | 控制周期 | `T` | 0.001 s | 运行时可改 | `init()` 或 `set_control_period()`（仅速度里程计用） |
 | 编码器里程计位移累积死区 | — | 1e-4 m | 常量 | 累积到该值才积分（抖动互抵，慢速不丢） |
 | 编码器里程计角度累积死区 | — | 1e-3 rad | 常量 | 同上 |
 | 速度里程计线速度死区 | — | 0.01 m/s | 常量 | 速度口径，与调用频率无关 |
 | 速度里程计角速度死区 | — | 0.05 rad/s | 常量 | 同上 |
 
-`a` / `b` 是**轮心在机体轴上的投影**，不是轮子外缘尺寸。两者都允许为 0，但 `a + b` 必须 > 0，否则逆/正解退化（除数为 0），setter 会拒绝这种组合。
+`a` / `b` 是**轮心在机体轴上的投影**，不是轮子外缘尺寸。两者都允许为 0，但 `a + b` 必须 > 0，否则逆/正解退化（除数为 0）。改这两个常量后需重新编译并重做标定。
 
 ---
 
@@ -100,6 +103,23 @@ w₃ (FR) = (−vx − vy − S·vw ) / R
 - 容易混淆的是**有效驱动方向**按对角线成对（FL 与 RR 共用一条辊子线，RL 与 FR 共用另一条），而轮子**滚动方向**按前后轴成对；两者相差一个随轮而变的符号，标定时不要拿其中一个去核对另一个。
 - 旋转项四个轮子相同（都是 `−S·vw`）：纯旋转时四轮同向，这与麦轮"斜向合力产生力矩"的物理事实一致。
 - 若实测某个方向变成斜移（例如发 `vy` 却斜着走），说明实际辊子布局与 §1 的 σ 表不符，需按实际布局重推，**不能**靠单轮取负硬凑。
+
+### 3.3 力控（目标加速度 → 四轮轮端力矩）
+
+输入是**底盘目标加速度**（`ax/ay` 单位 m/s²，`aw` 单位 rad/s²），模块内部按 `F = m·a`、`M = J·α` 换算成等效力/力矩，因此质量与惯量是本模块的配置量（编译期常量 `Chassis_Mass` / `Chassis_Inertia`），换配重改常量后重新编译，不动上层。
+
+力分配矩阵是逆解矩阵的**转置**（功率对偶：`Σ fᵢ·uᵢ ≡ fx·vx + fy·vy + fw·vw`）。逆解每轮驱动方向 `dᵢ` 长度为 `√2` 且 `Σ dᵢ·dᵢᵀ = 4I`，故平动项系数为 `1/4`；旋转项由 `Σ fᵢ = −fw/S`（`S = a + b`，逆解 `vw` 系数恒为 `−S`）定出：
+
+```
+f₀ (FL) = ( fx − fy)/4 − fw/(4S)
+f₁ (RL) = ( fx + fy)/4 − fw/(4S)
+f₂ (RR) = (−fx + fy)/4 − fw/(4S)
+f₃ (FR) = (−fx − fy)/4 − fw/(4S)
+```
+
+平动项符号与 §3.2 的 `vx/vy` 权重逐轮一一对应（例如 `fx` 项 `(+,+,−,−)` 与轮速 `vx` 权重同族），所以**逆解结果喂回本式可还原 `(fx, fy, fw)`**——这是改任何符号后必过的自检。
+
+调用与限幅同全向轮（`init()` 写入力矩上限/死区 → `set_robot_accel_x/y/w` → `force_calculate_callback` → `get_wheel_torque`）；`S ≤ 0` 时旋转项强制为 0，避免除零。
 
 ---
 
@@ -151,7 +171,7 @@ dy = (−Δs₀ + Δs₁ + Δs₂ − Δs₃) / 4
 dψ = −( Δs₀ + Δs₁ + Δs₂ + Δs₃) / (4·S)        Δsᵢ = (θᵢ − θᵢ_prev)·R
 ```
 
-里程计的 `S = a + b` 与逆解同源：在线改 `projection_x/y` 后旋转增益会同步变化，改完需重做一次纯旋转标定。
+里程计的 `S = Wheel_Sum_XY` 与逆解同源（同一个编译期常量），改 `a`/`b` 后旋转增益会同步变化，需重编并重做一次纯旋转标定。
 
 死区是**累积量**而非单帧量：三轴累积不足线 1e-4 m / 角 1e-3 rad 时本帧不积分，位移留在 `odom_residual_*` 里，等后续帧攒够再连同历史位移一次积分。所以慢速运动不会被整帧丢掉（最多滞后 1 个死区量），零位噪声的 `+n / −n` 抖动则互相抵消、不会触发——两者都不依赖调用频率。
 
@@ -175,13 +195,15 @@ wheel.speed_odometry_callback();     // 必须在 forward_calculate_callback() �
 
 | 分类 | 接口 | 说明 |
 |------|------|------|
-| 初始化 | `init(a, b, T)` | 非法值回退默认；清零全部状态 |
-| 配置 | `set_projection_x(a)` / `set_projection_y(b)` | 拒绝 `a<0`、`a+b<=0`；同步刷新 `sum_xy` |
+| 初始化 | `init(method, enc_dir, T, max_torque, force_deadband)` | 首参选定控制方式（速控/力控/混控），第二参为轮向电机极性（非法值按 +1）；周期非法值回退默认；力控两项**整份校验**；清零全部状态。**几何量与质量/惯量都是编译期常量，不进 init** |
+| 配置 | — | `a`/`b`/`S` 分别是 `Wheel_Projection_X` / `Wheel_Projection_Y` / `Wheel_Sum_XY` 编译期常量，无运行期修改入口 |
+| 配置 | `set_wheel_encoder_direction(±1)` | 轮向电机极性，非 ±1 / 非有限被拒绝；`init()` 第二参已可指定，此接口用于运行期改 |
 | 配置 | `set_control_period(T)` | 仅影响速度里程计 |
 | 输入 | `update_robot_state({vx,vy,vw})` | 逆解目标速度 |
 | 输入 | `update_now_state(wheel_state_t, imu_yaw = 0.0f)` | 唯一反馈入口：取 `speed[]` 写 `status.speed`（逐通道校验），取 `angle[]` 提交里程计快照（整帧校验）+ IMU 航向；**须在正解之前写入**，逆解会覆盖 `status.speed`；不传 `imu_yaw` 时按 0 处理，此时应走 `encoder_odometry_callback()` |
 | 输入 | `set_wheel_speed(i, w)` | 单轮写入 `status.speed[i]` |
-| 解算 | `inverse_calculate_callback()` | 输出四轮目标角速度 |
+| 解算 | `speed_calculate_callback()` | **速控入口**：关断力控输出 + 逆解，输出四轮目标角速度 |
+| 解算 | `inverse_calculate_callback()`（protected） | 纯逆运动学（不碰力控状态），仅供 `speed_`/`mixed_calculate_callback()` 内部调用 |
 | 解算 | `forward_calculate_callback()` | 输出 `robot_speed` |
 | 解算 | `encoder_odometry_callback()` / `imu_odometry_callback()` | 编码器里程计两种航向来源 |
 | 解算 | `speed_odometry_callback()` | 速度里程计 |
@@ -191,6 +213,12 @@ wheel.speed_odometry_callback();     // 必须在 forward_calculate_callback() �
 | 输出 | `get_speed_position_x/y/yaw()` | 速度里程计位姿 |
 | 复位 | `reset_position()` / `set_position()` | 编码器里程计清零（重建基准）/ 重定位 |
 | 复位 | `reset_speed_position()` / `set_speed_position()` | 速度里程计清零 / 重定位 |
+| 力控·配置 | `init()` 的 `max_torque` / `force_deadband` 两形参 + 常量 `Chassis_Mass` / `Chassis_Inertia` | 单轮力矩上限与力死区**整份校验**，任一项非法则两项全不改；质量/惯量是编译期常量，改配重就改常量重编，无运行期改参接口 |
+| 力控·读取 | 无（无读回接口） | 配置量由上层自己掌握（质量/惯量是常量）；要看本拍是否出力用 `get_wheel_torque(i)` |
+| 力控·输入 | `set_robot_accel_x/y/w(v)` | 目标加速度逐轴写入 (m/s² / m/s² / rad/s²)；单轴非有限值只跳过该轴。**零加速度 = 不出力**，无另设使能位 |
+| 力控·解算 | `force_calculate_callback()` | 纯力控：加速度 → 轮端力矩（速度目标不参与） |
+| 力控·解算 | `mixed_calculate_callback()` | 力速混控：速度逆解 → `get_wheel_speed(i)` + 加速度 → 力矩前馈 |
+| 力控·输出 | `get_wheel_torque(i)` | 轮端力矩 N·m；是否被 `max_wheel_torque` 截断，拿它与该上限比就知道，不另设标志位 |
 
 ---
 
@@ -201,7 +229,11 @@ static mecanum_wheel_class chassis_wheel;
 
 void chassis_init(void)
 {
-    chassis_wheel.init(0.12f, 0.11f, 0.001f);   // a = 0.12 m, b = 0.11 m, T = 1 ms
+    // 一次性写齐: 控制方式 + 轮向电机方向 + 周期 + 力矩上限/死区 (后两项只在力控/混控时生效)
+    chassis_wheel.init(Wheel_Speed_Control_Method, /*enc_dir*/ 1.0f, 0.001f,
+                       /*max_torque*/ 4.9f, /*force_deadband*/ 0.1f);
+
+    // 几何量 (轮径/轮心投影) 与质量/惯量都是编译期常量, 非标准布局直接改常量后重编
 }
 
 void chassis_task(void)                         // 1 kHz
@@ -219,7 +251,7 @@ void chassis_task(void)                         // 1 kHz
     chassis_wheel.imu_odometry_callback();
 
     chassis_wheel.update_robot_state({vx_target, vy_target, vw_target});
-    chassis_wheel.inverse_calculate_callback();     // 后逆解（会覆盖 status.speed[]）
+    chassis_wheel.speed_calculate_callback();     // 速控流水线：关断力控输出 + 逆解
 
     for (uint8_t i = 0; i < 4; i++)
     {
@@ -236,7 +268,7 @@ void chassis_task(void)                         // 1 kHz
 | 底盘速度反馈 | `get_robot_speed_vx/vy/vw()` | 要求本周期已调 `forward` 且未调 `inverse`（顺序见总览 §5.2 / §5.3） |
 | 定位 | `get_position_xxx` / `get_speed_position_xxx` | 两套独立，差值可评估辊子打滑 |
 | 复位 / 重定位 | `reset_position` / `set_position` | 复位后下一帧才重建基准 |
-| 几何变更 | `set_projection_x/y()` | 内部会同步刷新投影和；不要在外部直接改 |
+| 几何变更 | 无运行期接口 | 改 `Wheel_Projection_X/Y` 常量后重新编译 |
 
 > 麦轮与全向轮字段共用规则相同（轮速字段先写反馈、后写指令），但麦轮逆解**不含整体负号**（`σ = +1`），正解也不做还原。
 

@@ -354,5 +354,11 @@
     "terminal.integrated.cursorStyle": "line",
     "terminal.integrated.cursorBlinking": true,
     "terminal.integrated.background": "#040610",
-    "emberprobe.sampleFrequencyHz": 10
+    "emberprobe.sampleFrequencyHz": 10,
+
+    // ========== Blockman ==========
+    // Blockman 的标签解析(tagLexer)会对所有语言生效, 它把 C++ 中的 '<' (模板/比较)
+    // 与 '[' (数组下标) 误判为 HTML 标签, 状态栈失衡后在文件末尾抛 "invalid syntax"。
+    // 纯 C/C++ 工程不需要 HTML/XML/JSX 的标签块分析, 关闭即可。
+    "blockman.n25AnalyzeTags": false
 }

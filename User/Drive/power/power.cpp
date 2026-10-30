@@ -58,7 +58,7 @@ void power_data_analysis(uint8_t *buf, uint16_t len)
             continue;
         }
 
-        // 用局部变量中转，直接指针转换读取（buf 非 volatile，STM32 支持非对齐访问）
+        // 用局部变量中转，直接指针转换读取
         power_data.voltage = *(const float *)&buf[offset + 1];
         power_data.current = *(const float *)&buf[offset + 5];
         power_data.power   = *(const float *)&buf[offset + 9];

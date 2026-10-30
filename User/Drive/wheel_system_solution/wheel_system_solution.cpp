@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file wheel_system_solution.cpp
  * @author Robin Liu (19038200162@163.com)
  * @brief 
@@ -20,6 +20,91 @@
 // 编码器里程计单帧允许的最大轮转角变化量, rad.
 // 半圈在 100 Hz 下已相当于 314 rad/s 以上, 远超任何实际轮速, 出现即判定为编码器丢帧/复位/多圈计数跳变.
 static constexpr float Odom_Max_Frame_Angle = PI;
+
+/**
+ * @brief 力控配置整份校验
+ * @param __max_wheel_torque 单轮轮端力矩上限, N·m (须 > 0)
+ * @param __force_deadband  单轮力死区, N (允许 0 = 关闭)
+ * @retval true: 两项都在允许域内; false: 至少一项非法
+ * @note  力矩上限与死区是互相配合的一整套值, 因此这里整份判定而不做逐项合并:
+ *        任一非法就整份拒绝, 原来的两项一起保留.
+ */
+static bool wheel_force_config_valid(const float &__max_wheel_torque, const float &__force_deadband)
+{
+    return isfinite(__max_wheel_torque) && __max_wheel_torque > 0.0f &&
+           isfinite(__force_deadband) && __force_deadband >= 0.0f;
+}
+
+/**
+ * @brief 目标加速度 -> 等效力与力矩 (F = m·a, M = J·α)
+ * @param __target_accel     上层下发的目标加速度 (m/s^2, m/s^2, rad/s^2)
+ * @param __chassis_mass     底盘等效质量, kg
+ * @param __chassis_inertia  绕 Z 轴等效转动惯量, kg·m^2
+ * @param __force_x/__force_y/__torque_z 输出等效力与力矩, N / N·m
+ * @retval true: 输出有效; false: 输入非法, 所有输出已清零
+ */
+static bool wheel_force_wrench_from_accel(const wheel_robot_accel_t &__target_accel,
+                                          const float &__chassis_mass, const float &__chassis_inertia,
+                                          float &__force_x, float &__force_y, float &__torque_z)
+{
+    __force_x = 0.0f;
+    __force_y = 0.0f;
+    __torque_z = 0.0f;
+
+    if (!isfinite(__target_accel.ax) || !isfinite(__target_accel.ay) || !isfinite(__target_accel.aw) || !isfinite(__chassis_mass) || __chassis_mass <= 0.0f || !isfinite(__chassis_inertia) || __chassis_inertia <= 0.0f)
+    {
+        return false;
+    }
+
+    __force_x = __chassis_mass * __target_accel.ax;
+    __force_y = __chassis_mass * __target_accel.ay;
+    __torque_z = __chassis_inertia * __target_accel.aw;
+
+    return isfinite(__force_x) && isfinite(__force_y) && isfinite(__torque_z);
+}
+
+/**
+ * @brief 四轮轮端力矩清零
+ * @param __torque 四轮轮端力矩, N·m ([0]=FL [1]=RL [2]=RR [3]=FR).
+ */
+static void wheel_torque_clear(float *__torque)
+{
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        __torque[i] = 0.0f;
+    }
+}
+
+/**
+ * @brief 单轮期望轮端力 -> 轮端力矩 (死区 + 力矩上限)
+ * @param __wheel_force 四轮期望轮端力, N ([0]=FL [1]=RL [2]=RR [3]=FR)
+ * @param __torque      输出四轮轮端力矩, N·m
+ * @param __radius      驱动轮半径, m
+ * @param __max_wheel_torque  单轮轮端力矩上限, N·m
+ * @param __deadband    单轮力死区, N
+ */
+static void wheel_force_to_torque(const float *__wheel_force, float *__torque, const float &__radius, const float &__max_wheel_torque, const float &__deadband)
+{
+    const float deadband = (isfinite(__deadband) && __deadband > 0.0f) ? __deadband : 0.0f;
+
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        const float force = __wheel_force[i];
+
+        if (!isfinite(force))
+        {
+            __torque[i] = 0.0f;
+            continue;
+        }
+
+        const float force_modulus = fabsf(force);
+
+        // 死区以内不出力; 死区以外扣掉死区, 保证输出随输入连续
+        const float shaped = (force_modulus <= deadband) ? 0.0f : ((force > 0.0f) ? (force_modulus - deadband) : (deadband - force_modulus));
+
+        __torque[i] = basic_math_constrain(shaped * __radius, -__max_wheel_torque, __max_wheel_torque);
+    }
+}
 
 /** @brief 计算本帧各轮线位移 ds 并更新基准; 首帧只建基准并返回 false
  *  @param __wheel_angle 当前轮转角
@@ -50,8 +135,7 @@ static bool wheel_odom_calc_ds(const float *__wheel_angle, float *__last_angle, 
         return false;
     }
 
-    // 跳变检测必须整帧判定: 单轮跳变时若只丢掉该轮, 另三轮照常积分, 会算出一个方向错误却"看起来合理"的位移.
-    // 这里整帧重建基准并丢弃本帧, 恢复后位移从新基准继续累计, 不会把一整圈的假位移打进位姿.
+    // 跳变检测必须整帧判定
     for (uint8_t i = 0; i < 4; i++)
     {
         if (fabsf(__wheel_angle[i] - __last_angle[i]) > Odom_Max_Frame_Angle)
@@ -197,14 +281,30 @@ static void wheel_odom_set_pose(wheel_robot_position_t &__pose, const float &__x
 
 /**
  * @brief 全向轮初始化
- * @param __distance_to_core 轮心到底盘圆心的投影距离, m
+ * @param __control_method   控制方式 (速控/力控/力速混控), 记录到 control_method 供上层对照
+ * @param __wheel_encoder_direction 轮向电机方向, ±1: 读数正向与几何正方向同向取 +1, 反向取 -1; 其它值按 +1
  * @param __control_period   控制周期(里程计回调调用间隔), s; 非法值(非有限/<=0)按 0.001 s 处理
- * @note  驱动轮半径固定为编译期常量 Wheel_Radius, 不在 init 内设置.
+ * @param __max_wheel_torque 单轮轮端力矩上限, N·m (> 0)
+ * @param __force_deadband   单轮力死区, N (0 = 关闭)
+ * @note  力控两项互相配合, 整份校验: 任一项非法则两项全不改, 保持字段默认值.
+ * @note  轮径/轮心距/底盘质量/转动惯量都是编译期常量, 本模块不提供运行期修改入口.
  */
-void omni_wheel_class::init(const float &__distance_to_core, const float &__control_period)
+void omni_wheel_class::init(const wheel_control_method_e &__control_method,
+                            const float &__wheel_encoder_direction, const float &__control_period,
+                            const float &__max_wheel_torque, const float &__force_deadband)
 {
-    distance_to_core = (isfinite(__distance_to_core) && __distance_to_core > 0.0f) ? __distance_to_core : Wheel_Distance_To_Core;
+    control_method = __control_method;
+
+    wheel_encoder_direction = (isfinite(__wheel_encoder_direction) && __wheel_encoder_direction < 0.0f) ? -1.0f : 1.0f;
+
     control_period = (isfinite(__control_period) && __control_period > 0.0f) ? __control_period : 0.001f;
+
+    // 力控两项: 整份校验后写入, 任一项非法则两项全不改
+    if (wheel_force_config_valid(__max_wheel_torque, __force_deadband))
+    {
+        max_wheel_torque = __max_wheel_torque;
+        force_deadband = __force_deadband;
+    }
 
     // status 同时承载正/逆解轮速与里程计用多圈转角, 一并清零
     status = {};
@@ -222,10 +322,21 @@ void omni_wheel_class::init(const float &__distance_to_core, const float &__cont
     odom_residual_dx = 0.0f;
     odom_residual_dy = 0.0f;
     odom_residual_dyaw = 0.0f;
+
+    // 力控状态复位: 参数 (力矩上限/死区) 不改, 只清输入与输出
+    target_accel = {0.0f, 0.0f, 0.0f};
+
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        wheel_torque[i] = 0.0f;
+    }
 }
 
 /**
  * @brief 全向轮逆运动学解算
+ * @note  status.speed 是**电机域**轮速 (可直接下发 set_target_speed()): 先按几何约定
+ *        (驱动方向 t_i = (−sinφ_i, cosφ_i), 即轮心切向) 算出切向轮速, 再乘轮向方向系数转回电机域.
+ *        公式本身不含硬件极性: 电机正方向与切向同向取 dir=+1, 反向取 dir=-1.
  */
 void omni_wheel_class::inverse_calculate_callback()
 {
@@ -234,14 +345,15 @@ void omni_wheel_class::inverse_calculate_callback()
         return;
     }
 
-    status.speed[0] = -(SQRT_2_2 * (-target_speed.vx + target_speed.vy) + target_speed.vw * distance_to_core) / Wheel_Radius;
-    status.speed[1] = -(SQRT_2_2 * (-target_speed.vx - target_speed.vy) + target_speed.vw * distance_to_core) / Wheel_Radius;
-    status.speed[2] = -(SQRT_2_2 * (target_speed.vx - target_speed.vy)  + target_speed.vw * distance_to_core) / Wheel_Radius;
-    status.speed[3] = -(SQRT_2_2 * (target_speed.vx + target_speed.vy)  + target_speed.vw * distance_to_core) / Wheel_Radius;
+    status.speed[0] = wheel_encoder_direction * (SQRT_2_2 * (-target_speed.vx + target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // FL, φ=45°
+    status.speed[1] = wheel_encoder_direction * (SQRT_2_2 * (-target_speed.vx - target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // RL, φ=135°
+    status.speed[2] = wheel_encoder_direction * (SQRT_2_2 * ( target_speed.vx - target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // RR, φ=225°
+    status.speed[3] = wheel_encoder_direction * (SQRT_2_2 * ( target_speed.vx + target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // FR, φ=315°
 }
 
 /**
  * @brief 全向轮正运动学解算
+ * @note  输入是电机域轮速: 先乘方向系数还原成切向轮速 ws_i = dir·ω_i·R, 再按逆解的转置加权合成.
  */
 void omni_wheel_class::forward_calculate_callback()
 {
@@ -253,14 +365,14 @@ void omni_wheel_class::forward_calculate_callback()
         }
     }
 
-    const float ws0 = -status.speed[0];
-    const float ws1 = -status.speed[1];
-    const float ws2 = -status.speed[2];
-    const float ws3 = -status.speed[3];
+    const float ws0 = wheel_encoder_direction * status.speed[0];
+    const float ws1 = wheel_encoder_direction * status.speed[1];
+    const float ws2 = wheel_encoder_direction * status.speed[2];
+    const float ws3 = wheel_encoder_direction * status.speed[3];
 
-    robot_speed.vx = (SQRT_2_4 * (-ws0 - ws1 + ws2 + ws3)) * Wheel_Radius;         // 底盘速度, m/s
-    robot_speed.vy = (SQRT_2_4 * (ws0 - ws1 - ws2 + ws3)) * Wheel_Radius;
-    robot_speed.vw = (ws0 + ws1 + ws2 + ws3) / (4.0f * distance_to_core) * Wheel_Radius; // 绕 Z 角速度, rad/s
+    robot_speed.vx = (SQRT_2_4 * (-ws0 - ws1 + ws2 + ws3)) * Wheel_Radius;      // 底盘速度, m/s
+    robot_speed.vy = (SQRT_2_4 * ( ws0 - ws1 - ws2 + ws3)) * Wheel_Radius;
+    robot_speed.vw = (ws0 + ws1 + ws2 + ws3) / (4.0f * Wheel_Distance_To_Core) * Wheel_Radius; // 绕 Z 角速度, rad/s
 }
 
 /**
@@ -288,9 +400,15 @@ bool omni_wheel_class::encoder_odometry_step(const bool &__use_imu_yaw)
         return false;
     }
 
-    const float frame_dx = SQRT_2_4 * ( ds[0] + ds[1] - ds[2] - ds[3]);
-    const float frame_dy = SQRT_2_4 * (-ds[0] + ds[1] + ds[2] - ds[3]);
-    const float frame_dyaw = -(ds[0] + ds[1] + ds[2] + ds[3]) / (4.0f * distance_to_core);
+    // ds 是电机域线位移, 乘方向系数还原成切向位移后再合成机体系位移
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        ds[i] *= wheel_encoder_direction;
+    }
+
+    const float frame_dx = SQRT_2_4 * (-ds[0] - ds[1] + ds[2] + ds[3]);
+    const float frame_dy = SQRT_2_4 * ( ds[0] - ds[1] - ds[2] + ds[3]);
+    const float frame_dyaw = (ds[0] + ds[1] + ds[2] + ds[3]) / (4.0f * Wheel_Distance_To_Core);
 
     float step_dx = 0.0f, step_dy = 0.0f, step_dyaw = 0.0f;
 
@@ -367,27 +485,97 @@ void omni_wheel_class::set_speed_position(const float &__x, const float &__y, co
     wheel_odom_set_pose(speed_pose, __x, __y, __yaw);
 }
 
+/**
+ * @brief 全向轮速控流水线: 关断力控输出 + 逆解 -> 轮向目标角速度
+ * @note  入口先关断力控: 把目标加速度清成零即等价于不出力; 力矩另需显式清,
+ *        因为逆解不写 wheel_torque, 不清会漏出上一条流水线的残留力矩.
+ */
+void omni_wheel_class::speed_calculate_callback()
+{
+    target_accel = {0.0f, 0.0f, 0.0f};
+    wheel_torque_clear(wheel_torque);
+
+    inverse_calculate_callback();
+}
+
+/**
+ * @brief 等效力/力矩 -> 四轮期望轮端力
+ * @note  力分配是逆解矩阵的转置(功率对偶): 驱动方向 t_i = (−sinφ_i, cosφ_i) 为单位向量,
+ *        故平动项系数为 √2/4, 旋转项每轮 +fw/(4d). 逆解结果喂回本式可还原 (fx, fy, fw).
+ * @note  输出已乘轮向方向系数, 即**电机域**轮端力 (与 status.speed 同域), 可直接乘轮径成力矩下发.
+ */
+void omni_wheel_class::force_wheel_force_vector(const float &__force_x, const float &__force_y, const float &__torque_z,
+                                                float (&__wheel_force)[4]) const
+{
+    const float yaw_force = __torque_z / (4.0f * Wheel_Distance_To_Core);
+
+    __wheel_force[0] = wheel_encoder_direction * (SQRT_2_4 * (-__force_x + __force_y) + yaw_force); // FL
+    __wheel_force[1] = wheel_encoder_direction * (SQRT_2_4 * (-__force_x - __force_y) + yaw_force); // RL
+    __wheel_force[2] = wheel_encoder_direction * (SQRT_2_4 * ( __force_x - __force_y) + yaw_force); // RR
+    __wheel_force[3] = wheel_encoder_direction * (SQRT_2_4 * ( __force_x + __force_y) + yaw_force); // FR
+}
+
+/**
+ * @brief 全向轮纯力控: 目标加速度 -> 轮端力矩
+ */
+void omni_wheel_class::force_calculate_callback()
+{
+    float force_x = 0.0f, force_y = 0.0f, torque_z = 0.0f;
+
+    // 目标加速度为零 (未喂 / 已切速控) 时解出的力也是零, 无需另设使能位
+    if (!wheel_force_wrench_from_accel(target_accel, Chassis_Mass, Chassis_Inertia,
+                                       force_x, force_y, torque_z))
+    {
+        wheel_torque_clear(wheel_torque);
+        return;
+    }
+
+    float wheel_force[4];
+    force_wheel_force_vector(force_x, force_y, torque_z, wheel_force);
+    wheel_force_to_torque(wheel_force, wheel_torque, Wheel_Radius, max_wheel_torque, force_deadband);
+}
+
+/**
+ * @brief 全向轮力速混控: 速度逆解 -> 轮向目标角速度, 目标加速度 -> 轮端力矩前馈
+ * @note  速度项与力矩项解耦: 速度由逆解给目标角速度(下层速度环闭环), 力矩只做加速度前馈.
+ *        逆解不写力矩也不清力矩, 所以力矩必须在本函数里自己算; force_calculate_callback()
+ *        正好就是"加速度 -> 轮端力矩", 两者输出同域, 直接复用它. 逆解与力矩项写不同字段,
+ *        顺序无关.
+ */
+void omni_wheel_class::mixed_calculate_callback()
+{
+    inverse_calculate_callback();
+    force_calculate_callback();
+}
+
 /*-----------------------------------mecanum_wheel-----------------------------------*/
 
 /**
  * @brief 麦轮初始化
- * @param __projection_x   轮子在 X 方向投影坐标, m
- * @param __projection_y   轮子在 Y 方向投影坐标, m
+ * @param __control_method 控制方式 (速控/力控/力速混控), 记录到 control_method 供上层对照
+ * @param __wheel_encoder_direction 轮向电机方向, ±1: 读数正向与几何正方向同向取 +1, 反向取 -1; 其它值按 +1
  * @param __control_period 控制周期(里程计回调调用间隔), s; 非法值(非有限/<=0)按 0.001 s 处理
- * @note  轮子半径固定为编译期常量 Wheel_Radius, 不在 init 内设置.
+ * @param __max_wheel_torque 单轮轮端力矩上限, N·m (> 0)
+ * @param __force_deadband   单轮力死区, N (0 = 关闭)
+ * @note  力控两项互相配合, 整份校验: 任一项非法则两项全不改, 保持字段默认值.
+ * @note  轮径/轮心投影/底盘质量/转动惯量都是编译期常量, 本模块不提供运行期修改入口.
  */
-void mecanum_wheel_class::init(const float &__projection_x, const float &__projection_y, const float &__control_period)
+void mecanum_wheel_class::init(const wheel_control_method_e &__control_method,
+                               const float &__wheel_encoder_direction, const float &__control_period,
+                               const float &__max_wheel_torque, const float &__force_deadband)
 {
-    projection_x = (isfinite(__projection_x) && __projection_x >= 0.0f) ? __projection_x : Wheel_Projection_X;
-    projection_y = (isfinite(__projection_y) && __projection_y >= 0.0f) ? __projection_y : Wheel_Projection_Y;
-    sum_xy = projection_x + projection_y;
-    if (sum_xy <= 0.0f)
-    {
-        projection_x = Wheel_Projection_X;
-        projection_y = Wheel_Projection_Y;
-        sum_xy = projection_x + projection_y;
-    }
+    control_method = __control_method;
+
+    wheel_encoder_direction = (isfinite(__wheel_encoder_direction) && __wheel_encoder_direction < 0.0f) ? -1.0f : 1.0f;
+
     control_period = (isfinite(__control_period) && __control_period > 0.0f) ? __control_period : 0.001f;
+
+    // 力控两项: 整份校验后写入, 任一项非法则两项全不改
+    if (wheel_force_config_valid(__max_wheel_torque, __force_deadband))
+    {
+        max_wheel_torque = __max_wheel_torque;
+        force_deadband = __force_deadband;
+    }
 
     // status 同时承载正/逆解轮速与里程计用多圈转角, 一并清零
     status = {};
@@ -405,10 +593,19 @@ void mecanum_wheel_class::init(const float &__projection_x, const float &__proje
     odom_residual_dx = 0.0f;
     odom_residual_dy = 0.0f;
     odom_residual_dyaw = 0.0f;
+
+    // 力控状态复位: 参数 (力矩上限/死区) 不改, 只清输入与输出
+    target_accel = {0.0f, 0.0f, 0.0f};
+
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        wheel_torque[i] = 0.0f;
+    }
 }
 
 /**
  * @brief 麦轮逆运动学解算
+ * @note  status.speed 是**电机域**轮速 (可直接下发 set_target_speed()): 几何轮速再乘轮向方向系数.
  */
 void mecanum_wheel_class::inverse_calculate_callback()
 {
@@ -417,14 +614,15 @@ void mecanum_wheel_class::inverse_calculate_callback()
         return;
     }
 
-    status.speed[0] = ( target_speed.vx - target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // FL
-    status.speed[1] = ( target_speed.vx + target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // RL
-    status.speed[2] = (-target_speed.vx + target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // RR
-    status.speed[3] = (-target_speed.vx - target_speed.vy - target_speed.vw * sum_xy) / Wheel_Radius; // FR
+    status.speed[0] = wheel_encoder_direction * ( target_speed.vx - target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // FL
+    status.speed[1] = wheel_encoder_direction * ( target_speed.vx + target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // RL
+    status.speed[2] = wheel_encoder_direction * (-target_speed.vx + target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // RR
+    status.speed[3] = wheel_encoder_direction * (-target_speed.vx - target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // FR
 }
 
 /**
  * @brief 麦轮正运动学解算
+ * @note  先把电机域轮速还原成几何轮速, 再参与合成.
  */
 void mecanum_wheel_class::forward_calculate_callback()
 {
@@ -436,9 +634,14 @@ void mecanum_wheel_class::forward_calculate_callback()
         }
     }
 
-    robot_speed.vx = ( status.speed[0] + status.speed[1] - status.speed[2] - status.speed[3]) * Wheel_Radius / 4.0f;
-    robot_speed.vy = (-status.speed[0] + status.speed[1] + status.speed[2] - status.speed[3]) * Wheel_Radius / 4.0f;
-    robot_speed.vw = -(status.speed[0] + status.speed[1] + status.speed[2] + status.speed[3]) / sum_xy * Wheel_Radius / 4.0f;
+    const float ws0 = wheel_encoder_direction * status.speed[0];
+    const float ws1 = wheel_encoder_direction * status.speed[1];
+    const float ws2 = wheel_encoder_direction * status.speed[2];
+    const float ws3 = wheel_encoder_direction * status.speed[3];
+
+    robot_speed.vx = ( ws0 + ws1 - ws2 - ws3) * Wheel_Radius / 4.0f;
+    robot_speed.vy = (-ws0 + ws1 + ws2 - ws3) * Wheel_Radius / 4.0f;
+    robot_speed.vw = -(ws0 + ws1 + ws2 + ws3) / Wheel_Sum_XY * Wheel_Radius / 4.0f;
 }
 
 /**
@@ -466,9 +669,15 @@ bool mecanum_wheel_class::encoder_odometry_step(const bool &__use_imu_yaw)
         return false;
     }
 
+    // ds 是电机域线位移, 乘方向系数还原成几何驱动方向上的位移后再合成机体系位移
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        ds[i] *= wheel_encoder_direction;
+    }
+
     const float frame_dx = ( ds[0] + ds[1] - ds[2] - ds[3]) / 4.0f;
     const float frame_dy = (-ds[0] + ds[1] + ds[2] - ds[3]) / 4.0f;
-    const float frame_dyaw = -(ds[0] + ds[1] + ds[2] + ds[3]) / (4.0f * sum_xy);
+    const float frame_dyaw = -(ds[0] + ds[1] + ds[2] + ds[3]) / (4.0f * Wheel_Sum_XY);
 
     float step_dx = 0.0f, step_dy = 0.0f, step_dyaw = 0.0f;
 
@@ -545,6 +754,67 @@ void mecanum_wheel_class::set_speed_position(const float &__x, const float &__y,
     wheel_odom_set_pose(speed_pose, __x, __y, __yaw);
 }
 
+/**
+ * @brief 麦轮速控流水线: 关断力控输出 + 逆解 -> 轮向目标角速度
+ * @note  入口先关断力控: 把目标加速度清成零即等价于不出力; 力矩另需显式清,
+ *        因为逆解不写 wheel_torque, 不清会漏出上一条流水线的残留力矩.
+ */
+void mecanum_wheel_class::speed_calculate_callback()
+{
+    target_accel = {0.0f, 0.0f, 0.0f};
+    wheel_torque_clear(wheel_torque);
+
+    inverse_calculate_callback();
+}
+
+/**
+ * @brief 等效力/力矩 -> 四轮期望轮端力
+ * @note  力分配是逆解矩阵的转置(功率对偶): 逆解每轮驱动方向 d_i 长度为 √2 且 Σd_i·d_iᵀ = 4I,
+ *        故平动项系数为 1/4; 逆解 vw 系数恒为 -(a+b), 对应 Σf_i = -fw/(a+b),
+ *        即每轮旋转项 -fw/(4(a+b)). 逆解结果喂回本式可还原 (fx, fy, fw).
+ * @note  输出已乘轮向方向系数, 即**电机域**轮端力 (与 status.speed 同域), 可直接乘轮径成力矩下发.
+ */
+void mecanum_wheel_class::force_wheel_force_vector(const float &__force_x, const float &__force_y, const float &__torque_z,
+                                                   float (&__wheel_force)[4]) const
+{
+    const float yaw_force = -__torque_z / (4.0f * Wheel_Sum_XY);
+
+    __wheel_force[0] = wheel_encoder_direction * (( __force_x - __force_y) * 0.25f + yaw_force); // FL
+    __wheel_force[1] = wheel_encoder_direction * (( __force_x + __force_y) * 0.25f + yaw_force); // RL
+    __wheel_force[2] = wheel_encoder_direction * ((-__force_x + __force_y) * 0.25f + yaw_force); // RR
+    __wheel_force[3] = wheel_encoder_direction * ((-__force_x - __force_y) * 0.25f + yaw_force); // FR
+}
+
+/**
+ * @brief 麦轮纯力控: 目标加速度 -> 轮端力矩
+ */
+void mecanum_wheel_class::force_calculate_callback()
+{
+    float force_x = 0.0f, force_y = 0.0f, torque_z = 0.0f;
+
+    // 目标加速度为零 (未喂 / 已切速控) 时解出的力也是零, 无需另设使能位
+    if (!wheel_force_wrench_from_accel(target_accel, Chassis_Mass, Chassis_Inertia, force_x, force_y, torque_z))
+    {
+        wheel_torque_clear(wheel_torque);
+        return;
+    }
+
+    float wheel_force[4];
+    force_wheel_force_vector(force_x, force_y, torque_z, wheel_force);
+    wheel_force_to_torque(wheel_force, wheel_torque, Wheel_Radius, max_wheel_torque, force_deadband);
+}
+
+/**
+ * @brief 麦轮力速混控: 速度逆解 -> 轮向目标角速度, 目标加速度 -> 轮端力矩前馈
+ * @note  逆解不写力矩也不清力矩, 力矩由 force_calculate_callback() 自己算; 两者写不同字段,
+ *        顺序无关.
+ */
+void mecanum_wheel_class::mixed_calculate_callback()
+{
+    inverse_calculate_callback();
+    force_calculate_callback();
+}
+
 /*-----------------------------------steer_wheel-----------------------------------*/
 
 /**
@@ -611,48 +881,62 @@ static float steer_limit_target_step(const float &__target, const float &__curre
 }
 
 /**
- * @brief 舵轮初始化
+ * @brief 舵轮初始化: 一次性写入全部可配参数
+ * @param __control_method        控制方式 (速控/力控/力速混控), 记录到 control_method 供上层对照
  * @param __steer_encoder_direction 舵向编码器方向, ±1: 读数正向与几何 CCW 同向取 +1, 反向取 -1; 其它值按 +1
- * @param __target_max_step       舵向目标单周期最大变化量(斜坡斜率), rad
- * @param __max_wheel_speed       轮向电机最大角速度, rad/s
- * @param __min_limit             静止判定阈值, m/s 与 rad/s
- * @param __steer_angle_deadband  非小陀螺模式舵向误差死区, rad
- * @param __flip_hysteresis       就近转位翻转迟滞, rad; 须在 [0, π/2), 非法值(含 >= π/2)按 0.1 rad 处理
  * @param __control_period        控制周期(里程计回调调用间隔), s; 非法值(非有限/<=0)按 0.001 s 处理
- * @param __cosine_optimize_enable    转向角余弦优化开关
- * @param __nearest_optimize_enable   就近转位开关
- * @param __target_step_limit_enable  舵向目标斜坡限幅开关
- * @note  驱动轮半径固定为编译期常量 Wheel_Radius, 不在 init 内设置.
+ * @param __target_max_step       舵向目标单周期最大变化量(斜坡斜率), rad; 须 > 0
+ * @param __max_wheel_speed       轮向电机最大角速度, rad/s; 须 > 0
+ * @param __min_limit             静止判定阈值, m/s 与 rad/s; 允许 0
+ * @param __steer_angle_deadband  非小陀螺模式舵向误差死区, rad; 允许 0
+ * @param __flip_hysteresis       就近转位翻转迟滞, rad; 须在 [0, π/2), 否则跳过
+ * @param __max_wheel_torque      单轮轮端力矩上限, N·m; 须 > 0
+ * @param __force_deadband        单轮力死区(扣除式), N; 允许 0
+ * @param __cosine_optimize_enable    余弦削减开关 (速控与力控共用)
+ * @param __nearest_optimize_enable   就近转位开关 (速控与力控共用)
+ * @param __target_step_limit_enable  舵向目标斜坡限幅开关 (速控与力控共用)
+ * @note  校验口径分两种, 因为两类参数的性质不同:
+ *          速控八项互相独立 (改斜坡不会让限速失效) —— 逐项调 setter, 单项非法只跳过该项;
+ *          力控两项互相配合 (力矩上限与死区是一套) —— 整份校验, 任一项非法则两项全不改.
+ * @note  驱动轮半径/编码器零位/轮心力臂/底盘质量与转动惯量都是编译期常量, 不在 init 内设置.
  */
-void steer_wheel_class::init(const float &__steer_encoder_direction,
-                             const float &__target_max_step,
-                             const float &__max_wheel_speed, const float &__min_limit,
-                             const float &__steer_angle_deadband, const float &__flip_hysteresis,
+void steer_wheel_class::init(const wheel_control_method_e &__control_method,
+                             const float &__steer_encoder_direction,
                              const float &__control_period,
+                             const float &__target_max_step, const float &__max_wheel_speed,
+                             const float &__min_limit, const float &__steer_angle_deadband,
+                             const float &__flip_hysteresis,
+                             const float &__max_wheel_torque, const float &__force_deadband,
                              const bool &__cosine_optimize_enable, const bool &__nearest_optimize_enable,
                              const bool &__target_step_limit_enable)
 {
+    control_method = __control_method;
+
     steer_encoder_direction = (isfinite(__steer_encoder_direction) && __steer_encoder_direction < 0.0f) ? -1.0f : 1.0f;
 
-    target_max_step = (isfinite(__target_max_step) && __target_max_step > 0.0f) ? __target_max_step : 0.20f;
-    max_wheel_speed = (isfinite(__max_wheel_speed) && __max_wheel_speed > 0.0f) ? __max_wheel_speed : 25.0f;
-    min_limit = (isfinite(__min_limit) && __min_limit >= 0.0f) ? __min_limit : 0.1f;
-    steer_angle_deadband = (isfinite(__steer_angle_deadband) && __steer_angle_deadband >= 0.0f) ? __steer_angle_deadband : 0.05f;
-    // 迟滞必须小于 90 度: 否则正向阈值 >= 180 度(永不反转)、反向阈值 <= 0 度(永不转回), 方向被永久锁定在一侧
-    flip_hysteresis = (isfinite(__flip_hysteresis) && __flip_hysteresis >= 0.0f && __flip_hysteresis < PI * 0.5f) ? __flip_hysteresis : 0.1f;
     control_period = (isfinite(__control_period) && __control_period > 0.0f) ? __control_period : 0.001f;
-    cosine_optimize_enable = __cosine_optimize_enable;
-    nearest_optimize_enable = __nearest_optimize_enable;
-    target_step_limit_enable = __target_step_limit_enable;
+
+    // 速控八项: 逐项委托给 setter, 各自校验, 非法项保持字段默认值
+    // (后三个优化开关虽归在"速控参数"组, 但速控与力控两条流水线共用同一份配置, 见 setter 注释)
+    set_target_max_step(__target_max_step);
+    set_max_wheel_speed(__max_wheel_speed);
+    set_min_limit(__min_limit);
+    set_steer_angle_deadband(__steer_angle_deadband);
+    set_flip_hysteresis(__flip_hysteresis);
+    set_cosine_optimize_enable(__cosine_optimize_enable);
+    set_nearest_optimize_enable(__nearest_optimize_enable);
+    set_target_step_limit_enable(__target_step_limit_enable);
+
+    // 力控两项: 整份校验后写入, 任一项非法则两项全不改
+    if (wheel_force_config_valid(__max_wheel_torque, __force_deadband))
+    {
+        max_wheel_torque = __max_wheel_torque;
+        force_deadband = __force_deadband;
+    }
 
     for (uint8_t i = 0; i < 4; i++)
     {
-        if (!isfinite(distance_to_core[i]) || distance_to_core[i] <= 0.0f)
-        {
-            distance_to_core[i] = Wheel_Distance_To_Core;
-        }
-
-        // 零位为编译期常量, 无需在此校验
+        // 零位与力臂均为编译期常量, 无需在此校验
         status.now_angle[i] = 0.0f;
         status.now_speed[i] = 0.0f;
 
@@ -666,6 +950,8 @@ void steer_wheel_class::init(const float &__steer_encoder_direction,
         status.optimize_direction[i] = 1.0f;
 
         status.error_angle[i] = 0.0f;
+
+        status.wheel_torque[i] = 0.0f;
 
         wheel_angle[i] = 0.0f;
         steer_angle[i] = 0.0f;
@@ -689,11 +975,15 @@ void steer_wheel_class::init(const float &__steer_encoder_direction,
     odom_residual_dx = 0.0f;
     odom_residual_dy = 0.0f;
     odom_residual_dyaw = 0.0f;
+
+    // 力控输入复位: 参数 (力矩上限/死区) 不改; 输出力矩已随上面 status 的清零覆盖, 不重复清
+    target_accel = {0.0f, 0.0f, 0.0f};
 }
 
 /**
  * @brief 舵轮逆运动学解算 + 余弦优化
  * @note  就近转位 / 斜坡限幅 / 余弦削减分别由对应开关控制; 舵向死区依附余弦开关
+ * @note  入口清零力控输出: wheel_torque 只在本拍有力控调用时才非零, 避免上一拍力矩残留
  */
 void steer_wheel_class::inverse_calculate_callback()
 {
@@ -702,12 +992,18 @@ void steer_wheel_class::inverse_calculate_callback()
         return;
     }
 
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        status.wheel_torque[i] = 0.0f;
+    }
+
     const bool cmd_zero = (fabsf(target_speed.vx) <= min_limit) && (fabsf(target_speed.vy) <= min_limit) && (fabsf(target_speed.vw) <= min_limit);
 
     for (uint8_t i = 0; i < 4; i++)
     {
-        const float vel_x = target_speed.vx - target_speed.vw * Wheel_Unit_Sin[i] * distance_to_core[i];
-        const float vel_y = target_speed.vy + target_speed.vw * Wheel_Unit_Cos[i] * distance_to_core[i];
+        // 轮心速度 = 底盘平移 + ω×r_i = (vx − ω·y_i, vy + ω·x_i); 正方形/长方形布局同一式
+        const float vel_x = target_speed.vx - target_speed.vw * Wheel_Sign_Y[i] * Wheel_Projection_Y;
+        const float vel_y = target_speed.vy + target_speed.vw * Wheel_Sign_X[i] * Wheel_Projection_X;
 
         float vel_modulus = 0.0f;
         arm_sqrt_f32(vel_x * vel_x + vel_y * vel_y, &vel_modulus);
@@ -760,15 +1056,8 @@ void steer_wheel_class::inverse_calculate_callback()
 
         status.error_angle[i] = effective_error;
 
-        // 死区以真实未对齐角判定: 斜坡中的目标始终贴着当前角, 不能作为"是否已对齐"的依据
-        if (cosine_optimize_enable && fabsf(effective_error) < steer_angle_deadband && control_mode != 2)
-        {
-            status.optimize_angle[i]  = status.now_angle[i];
-            status.error_angle[i]     = 0.0f;
-            status.cosine_optimize[i] = 1.0f; // 无需修舵, 轮速不削减
-            optimize_angle_valid[i] = true;
-            continue;
-        }
+        //开启余弦优化，且不为小陀螺模式下，舵向误差在死区内，认为舵向已足够对齐，无需再压轮速
+        const bool in_deadband = cosine_optimize_enable && (fabsf(effective_error) < steer_angle_deadband) && (control_mode != 2);
 
         // 目标角斜坡限幅: 限制单周期变化量, 避免阶跃目标导致舵向电流尖峰与合力突变
         status.optimize_angle[i] = target_step_limit_enable
@@ -776,7 +1065,7 @@ void steer_wheel_class::inverse_calculate_callback()
                                    : target;
         optimize_angle_valid[i] = true;
 
-        if (cosine_optimize_enable)
+        if (cosine_optimize_enable && !in_deadband)
         {
             // 余弦削减必须用真实未对齐角: 斜坡每拍只放行一小步, 若用斜坡后的误差, 削减项恒接近 1 而形同虚设;
             // 就近转位后 |effective_error| <= 90 度(+迟滞), 取绝对值避免与方向标志重复翻转
@@ -787,6 +1076,7 @@ void steer_wheel_class::inverse_calculate_callback()
 
         else
         {
+            // 不削减: 余弦开关关闭, 或真实未对齐角已在死区内 (已足够对齐, 无需再压轮速)
             status.cosine_optimize[i] = 1.0f;
         }
     }
@@ -859,13 +1149,13 @@ void steer_wheel_class::forward_calculate_callback()
 
         vx_sum += wheel_linear_speed * cos_steer;
         vy_sum += wheel_linear_speed * sin_steer;
-        // 角速度分量: 轮速在切向 t_i = (−sinφ, cosφ) 上的投影 / 力臂 = u·sin(θ−φ)/d
-        vw_sum += wheel_linear_speed * (sin_steer * Wheel_Unit_Cos[i] - cos_steer * Wheel_Unit_Sin[i]) / distance_to_core[i];
+        // 角速度分量: u·(sinθ·x_i − cosθ·y_i)/d²
+        vw_sum += wheel_linear_speed * (sin_steer * Wheel_Sign_X[i] * Wheel_Projection_X - cos_steer * Wheel_Sign_Y[i] * Wheel_Projection_Y);
     }
 
     robot_speed.vx = vx_sum * 0.25f;
     robot_speed.vy = vy_sum * 0.25f;
-    robot_speed.vw = vw_sum * 0.25f;
+    robot_speed.vw = vw_sum * 0.25f / Wheel_D2;
 }
 
 /**
@@ -896,12 +1186,14 @@ bool steer_wheel_class::calc_body_displacement(const float *__ds, float &__dx, f
 
         vx_sum += __ds[i] * cos_steer;
         vy_sum += __ds[i] * sin_steer;
-        vw_sum += __ds[i] * (sin_steer * Wheel_Unit_Cos[i] - cos_steer * Wheel_Unit_Sin[i]) / distance_to_core[i];
+        // 角速度分量: 与正解同一式 u·(sinθ·x_i − cosθ·y_i)/d², d² 提到循环外除一次
+        vw_sum += __ds[i] * (sin_steer * Wheel_Sign_X[i] * Wheel_Projection_X
+                           - cos_steer * Wheel_Sign_Y[i] * Wheel_Projection_Y);
     }
 
     __dx = vx_sum * 0.25f;
     __dy = vy_sum * 0.25f;
-    __dyaw = vw_sum * 0.25f;
+    __dyaw = vw_sum * 0.25f / Wheel_D2;
     return true;
 }
 
@@ -1009,6 +1301,170 @@ void steer_wheel_class::reset_speed_position()
 void steer_wheel_class::set_speed_position(const float &__x, const float &__y, const float &__yaw)
 {
     wheel_odom_set_pose(speed_pose, __x, __y, __yaw);
+}
+
+/**
+ * @brief 舵轮速控流水线: 关断力控输出 + 逆解 -> 舵向/轮向目标
+ * @note  关断这一步不能省: 逆解本身不清目标加速度, 从力控/混控切回速控后若不清,
+ *        上一拍加速度会继续参与诊断与后续力矩解算.
+ *        力矩不必在此清: inverse_calculate_callback() 入口已清零 status.wheel_torque.
+ * @note  与 inverse_calculate_callback() 的分工: 后者是纯逆运动学, 不碰力控状态,
+ *        混控要用它(加速度刚写入, 不能被关断); 本函数是速控的完整入口.
+ */
+void steer_wheel_class::speed_calculate_callback()
+{
+    target_accel = {0.0f, 0.0f, 0.0f};
+
+    inverse_calculate_callback();
+}
+
+/**
+ * @brief 力控核心
+ */
+void steer_wheel_class::force_calculate_core()
+{
+    float robot_force_x = 0.0f, robot_force_y = 0.0f, robot_torque_w = 0.0f;
+
+    // 加速度非法直接退出
+    if (!wheel_force_wrench_from_accel(target_accel, Chassis_Mass, Chassis_Inertia, robot_force_x, robot_force_y, robot_torque_w))
+    {
+        wheel_torque_clear(status.wheel_torque);
+
+        if (control_method != Wheel_Mixed_Control_Method)
+        {
+            for (uint8_t i = 0; i < 4; i++)
+            {
+                status.optimize_speed[i]     = 0.0f;
+                status.optimize_angle[i]     = status.now_angle[i];
+                status.optimize_direction[i] = 1.0f;
+                status.cosine_optimize[i]    = 0.0f;
+                status.error_angle[i]        = 0.0f;
+                optimize_angle_valid[i]      = false;
+            }
+        }
+        return;
+    }
+
+    // 偏航力增益 Y = mz/Σd², N/m
+    const float yaw_force = robot_torque_w / (4.0f * Wheel_D2);
+    // |e| < db ⇔ cos e > cos(db)
+    const float cos_deadband = arm_cos_f32(steer_angle_deadband);
+
+    float wheel_force[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        // 期望轮端力矢量
+        const float force_x = robot_force_x * 0.25f - yaw_force * Wheel_Sign_Y[i] * Wheel_Projection_Y;
+        const float force_y = robot_force_y * 0.25f + yaw_force * Wheel_Sign_X[i] * Wheel_Projection_X;
+
+        // 合力矩
+        float force_modulus = 0.0f;
+        arm_sqrt_f32(force_x * force_x + force_y * force_y, &force_modulus);
+
+        // 死区内的力不作舵向规划, 直接锁定当前角度, 防止舵轮无意义摆动
+        if (force_modulus <= force_deadband)
+        {
+            if (control_method != Wheel_Mixed_Control_Method)
+            {
+                // 纯力控: 舵向锁定当前角, 不做无意义摆动
+                status.optimize_speed[i]     = 0.0f;
+                status.optimize_angle[i]     = status.now_angle[i];
+                status.optimize_direction[i] = 1.0f;
+                status.cosine_optimize[i]    = 0.0f;
+                status.error_angle[i]        = 0.0f;
+                optimize_angle_valid[i]      = true;
+            }
+            continue;
+        }
+
+        float cosine = 1.0f;
+
+        if (control_method != Wheel_Mixed_Control_Method)
+        {
+            // 纯力控不产生轮速目标, 防止下游速度环误用
+            status.optimize_speed[i] = 0.0f; 
+
+            float optimize_direction = 1.0f;
+            const float force_target = steer_encoder_direction * atan2f(force_y, force_x) + Enc_Zero_Angle[i];
+            float target;
+
+            // 就近转位
+            if (nearest_optimize_enable)
+            {
+                // 超过 90 度时改用反向出力的等效舵向角; 迟滞取本拍之前的方向, 防止边界逐拍翻转
+                target = steer_select_nearest_target(force_target, status.now_angle[i], status.optimize_direction[i], flip_hysteresis, &optimize_direction);
+            }
+
+            else// 关闭就近转位
+            {
+                target = status.now_angle[i] + basic_math_modulus_normalization(force_target - status.now_angle[i], 2.0f * PI);
+            }
+
+            status.optimize_direction[i] = optimize_direction;
+
+            const float align_error = basic_math_modulus_normalization(force_target - status.now_angle[i], 2.0f * PI);
+            const float effective_error = (optimize_direction < 0.0f) ? basic_math_modulus_normalization(align_error + PI, 2.0f * PI) : align_error;
+
+            status.error_angle[i] = effective_error;
+
+            // 余弦削减
+            if (cosine_optimize_enable && (fabsf(effective_error) >= steer_angle_deadband))
+            {
+                const float cos_angle_raw = arm_cos_f32(effective_error);
+                const float cos_angle     = nearest_optimize_enable ? fabsf(cos_angle_raw) : cos_angle_raw;
+                cosine = basic_math_constrain(cos_angle * cos_angle * cos_angle, 0.0f, 1.0f);
+            }
+
+            status.cosine_optimize[i] = cosine;
+
+            // 目标角斜坡限幅: 限制单周期变化量, 避免阶跃目标导致舵向电流尖峰与合力突变
+            status.optimize_angle[i] = target_step_limit_enable ? steer_limit_target_step(target, status.now_angle[i], status.optimize_angle[i], target_max_step, optimize_angle_valid[i]) : target;
+            optimize_angle_valid[i] = true;
+        }
+
+        else
+        {
+           // 舵轮目标角度已由逆解算出, 余弦削减只按当前实际舵向与力方向的夹角计算, 不干扰逆解给出的舵向目标
+            if (cosine_optimize_enable)
+            {
+                const float steer = basic_math_modulus_normalization(steer_encoder_direction * (status.now_angle[i] - Enc_Zero_Angle[i]), 2.0f * PI);
+                const float cos_angle_raw = status.optimize_direction[i] * (force_x * arm_cos_f32(steer) + force_y * arm_sin_f32(steer)) / force_modulus;
+
+                // 已在余弦死区内 (舵向已足够对齐) 不削减
+                if (cos_angle_raw < cos_deadband)
+                {
+                    // 就近转位后 |e| <= 90 度(+迟滞), 取绝对值避免与方向标志重复翻转
+                    const float cos_angle = basic_math_constrain(nearest_optimize_enable ? fabsf(cos_angle_raw) : cos_angle_raw, 0.0f, 1.0f);
+                    cosine = cos_angle * cos_angle * cos_angle;
+                }
+            }
+        }
+
+        // 输出力矩
+        wheel_force[i] = force_modulus * cosine * status.optimize_direction[i];
+    }
+
+    wheel_force_to_torque(wheel_force, status.wheel_torque, Wheel_Radius, max_wheel_torque, force_deadband);
+}
+
+/**
+ * @brief 纯力控
+ */
+void steer_wheel_class::force_calculate_callback()
+{
+    force_calculate_core();
+}
+
+/**
+ * @brief 力速混控
+ * @note 运动学逆解计算出舵向/轮向目标，再按力控计算出轮端力矩，舵向目标不受力控影响
+ */
+void steer_wheel_class::mixed_calculate_callback()
+{
+    inverse_calculate_callback();
+
+    force_calculate_core();
 }
 
 /************************ COPYRIGHT(C) HNAU-Robot **************************/
