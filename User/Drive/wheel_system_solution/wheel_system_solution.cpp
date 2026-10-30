@@ -951,6 +951,8 @@ void steer_wheel_class::init(const wheel_control_method_e &__control_method,
 
         status.error_angle[i] = 0.0f;
 
+        status.force_direction[i] = 1.0f;
+
         status.wheel_torque[i] = 0.0f;
 
         wheel_angle[i] = 0.0f;
@@ -1057,7 +1059,6 @@ void steer_wheel_class::inverse_calculate_callback()
         status.error_angle[i] = effective_error;
 
         //开启余弦优化，且不为小陀螺模式下，舵向误差在死区内，认为舵向已足够对齐，无需再压轮速
-        const bool in_deadband = cosine_optimize_enable && (fabsf(effective_error) < steer_angle_deadband) && (control_mode != 2);
 
         // 目标角斜坡限幅: 限制单周期变化量, 避免阶跃目标导致舵向电流尖峰与合力突变
         status.optimize_angle[i] = target_step_limit_enable
@@ -1065,7 +1066,7 @@ void steer_wheel_class::inverse_calculate_callback()
                                    : target;
         optimize_angle_valid[i] = true;
 
-        if (cosine_optimize_enable && !in_deadband)
+        if (cosine_optimize_enable && (fabsf(effective_error) < steer_angle_deadband) && (control_mode != 2))
         {
             // 余弦削减必须用真实未对齐角: 斜坡每拍只放行一小步, 若用斜坡后的误差, 削减项恒接近 1 而形同虚设;
             // 就近转位后 |effective_error| <= 90 度(+迟滞), 取绝对值避免与方向标志重复翻转
@@ -1320,6 +1321,13 @@ void steer_wheel_class::speed_calculate_callback()
 
 /**
  * @brief 力控核心
+ * @note  方向 / 余弦削减系数 / 未对齐角 直接读写 status 的同一组字段 (与 inverse_calculate_callback()
+ *        共用), 本函数不自备 cosine / optimize_direction 局部副本:
+ *        纯力控由力方向自己把这三位算出来, 混控复用逆解算出的 optimize_direction / error_angle,
+ *        只按"当前实际舵向 vs 力方向"的夹角覆盖 cosine_optimize.
+ * @note  出力只有一处: wheel_force[i] = force_modulus * cosine_optimize * force_direction.
+ *        出力方向用**力域**的 force_direction, 不用逆解的轮向方向: 电机域正力矩恒把底盘推向
+ *        +û(θ), 与轮子正/反转无关, 而混控减速时力与轮向恰好相反 —— 若用轮向方向定符号会越减越快.
  */
 void steer_wheel_class::force_calculate_core()
 {
@@ -1339,6 +1347,7 @@ void steer_wheel_class::force_calculate_core()
                 status.optimize_direction[i] = 1.0f;
                 status.cosine_optimize[i]    = 0.0f;
                 status.error_angle[i]        = 0.0f;
+                status.force_direction[i]    = 1.0f;
                 optimize_angle_valid[i]      = false;
             }
         }
@@ -1347,7 +1356,7 @@ void steer_wheel_class::force_calculate_core()
 
     // 偏航力增益 Y = mz/Σd², N/m
     const float yaw_force = robot_torque_w / (4.0f * Wheel_D2);
-    // |e| < db ⇔ cos e > cos(db)
+    // |e| < db ⇔ |cos e| > cos(db): 混控拿幅值比它定"是否削减"
     const float cos_deadband = arm_cos_f32(steer_angle_deadband);
 
     float wheel_force[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -1373,38 +1382,41 @@ void steer_wheel_class::force_calculate_core()
                 status.optimize_direction[i] = 1.0f;
                 status.cosine_optimize[i]    = 0.0f;
                 status.error_angle[i]        = 0.0f;
+                status.force_direction[i]    = 1.0f;
                 optimize_angle_valid[i]      = true;
             }
             continue;
         }
 
-        float cosine = 1.0f;
+        // 出力系数直接落在共用状态上: 余弦幅值缺省不削减 (1 = 已对齐), 出力方向由各分支各自定
+        status.cosine_optimize[i] = 1.0f;
 
         if (control_method != Wheel_Mixed_Control_Method)
         {
             // 纯力控不产生轮速目标, 防止下游速度环误用
-            status.optimize_speed[i] = 0.0f; 
+            status.optimize_speed[i] = 0.0f;
 
-            float optimize_direction = 1.0f;
             const float force_target = steer_encoder_direction * atan2f(force_y, force_x) + Enc_Zero_Angle[i];
             float target;
 
-            // 就近转位
             if (nearest_optimize_enable)
             {
                 // 超过 90 度时改用反向出力的等效舵向角; 迟滞取本拍之前的方向, 防止边界逐拍翻转
-                target = steer_select_nearest_target(force_target, status.now_angle[i], status.optimize_direction[i], flip_hysteresis, &optimize_direction);
+                target = steer_select_nearest_target(force_target, status.now_angle[i], status.optimize_direction[i], flip_hysteresis, &status.optimize_direction[i]);
             }
 
             else// 关闭就近转位
             {
+                // 舵向转向力方向本体, 轮向方向恒为 +1
+                status.optimize_direction[i] = 1.0f;
                 target = status.now_angle[i] + basic_math_modulus_normalization(force_target - status.now_angle[i], 2.0f * PI);
             }
 
-            status.optimize_direction[i] = optimize_direction;
-
             const float align_error = basic_math_modulus_normalization(force_target - status.now_angle[i], 2.0f * PI);
-            const float effective_error = (optimize_direction < 0.0f) ? basic_math_modulus_normalization(align_error + PI, 2.0f * PI) : align_error;
+            const float effective_error = (status.optimize_direction[i] < 0.0f) ? basic_math_modulus_normalization(align_error + PI, 2.0f * PI) : align_error;
+
+            // 纯力控的舵向就由力方向决定, 出力方向即就近转位选定的分支
+            status.force_direction[i] = status.optimize_direction[i];
 
             status.error_angle[i] = effective_error;
 
@@ -1413,10 +1425,8 @@ void steer_wheel_class::force_calculate_core()
             {
                 const float cos_angle_raw = arm_cos_f32(effective_error);
                 const float cos_angle     = nearest_optimize_enable ? fabsf(cos_angle_raw) : cos_angle_raw;
-                cosine = basic_math_constrain(cos_angle * cos_angle * cos_angle, 0.0f, 1.0f);
+                status.cosine_optimize[i] = basic_math_constrain(cos_angle * cos_angle * cos_angle, 0.0f, 1.0f);
             }
-
-            status.cosine_optimize[i] = cosine;
 
             // 目标角斜坡限幅: 限制单周期变化量, 避免阶跃目标导致舵向电流尖峰与合力突变
             status.optimize_angle[i] = target_step_limit_enable ? steer_limit_target_step(target, status.now_angle[i], status.optimize_angle[i], target_max_step, optimize_angle_valid[i]) : target;
@@ -1425,24 +1435,22 @@ void steer_wheel_class::force_calculate_core()
 
         else
         {
-           // 舵轮目标角度已由逆解算出, 余弦削减只按当前实际舵向与力方向的夹角计算, 不干扰逆解给出的舵向目标
-            if (cosine_optimize_enable)
-            {
-                const float steer = basic_math_modulus_normalization(steer_encoder_direction * (status.now_angle[i] - Enc_Zero_Angle[i]), 2.0f * PI);
-                const float cos_angle_raw = status.optimize_direction[i] * (force_x * arm_cos_f32(steer) + force_y * arm_sin_f32(steer)) / force_modulus;
+            // 混控，舵向与轮速目标已由逆解算出
+            const float steer = basic_math_modulus_normalization(steer_encoder_direction * (status.now_angle[i] - Enc_Zero_Angle[i]), 2.0f * PI);
+            const float cos_angle = (force_x * arm_cos_f32(steer) + force_y * arm_sin_f32(steer)) / force_modulus;
 
-                // 已在余弦死区内 (舵向已足够对齐) 不削减
-                if (cos_angle_raw < cos_deadband)
-                {
-                    // 就近转位后 |e| <= 90 度(+迟滞), 取绝对值避免与方向标志重复翻转
-                    const float cos_angle = basic_math_constrain(nearest_optimize_enable ? fabsf(cos_angle_raw) : cos_angle_raw, 0.0f, 1.0f);
-                    cosine = cos_angle * cos_angle * cos_angle;
-                }
+            status.force_direction[i] = (cos_angle >= 0.0f) ? 1.0f : -1.0f;
+
+            // 余弦削减
+            if (cosine_optimize_enable && (fabsf(cos_angle) <= cos_deadband))
+            {
+                const float cos_angle_mag = basic_math_constrain(fabsf(cos_angle), 0.0f, 1.0f);
+                status.cosine_optimize[i] = cos_angle_mag * cos_angle_mag * cos_angle_mag;
             }
         }
 
-        // 输出力矩
-        wheel_force[i] = force_modulus * cosine * status.optimize_direction[i];
+        // 轮端力矩 = 轮端力 * 余弦削减 * 出力方向
+        wheel_force[i] = force_modulus * status.cosine_optimize[i] * status.force_direction[i];
     }
 
     wheel_force_to_torque(wheel_force, status.wheel_torque, Wheel_Radius, max_wheel_torque, force_deadband);

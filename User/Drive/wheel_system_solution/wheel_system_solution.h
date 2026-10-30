@@ -3,9 +3,31 @@
  * @author Robin Liu (19038200162@163.com)
  * @brief 
  * @date 2026-10-30
- * @version 1.44
+ * @version 1.46
  * @copyright HNAU-Robot (c) 2026
  * @note 正方向定义: 机器人坐标系 +X 向前, +Y 向左, +Z 向上; 角速度绕 Z 轴 CCW 为正
+ * @note 1.46: 修复混控制动力矩符号反转 (仅 Wheel_Mixed_Control_Method): 原先出力行用逆解的
+ *            optimize_direction (轮向方向 = "轮子往哪边转") 定符号, 而电机域正力矩恒把底盘推向
+ *            +û(θ)、与轮子正/反转无关 —— 减速时力与轮向恰好相反, 于是"制动变加速"
+ *            (实测期望 -0.2425 N·m 输出 +0.2425, 四轮全中). 修法: 新增**力域**字段
+ *            status.force_direction[4] (只由 force_calculate_core() 写, 不碰 optimize_direction
+ *            以免破坏逆解的迟滞记忆), 余弦系数只存幅值 |cos e|³ ∈ [0,1] (get_cosine_optimize()
+ *            不会报负数), 出力行统一为 force_modulus·cosine_optimize·force_direction:
+ *              纯力控: force_direction = 就近转位选定的分支 (= optimize_direction), 逐位不变;
+ *              混控  : force_direction = sign(F·û(θ)), 与轮向方向无关, 制动/加速均正确.
+ *            混控的死区判据同步改为 |cos e| <= cos(deadband) (与纯力控的 |e| >= deadband 严格等价),
+ *            并不再按 nearest_optimize_enable 把反向力钳 0 —— 关闭就近转位时混控反向力从
+ *            "钳 0" 变为正常投影出力.
+ * @note 1.45: 动力学解算不再自备参数副本: force_calculate_core() 删除局部量 cosine /
+ *            optimize_direction, 改为与 inverse_calculate_callback() **共用同一组 status 字段** ——
+ *            optimize_direction / cosine_optimize / error_angle 直接读写. 纯力控的就近转位迟滞记忆与
+ *            本拍方向输出是同一个元素 (帮助函数先读 __last_direction 再写 *__direction, 同一对象
+ *            出入参安全), 与逆解"读 status 定方向"同构; 混控复用逆解算出的 optimize_direction /
+ *            error_angle, 只按"当前实际舵向 vs 力方向"的夹角覆盖 cosine_optimize. 出力行只剩一处
+ *            wheel_force = force_modulus·cosine_optimize·optimize_direction.
+ *            副作用: 混控下 cosine_optimize 本拍最终存的是力方向口径 (逆解已用它算完 optimize_speed,
+ *            轮速目标与力矩均逐位不变), get_cosine_optimize() 在混控下的含义随之从速度域改为力域;
+ *            error_angle 在混控下仍为速度域残差.
  * @note 1.44: 力控解算"命名与处理方式"对齐运动学逆解: ①轮端力方向先换成**电机域**目标角
  *            force_target = steer_encoder_direction·atan2f(force_y, force_x) + Enc_Zero_Angle,
  *            之后就近转位 / 单圈折算 / align_error / effective_error / 斜坡限幅与
@@ -253,9 +275,11 @@ typedef struct
     float optimize_angle[4];     // 舵向目标角, rad (多圈, 含零位; 同时是下一拍斜坡基准)
     float optimize_speed[4];     // 轮向目标速度, rad/s (已含余弦削减与方向符号; 纯力控为 0)
 
-    float optimize_direction[4]; // 轮向方向, ±1 (就近转位的翻转状态, 兼作下一拍迟滞记忆)
-    float cosine_optimize[4];    // 余弦削减系数, 无量纲 (1 = 已对齐不削减)
-    float error_angle[4];        // 真实未对齐角, rad (相对所选方向分支, 0 表示已对齐)
+    float optimize_direction[4]; // 轮向方向, ±1 (就近转位的翻转状态, 兼作下一拍迟滞记忆; 速度域, 只由逆解写)
+    float cosine_optimize[4];    // 余弦削减系数(幅值), 无量纲 [0,1] (1 = 已对齐不削减; 速控与力控共用)
+    float error_angle[4];        // 真实未对齐角, rad (相对所选方向分支, 0 表示已对齐; 速控与力控共用)
+    float force_direction[4];    // 轮端出力方向, ±1 (+1 = 沿当前舵向 +û(θ) 推底盘; 只由力控写,
+                                 //   纯力控 = 就近转位分支, 混控 = 力投影 sign(F·û(θ)), 与轮向方向无关)
 
     // 力控轮输出力矩
     float wheel_torque[4];       // 四轮轮端目标力矩, N·m ([0]=FL [1]=RL [2]=RR [3]=FR)
@@ -650,6 +674,7 @@ public:
     inline float get_optimize_direction(const uint8_t &__index) const;
     inline float get_error_angle(const uint8_t &__index) const;
     inline float get_cosine_optimize(const uint8_t &__index) const;
+    inline float get_force_direction(const uint8_t &__index) const;
 
     // 运动学正解(vx/vy/vw: m/s, rad/s)
     inline float get_robot_speed_vx() const;
@@ -737,7 +762,9 @@ protected:
     bool calc_body_displacement(const float *__ds, float &__dx, float &__dy, float &__dyaw) const;
     // 力控核心 (无参): 读 target_accel, 写 status.wheel_torque; 力分配 / 舵向规划 / 余弦削减 / 出力
     // 在同一循环内串行完成. 与 forward_calculate_callback() 同形, 纯力控与混控共用;
-    // 由 control_method 决定是否由力方向规划舵向
+    // 由 control_method 决定是否由力方向规划舵向. 方向/余弦/未对齐角直接读写 status 的同一组字段
+    // (与 inverse_calculate_callback() 共用), 不自备局部副本; 出力方向写 status.force_direction
+    // (力域, 与逆解的轮向方向 optimize_direction 分开: 混控制动时两者符号相反)
     void force_calculate_core();
 
     // 常量
@@ -1283,6 +1310,15 @@ inline float steer_wheel_class::get_cosine_optimize(const uint8_t &__index) cons
         return 0.0f;
     }
     return (status.cosine_optimize[__index]);
+}
+
+inline float steer_wheel_class::get_force_direction(const uint8_t &__index) const
+{
+    if (__index >= 4)
+    {
+        return 0.0f;
+    }
+    return (status.force_direction[__index]);
 }
 
 inline float steer_wheel_class::get_robot_speed_vx() const

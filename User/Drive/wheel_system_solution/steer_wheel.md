@@ -13,6 +13,7 @@
 | `solution_speed[]` | 未优化的轮向角速度（恒为正） | 诊断、日志 |
 | `optimize_angle[]` | 最终舵向**多圈**目标角（含零位，与 `now_angle` 同框） | 舵向位置环 |
 | `optimize_speed[]` | 最终轮向目标角速度（含方向符号） | 轮向速度环 |
+| `force_direction[]` | 轮端出力方向 ±1（力域，只在力控/混控时有效） | 诊断、日志 |
 
 ---
 
@@ -178,8 +179,15 @@ for (i = 0; i < 4; i++) {
 **② 出力幅值**（与逆解同一口径）：
 
 ```
-fᵢ = |Fᵢ| · |cos eᵢ|³ · dirᵢ        eᵢ = wrap(θᵢ* − θᵢ) 折到所选方向分支
+fᵢ = |Fᵢ| · |cos eᵢ|³ · force_directionᵢ
 ```
+
+`force_directionᵢ` 是**力域**的出力方向（`status.force_direction[i]`，±1）：
+
+| 路径 | `force_directionᵢ` | 理由 |
+|------|-------------------|------|
+| 纯力控 | = 就近转位选定的分支 `optimize_directionᵢ` | 舵向本就由力方向决定，“指向力方向”与“反向出力”两个分支等价且都已对齐 |
+| 混控 | = `sign(Fᵢ·û(θᵢ))`（不带 `dir`） | 舵向由**速度**逆解给定，电机域正力矩恒把底盘推向 `+û(θ)`、与轮子正/反转无关；制动时力与轮向恰好相反 |
 
 ②③ 全部收在 `force_calculate_core()` **一个无参函数一次循环**内（纯力控与力速混控共用），与 `forward_calculate_callback()` 同形——读 `target_accel`、写 `status`：
 
@@ -197,23 +205,29 @@ void force_calculate_core()
         float force_modulus = 0.0f;
         arm_sqrt_f32(force_x * force_x + force_y * force_y, &force_modulus);
         if (force_modulus <= force_deadband) { /* 锁舵向，该轮不出力 */ continue; }
-        float cosine = 1.0f;
+        status.cosine_optimize[i] = 1.0f;   // 共用字段，缺省不削减（1 = 已对齐）
         if (control_method != Wheel_Mixed_Control_Method) {
             // ② 力方向先换成与逆解同域的电机目标角，之后整段与 inverse_calculate_callback() 逐行同构
             const float force_target = steer_encoder_direction * atan2f(force_y, force_x) + Enc_Zero_Angle[i];
-            // 就近转位 / 单圈折算 / align_error / effective_error / 死区 / 斜坡限幅 ...
-            status.cosine_optimize[i] = cosine;
+            // 就近转位（方向直接写 status.optimize_direction[i]）/ 单圈折算 /
+            // align_error / effective_error / 死区 / 斜坡限幅 ...；需要削减时覆盖 status.cosine_optimize[i]
+            status.force_direction[i] = status.optimize_direction[i];
         } else {
-            // ②' 点积直取 cos e（舵向已由逆解给出）
+            // ②' 带符号投影直取 cos e（舵向与轮向方向已由逆解给出）
+            const float cos_angle = (force_x * cos(θ) + force_y * sin(θ)) / force_modulus;
+            status.force_direction[i] = (cos_angle >= 0) ? 1.0f : -1.0f;   // 符号：力在哪一侧
+            if (fabsf(cos_angle) <= cos_deadband) {                        // 幅值：|cos e|³
+                status.cosine_optimize[i] = fabsf(cos_angle)³;
+            }
         }
-        // ③ 出力：力幅 × 余弦削减 × 轮向方向
-        wheel_force[i] = force_modulus * cosine * status.optimize_direction[i];
+        // ③ 出力：力幅 × 共用余弦削减（幅值）× 共用出力方向
+        wheel_force[i] = force_modulus * status.cosine_optimize[i] * status.force_direction[i];
     }
     // 力 -> 力矩（扣除式死区 + 力矩上限）
 }
 ```
 
-**舵向规划整段跑在电机域**（与逆解同一个坐标系、同一组局部量名）：力方向是几何角，先换成
+**舵向规划整段跑在电机域**（与逆解同一个坐标系、同一套处理步骤）：力方向是几何角，先换成
 `force_target = steer_encoder_direction·atan2f(force_y, force_x) + Enc_Zero_Angle[i]`，之后
 `steer_select_nearest_target()` / `align_error` / `effective_error` / 斜坡限幅与
 `inverse_calculate_callback()` 一一对应，只把 `solution_target` 换成 `force_target`：
@@ -221,14 +235,17 @@ void force_calculate_core()
 | 环节 | 速控 `inverse_calculate_callback()` | 力控 `force_calculate_core()` |
 |------|------|------|
 | 解算方向 | `solution_angle[i] = atan2f(vel_y, vel_x)` → `solution_target` | `atan2f(force_y, force_x)` → `force_target` |
-| 就近转位 | `target = steer_select_nearest_target(solution_target, now_angle, dir, hyst, &optimize_direction)` | 同左，只换 `force_target` |
+| 就近转位 | `target = steer_select_nearest_target(solution_target, now_angle, dir, hyst, &optimize_direction)` → 写回 `status.optimize_direction[i]` | 同左，只换 `force_target`；方向直接写 `status.optimize_direction[i]`（无局部量） |
 | 未对齐角 | `align_error = wrap(solution_target − now_angle)` | `align_error = wrap(force_target − now_angle)` |
-| 余弦 | `cos_angle_raw = arm_cos_f32(effective_error)` → `cos_angle` → `cos³` | 同左 |
+| 余弦 | `cos_angle_raw = arm_cos_f32(effective_error)` → `cos_angle` → `cos³` | 纯力控同左；混控用带符号投影定 `force_direction`，幅值比 `cos_deadband` |
 | 斜坡 | `optimize_angle = 限幅(target)`；`optimize_angle_valid[i] = true` | 同左 |
-| 出力 | `optimize_speed = solution_speed·cosine·dir` | `wheel_force = force_modulus·cosine·dir` |
+| 出力 | `optimize_speed = solution_speed·cosine_optimize·optimize_direction` | `wheel_force = force_modulus·cosine_optimize·force_direction` |
 
-局部量名逐一对齐：`force_x/force_y`↔`vel_x/vel_y`、`force_modulus`↔`vel_modulus`、
-`optimize_direction`↔`optimize_direction`、`target`↔`target`。
+局部量名逐一对齐：`force_x/force_y`↔`vel_x/vel_y`、`force_modulus`↔`vel_modulus`、`target`↔`target`。
+`optimize_direction` **不再有局部量**：本拍方向输出与下一拍的迟滞记忆是 `status.optimize_direction[i]`
+同一个元素（帮助函数先读 `__last_direction` 再写 `*__direction`，同一对象同进出安全），与逆解
+“读 `status` 定方向、写回 `status`”同构；`cosine_optimize` / `error_angle` 同样只存在 `status` 里，
+出力方向则统一落在 `status.force_direction`——两条流水线都只写 `status`，没有一套平行的局部副本。
 好处不只是好读：`error_angle` 在两条流水线上从此是**同一个坐标域**，`steer_encoder_direction = −1`
 时不再一边报几何角、一边报电机角（换算后两者恰好互为相反数，|error| 与 cos 完全相同）。
 
@@ -236,15 +253,15 @@ void force_calculate_core()
 
 ```cpp
 const float align_error = wrap(force_target - status.now_angle[i]);
-const float effective_error = (optimize_direction < 0) ? wrap(align_error + PI) : align_error;
+const float effective_error = (status.optimize_direction[i] < 0) ? wrap(align_error + PI) : align_error;
 status.error_angle[i] = effective_error;
 
 if (cosine_optimize_enable && fabsf(effective_error) >= steer_angle_deadband) {
     const float c = arm_cos_f32(effective_error);
     const float ca = nearest_optimize_enable ? fabsf(c) : c;
-    cosine = constrain(ca * ca * ca, 0.0f, 1.0f);
+    status.cosine_optimize[i] = constrain(ca * ca * ca, 0.0f, 1.0f);
 }
-// 否则 cosine 保持 1（开关关闭 / 已在死区内）
+// 否则保持循环开头置的 1（开关关闭 / 已在死区内）
 ```
 
 两条公开入口因此各是一行：
@@ -256,24 +273,26 @@ mixed_calculate_callback()  →  inverse_calculate_callback(); core();       // 
 
 - **力分配公式与出力公式各只出现一次**，两条流水线不会因为各写一遍而在日后漂移；中间力矢量只是循环内的局部量，不需要 `wheel_force_x[4]` / `y[4]` 两个数组，也不用分三趟遍历。
 - 加速度合法性校验与非法输入分支也合并在 core 内（`control_method != Wheel_Mixed_Control_Method` 决定是否清全部目标字段）。
-- `cos e` 的两种取法等价但开销不同：纯力控本就要用未对齐角写 `status.cosine_optimize`（诊断需要），顺带复用；混控不需要角度值，用点积 `dir·F·û(θ)/|F|` 直达（`cos_angle_raw`），一次点积代替 `atan2f` + `arm_cos_f32`。
+- `cos e` 的两种取法等价但开销不同：纯力控本就要用未对齐角写 `status.cosine_optimize`（诊断需要），顺带复用；混控不需要角度值，用点积 `dir·F·û(θ)/|F|` 直达（`cos_angle_raw`），一次点积代替 `atan2f` + `arm_cos_f32`。两条路径写的都是**同一个** `status.cosine_optimize[i]`。
 - 死区判据：力死区直接比力幅 `force_modulus <= force_deadband`，与下游 `wheel_force_force_to_torque()` 的 `force_modulus <= deadband` **完全同形**（上游门限与扣除式死区同一表达式，不会出现“一个用平方、一个用模长”的口径差）。代价是死区轮也多做一次开方：4 次 `VSQRT` 在 1 kHz 下约 56 周期/拍，可忽略。余弦死区换算到余弦域 `|eᵢ| < deadband ⇔ cos eᵢ > cos(deadband)`（循环外算一次，即 `cos_deadband`）。
-- `control_method == Wheel_Mixed_Control_Method` 时**只写 `status.wheel_torque`**，不会把逆解算出的速度域余弦系数覆盖成"力方向余弦"。
+- `control_method == Wheel_Mixed_Control_Method` 时**不重新规划舵向、轮向方向与未对齐角**（这三个沿用逆解的结果），只写力域自己的两个量：`force_direction`（= 带符号投影的符号）与 `cosine_optimize`（= `|cos e|³`）。`cosine_optimize` 因此在本拍被覆盖成力域幅值——不影响任何输出（逆解已在末尾用它算完 `optimize_speed`，力矩本就要按力方向削减），代价只是 `get_cosine_optimize()` 在混控下与同拍的 `get_error_angle()`（速度域残差）不同域。
+
+> ⚠️ **混控的出力方向不能用 `optimize_direction`。** `optimize_direction` 是**轮向方向**（轮子往哪边转，由速度逆解给出）；电机域正力矩恒把底盘推向 `+û(θ)`，与轮子正/反转无关。减速时力与轮向恰好相反，若用轮向方向定符号，制动会变成加速（实测：期望 `−0.2425 N·m` 却输出 `+0.2425`，四轮全中）。因此出力方向单独存在力域字段 `force_direction`，**且力控不写 `optimize_direction`**——否则会踩坏逆解下一拍的翻转迟滞记忆。
 
 > ⚠️ **契约：`init()` 首参须与实际调用的入口一致**（`Force` ↔ `force_calculate_callback`，`Mixed` ↔ `mixed_calculate_callback`）。core 是否规划舵向直接由 `control_method != Wheel_Mixed_Control_Method` 判定，若 `init` 成 `Speed`/`Force` 却调 `mixed_calculate_callback`，core 会按 Force 语义重新规划舵向，把逆解刚写好的舵向目标覆盖掉（实测：逆解写 `0.9`，被改成 `0.09 / −1.35 / −0.68 / 0.02`）。
 
-> **死区不能用 `|cos eᵢ|` 判。** `|cos|` 在 `[0, π]` 上非单调（π/2 处最小），单看模长会把“舵向反转后的接近对齐”与“正向的大失配”混为一谈。必须先用 `dirᵢ` 折回得到带符号的 `cos eᵢ` 再比。
+> **死区不能用 `|cos eᵢ|` 判（纯力控）。** 纯力控的 `cos e` 必须先用 `dirᵢ` 折回成带符号值再比，因为 `|cos|` 在 `[0, π]` 上非单调（π/2 处最小），单看模长会把“舵向反转后的接近对齐”与“正向的大失配”混为一谈。混控则相反：符号由 `force_direction` 单独承担，死区只需拿 **幅值** 比 `|cos e| > cos(deadband)`（与纯力控的 `|e| >= deadband` 严格等价）。
 三件事和速控完全一致：
 
 | 环节 | 速控 | 力控 |
 |------|------|------|
 | 就近转位 | `steer_select_nearest_target()` + 翻转迟滞 | 同一个函数、同一个 `flip_hysteresis` |
-| 余弦削减 | `轮速 = |v|·|cos e|³·dir` | `轮端力 = |Fᵢ|·|cos eᵢ|³·dir` |
+| 余弦削减 | `轮速 = |v|·|cos e|³·dir` | `轮端力 = |Fᵢ|·|cos eᵢ|³·force_direction` |
 | 舵向死区 | 余弦开关打开且 `|e| < steer_angle_deadband` 时不修舵、不削减 | 同左 |
 
 为什么用 `cos³e` 而不是"把力投影到当前轮向"（`|F|·cos e`）：投影只抵消方向偏差带来的**必然损失**，不额外给舵向留对齐时间；`cos³` 是"先摆轮后出力"的既定策略，与速控一致，否则同一条指令在力控下落差更大。`cos³` 的代价是未对齐期间出力更小，但这段窗口很短（斜坡每拍只能转 `target_max_step`）。
 
-**③ 与速控共用同一份状态**：力控写的就是速控那五个字段（`optimize_angle` / `optimize_speed` / `optimize_direction` / `cosine_optimize` / `error_angle`），所以：
+**③ 与速控共用同一份状态**：力控写的就是速控那五个字段（`optimize_angle` / `optimize_speed` / `optimize_direction` / `cosine_optimize` / `error_angle`），另加一个**力域专属**的 `force_direction`（速控不碰），所以：
 
 - 两条路径切换时**斜坡基准天然连续**，不存在"两套目标互相踩基准"或切换瞬间跳变；
 - 下游只认这一组 getter（`get_optimize_angle` / `get_optimize_speed` / `get_cosine_optimize`），**不需要知道本拍走的是哪条路径**；
@@ -282,8 +301,8 @@ mixed_calculate_callback()  →  inverse_calculate_callback(); core();       // 
 | 路径 | 舵向目标来源 | 轮速目标 | 力矩 |
 |------|--------------|----------|------|
 | `speed_calculate_callback()` | 速度逆解 | 速度逆解 | 逆解入口清零 |
-| `force_calculate_callback()` | 期望轮端力方向 + 就近转位（受 `nearest_optimize_enable` 控制） | **0** | `|Fᵢ|·cos³e·dir` |
-| `mixed_calculate_callback()` | 速度逆解 | 速度逆解 | `|Fᵢ|·cos³e·dir`（不覆盖舵向） |
+| `force_calculate_callback()` | 期望轮端力方向 + 就近转位（受 `nearest_optimize_enable` 控制） | **0** | `|Fᵢ|·cos³e·force_direction` |
+| `mixed_calculate_callback()` | 速度逆解 | 速度逆解 | `|Fᵢ|·cos³(|e|)`·`sign(Fᵢ·û(θᵢ))`（不覆盖舵向与轮向方向） |
 
 限制与自检：
 
@@ -558,15 +577,16 @@ wheel.speed_odometry_callback();     // 必须在 forward_calculate_callback() �
 | 解算 | `speed_odometry_callback()` | 速度里程计 |
 | 输出 | `get_solution_angle(i)` / `get_solution_speed(i)` | 速控纯几何解，诊断用 |
 | 输出 | `get_optimize_angle(i)` / `get_optimize_speed(i)` | **下发电机用**：本拍生效的舵向/轮速目标（速控与力控写同一组） |
-| 输出 | `get_optimize_direction(i)` | ±1，已包含在 `optimize_speed` 里 |
-| 输出 | `get_error_angle(i)` / `get_cosine_optimize(i)` | 真实未对齐角 / 余弦削减系数（速控与力控共用），诊断用 |
+| 输出 | `get_optimize_direction(i)` | ±1，已包含在 `optimize_speed` 里（**速度域**，力控不写） |
+| 输出 | `get_error_angle(i)` / `get_cosine_optimize(i)` | 真实未对齐角（速度域）/ 余弦削减系数幅值 `[0,1]`（混控下为力域），诊断用 |
+| 输出 | `get_force_direction(i)` | ±1 轮端出力方向（力域）：纯力控 = 就近转位分支，混控 = `sign(F·û(θ))`（速控下为上次值） |
 | 输出 | `get_robot_speed_vx/vy/vw()` | 正解速度 |
 | 输出 | `get_position_x/y/yaw()` / `get_speed_position_x/y/yaw()` | 两套里程计位姿 |
 | 复位 | `reset_position()` / `set_position()` / `reset_speed_position()` / `set_speed_position()` | 同上 |
 | 力控·读取 | 无（无读回接口） | 配置量由上层自己掌握（质量/惯量是常量）；要看本拍是否出力用 `get_wheel_torque(i)` |
 | 力控·输入 | `set_robot_accel_x/y/w(v)` | 目标加速度逐轴写入 (m/s² / m/s² / rad/s²)；单轴非有限值只跳过该轴。**零加速度 = 不出力**，无另设使能位 |
 | 力控·解算 | `force_calculate_callback()` | **纯力控**：加速度 → 舵向对齐目标 + 轮端力矩（`optimize_speed` 置 0） |
-| 力控·解算 | `mixed_calculate_callback()` | 力速混控：速度逆解给出舵向/轮速目标，再按当前实际轮向叠加加速度前馈力矩（须排在逆解之后，逆解入口清力矩） |
+| 力控·解算 | `mixed_calculate_callback()` | 力速混控：速度逆解给出舵向/轮速目标，再按当前实际舵向叠加加速度前馈力矩（须排在逆解之后，逆解入口清力矩）。**力矩符号按力投影定**，减速时与轮速方向相反 |
 | 力控·输出 | `get_wheel_torque(i)` | 轮端力矩 N·m（速控路径恒 0）；是否被 `max_wheel_torque` 截断，拿它与该上限比就知道，不另设标志位 |
 
 ---
