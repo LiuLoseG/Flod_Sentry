@@ -8,14 +8,10 @@
  * @note 正方向定义: 机器人坐标系 +X 向前, +Y 向左, +Z 向上; 角速度绕 Z 轴 CCW 为正
  */
 
-/* Includes ------------------------------------------------------------------*/
-
 #include "wheel_system_solution.h"
 #include <cmath>
 #include <cstdint>
 #include "basic_math.h"
-
-/*-----------------------------------文件内静态辅助函数-----------------------------------*/
 
 // 编码器里程计单帧允许的最大轮转角变化量, rad.
 // 半圈在 100 Hz 下已相当于 314 rad/s 以上, 远超任何实际轮速, 出现即判定为编码器丢帧/复位/多圈计数跳变.
@@ -1058,15 +1054,16 @@ void steer_wheel_class::inverse_calculate_callback()
 
         status.error_angle[i] = effective_error;
 
-        //开启余弦优化，且不为小陀螺模式下，舵向误差在死区内，认为舵向已足够对齐，无需再压轮速
-
         // 目标角斜坡限幅: 限制单周期变化量, 避免阶跃目标导致舵向电流尖峰与合力突变
         status.optimize_angle[i] = target_step_limit_enable
                                    ? steer_limit_target_step(target, status.now_angle[i], status.optimize_angle[i], target_max_step, optimize_angle_valid[i])
                                    : target;
         optimize_angle_valid[i] = true;
 
-        if (cosine_optimize_enable && (fabsf(effective_error) < steer_angle_deadband) && (control_mode != 2))
+        // 非小陀螺模式，舵向已足够对其，不再削减轮速，避免舵向抖动
+        const bool in_deadband = (fabsf(effective_error) < steer_angle_deadband) && (control_mode != 2);
+
+        if (cosine_optimize_enable && !in_deadband)
         {
             // 余弦削减必须用真实未对齐角: 斜坡每拍只放行一小步, 若用斜坡后的误差, 削减项恒接近 1 而形同虚设;
             // 就近转位后 |effective_error| <= 90 度(+迟滞), 取绝对值避免与方向标志重复翻转
@@ -1325,9 +1322,6 @@ void steer_wheel_class::speed_calculate_callback()
  *        共用), 本函数不自备 cosine / optimize_direction 局部副本:
  *        纯力控由力方向自己把这三位算出来, 混控复用逆解算出的 optimize_direction / error_angle,
  *        只按"当前实际舵向 vs 力方向"的夹角覆盖 cosine_optimize.
- * @note  出力只有一处: wheel_force[i] = force_modulus * cosine_optimize * force_direction.
- *        出力方向用**力域**的 force_direction, 不用逆解的轮向方向: 电机域正力矩恒把底盘推向
- *        +û(θ), 与轮子正/反转无关, 而混控减速时力与轮向恰好相反 —— 若用轮向方向定符号会越减越快.
  */
 void steer_wheel_class::force_calculate_core()
 {
