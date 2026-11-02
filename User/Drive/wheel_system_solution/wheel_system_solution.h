@@ -119,8 +119,8 @@ public:
     void init(
               // 控制模式和控制参数
               const wheel_control_method_e &__control_method = Wheel_Speed_Control_Method,
-              const float &__wheel_encoder_direction = -1.0f,
-              const float &__control_period = 0.001f,
+              const float &__wheel_encoder_direction = 1.0f,
+              const float &__control_period = 0.002f,
               // 力控死区和最大力矩限制
               const float &__max_wheel_torque = 4.9f,
               const float &__force_deadband = 0.1f);
@@ -225,9 +225,9 @@ protected:
     static constexpr float Speed_Odom_Angle_Deadband = 0.05f;
 
     // 轮向电机方向, ±1
-    float wheel_encoder_direction = -1.0f;
+    float wheel_encoder_direction = 1.0f;
     // 控制周期(里程计回调调用间隔), s; 仅速度里程计积分使用
-    float control_period = 0.001f;
+    float control_period = 0.002f;
     // 控制方式
     wheel_control_method_e control_method = Wheel_Speed_Control_Method;
 

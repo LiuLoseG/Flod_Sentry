@@ -24,6 +24,7 @@
 #include "robot_def.h"
 
 #include "robot_decision.h"
+#include "imu_temp_ctrl.h"
 
 // #include "power.h"
 // #include "chassis_power.h"
@@ -63,6 +64,8 @@ typedef struct
     
     // volatile power_data_t *power; // 功率计对象指针
 
+    volatile imu_data_resolve_t *imu_data; // IMU解算结果对象指针
+
     // 机器人决策对象指针
     robot_decision_class *decision; 
 
@@ -71,11 +74,16 @@ typedef struct
 
 /*------------------------------------底盘整体目标和状态观测量---------------------------------------------*/
 
+    chassis_eskf_t eskf; // ESKF 状态观测器对象
+    chassis_eskf_input_t eskf_input; // ESKF 输入结构体
+    chassis_eskf_output_t eskf_output; // ESKF 输出结构体
+
     // 底盘里程计
     wheel_robot_position_t odom_position; // 里程计位置, m / rad    
 
     // 底盘整体控制结构体
-    steer_wheel_class steer_wheel;
+    // steer_wheel_class steer_wheel;
+    omni_wheel_class omni_wheel;
 
     // 目标底盘速度(设定的目标量)，单位m/s
     wheel_robot_speed_t target_robot_speed; 
@@ -95,8 +103,8 @@ typedef struct
 /*------------------------------------电机控制量和测量量---------------------------------------------*/   
 
     // 舵向电机角度环和速度环PID对象数组
-    pid_class pid_steer_angle[4]; // 电机角度环PID对象数组
-    pid_class pid_steer_omega[4]; // 电机速度环PID对象数组
+    // pid_class pid_steer_angle[4]; // 电机角度环PID对象数组
+    // pid_class pid_steer_omega[4]; // 电机速度环PID对象数组
     
     // 轮向电机速度环PID
     pid_class pid_wheel_omega[4];
@@ -104,8 +112,8 @@ typedef struct
 /*------------------------------------电机目标和状态观测量---------------------------------------------*/
 
     // 舵向电机
-    steer_state_t now_steer_state; 
-    steer_state_t tgr_steer_state;    
+    // steer_state_t now_steer_state; 
+    // steer_state_t tgr_steer_state;    
 
     // 轮向电机
     wheel_state_t now_wheel_state; 
@@ -117,7 +125,7 @@ typedef struct
 /*------------------------------------电机对象创建---------------------------------------------*/
     dji_c620_motor_class wheel_motor[4]; // 轮电机对象数组
     // dji_gm6020_motor_class steer_motor[4]; // 转向电机对象
-    dm_motor_normal_class steer_motor[4]; // 转向电机对象
+    // dm_motor_normal_class steer_motor[4]; // 转向电机对象
 /*------------------------------------功率对象创建---------------------------------------------*/
     float motor_target_output[4]; // 电机输出值数组, A
     float motor_target_omega[4];  // 电机目标角速度值数组, rad/s

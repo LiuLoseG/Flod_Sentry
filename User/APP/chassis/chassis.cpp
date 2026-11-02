@@ -8,6 +8,7 @@
  */
 
 #include "chassis.h"
+#include "Chassis_ESKF.h"
 #include "arm_math.h"
 
 #include "basic_math.h"
@@ -55,29 +56,29 @@ static void chassis_wheel_3_motor_rx_client(const volatile FDCAN_RxFrame_TypeDef
     chassis.wheel_motor[3].can_rx_callback();   // CAN1 0x204
 }
 
-static void chassis_steer_0_motor_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
-{
-    (void)frame;
-    chassis.steer_motor[0].can_rx_callback();   // CAN2 0x205
-}
+// static void chassis_steer_0_motor_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
+// {
+//     (void)frame;
+//     chassis.steer_motor[0].can_rx_callback();   // CAN2 0x205
+// }
 
-static void chassis_steer_1_motor_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
-{
-    (void)frame;
-    chassis.steer_motor[1].can_rx_callback();   // CAN2 0x206
-}
+// static void chassis_steer_1_motor_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
+// {
+//     (void)frame;
+//     chassis.steer_motor[1].can_rx_callback();   // CAN2 0x206
+// }
 
-static void chassis_steer_2_motor_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
-{
-    (void)frame;
-    chassis.steer_motor[2].can_rx_callback();   // CAN2 0x207
-}
+// static void chassis_steer_2_motor_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
+// {
+//     (void)frame;
+//     chassis.steer_motor[2].can_rx_callback();   // CAN2 0x207
+// }
 
-static void chassis_steer_3_motor_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
-{
-    (void)frame;
-    chassis.steer_motor[3].can_rx_callback();   // CAN2 0x208
-}
+// static void chassis_steer_3_motor_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
+// {
+//     (void)frame;
+//     chassis.steer_motor[3].can_rx_callback();   // CAN2 0x208
+// }
 
 /**
  * @brief 底盘初始化函数
@@ -87,23 +88,25 @@ void chassis_init(void)
 {
     // 1. 初始化绑定观测对象
     chassis.crsf = &crsf;
+    chassis.imu_data = &imu_frame;
     chassis.decision = &robot_decision;
     // chassis.power = &power_data; // 功率计对象指针
 
     // 2. 初始化电机参数
-    chassis.wheel_motor[0].init(&hfdcan2, Motor_DJI_ID_0x201, DJI_Motor_Control_Method_Torque, 268.0f/17.0f); // 左前轮电机
-    chassis.wheel_motor[1].init(&hfdcan2, Motor_DJI_ID_0x202, DJI_Motor_Control_Method_Torque, 268.0f/17.0f); // 左后轮电机
-    chassis.wheel_motor[2].init(&hfdcan2, Motor_DJI_ID_0x203, DJI_Motor_Control_Method_Torque, 268.0f/17.0f); // 右后轮电机
-    chassis.wheel_motor[3].init(&hfdcan2, Motor_DJI_ID_0x204, DJI_Motor_Control_Method_Torque, 268.0f/17.0f); // 右前轮电机
+    chassis.wheel_motor[0].init(&hfdcan1, Motor_DJI_ID_0x201, DJI_Motor_Control_Method_Torque, 268.0f/17.0f); // 左前轮电机
+    chassis.wheel_motor[1].init(&hfdcan1, Motor_DJI_ID_0x202, DJI_Motor_Control_Method_Torque, 268.0f/17.0f); // 左后轮电机
+    chassis.wheel_motor[2].init(&hfdcan1, Motor_DJI_ID_0x203, DJI_Motor_Control_Method_Torque, 268.0f/17.0f); // 右后轮电机
+    chassis.wheel_motor[3].init(&hfdcan1, Motor_DJI_ID_0x204, DJI_Motor_Control_Method_Torque, 268.0f/17.0f); // 右前轮电机
 
     // chassis.steer_motor[0].init(&hfdcan2, Motor_DJI_ID_0x205, DJI_Motor_Control_Method_Torque); // 左前转向电机
     // chassis.steer_motor[1].init(&hfdcan2, Motor_DJI_ID_0x206, DJI_Motor_Control_Method_Torque); // 左后转向电机
     // chassis.steer_motor[2].init(&hfdcan2, Motor_DJI_ID_0x207, DJI_Motor_Control_Method_Torque); // 右后转向电机
     // chassis.steer_motor[3].init(&hfdcan2, Motor_DJI_ID_0x208, DJI_Motor_Control_Method_Torque); // 右前转向电机
-    chassis.steer_motor[0].init(&hfdcan1, 0x11, 0x01, Motor_DM_Control_Method_Normal_MIT, 3.141593f, 45.0f, 10.0f);
-    chassis.steer_motor[1].init(&hfdcan1, 0x12, 0x02, Motor_DM_Control_Method_Normal_MIT, 3.141593f, 45.0f, 10.0f);
-    chassis.steer_motor[2].init(&hfdcan1, 0x13, 0x03, Motor_DM_Control_Method_Normal_MIT, 3.141593f, 45.0f, 10.0f);
-    chassis.steer_motor[3].init(&hfdcan1, 0x14, 0x04, Motor_DM_Control_Method_Normal_MIT, 3.141593f, 45.0f, 10.0f);
+
+    // chassis.steer_motor[0].init(&hfdcan1, 0x11, 0x01, Motor_DM_Control_Method_Normal_MIT, 3.141593f, 45.0f, 10.0f);
+    // chassis.steer_motor[1].init(&hfdcan1, 0x12, 0x02, Motor_DM_Control_Method_Normal_MIT, 3.141593f, 45.0f, 10.0f);
+    // chassis.steer_motor[2].init(&hfdcan1, 0x13, 0x03, Motor_DM_Control_Method_Normal_MIT, 3.141593f, 45.0f, 10.0f);
+    // chassis.steer_motor[3].init(&hfdcan1, 0x14, 0x04, Motor_DM_Control_Method_Normal_MIT, 3.141593f, 45.0f, 10.0f);
 
     // 3. 初始化速度斜坡函数
     chassis.slope_speed[0].init(0.0045f, 0.0045f ,Slope_First_TARGET); // X轴速度斜坡
@@ -123,16 +126,16 @@ void chassis_init(void)
     //     chassis.pid_steer_omega[i].init(0.12f, 0.98f, 0.0f, 0.0f, 0.85f, 1.2f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机速度环PID初始化
     // }
 
-    for (uint8_t i = 0; i < 4; i++)
-    {
-        chassis.pid_steer_angle[i].init(10.5f, 0.00f, 0.1f, 0.0f, 1.0f, 12.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机角度环PID初始化
-        chassis.pid_steer_omega[i].init(0.038f, 0.56f, 0.0f, 0.0f, 0.85f, 1.2f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机速度环PID初始化
-    }
+    // for (uint8_t i = 0; i < 4; i++)
+    // {
+    //     chassis.pid_steer_angle[i].init(10.5f, 0.00f, 0.1f, 0.0f, 1.0f, 12.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机角度环PID初始化
+    //     chassis.pid_steer_omega[i].init(0.038f, 0.56f, 0.0f, 0.0f, 0.85f, 1.2f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机速度环PID初始化
+    // }
 
     // 轮向电机角速度PID控制
     for (uint8_t i = 0; i < 4; i++)
     {
-        chassis.pid_wheel_omega[i].init(0.92f, 0.12f, 0.0f, 0.0f, 0.5f, 2.5f, 0.002f, 0.08f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机速度环PID初始化
+        chassis.pid_wheel_omega[i].init(0.82f, 0.0f, 0.0f, 0.0f, 0.5f, 2.5f, 0.002f, 0.08f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机速度环PID初始化
     }
 
     // 6. 设置底盘锁定模式
@@ -145,45 +148,48 @@ void chassis_init(void)
     chassis.control_power.set_chassis_power_max(20.0f); // 设置底盘功率上限 20W(无电容/缓冲反馈, 暂用固定值)
     
     // 7. 初始化电机状态为0
-    for (uint8_t i = 0; i <4; i++)
-    {
-        chassis.now_steer_state.angle[i] = 0.0f; // 初始化目标舵向角度为 0
-        chassis.now_steer_state.speed[i] = 0.0f; // 初始化目标舵向速度为 0
+    // for (uint8_t i = 0; i <4; i++)
+    // {
+    //     chassis.now_steer_state.angle[i] = 0.0f; // 初始化目标舵向角度为 0
+    //     chassis.now_steer_state.speed[i] = 0.0f; // 初始化目标舵向速度为 0
 
-        chassis.now_wheel_state.angle[i] = 0.0f; // 初始化目标轮子角度为 0
-        chassis.now_wheel_state.speed[i] = 0.0f; // 初始化目标轮子速度为 0
-    }
+    //     chassis.now_wheel_state.angle[i] = 0.0f; // 初始化目标轮子角度为 0
+    //     chassis.now_wheel_state.speed[i] = 0.0f; // 初始化目标轮子速度为 0
+    // }
 
     // 8. 初始化舵轮底盘的优化和控制参数
-    chassis.steer_wheel.init(Wheel_Speed_Control_Method, -1.0f);
+    // chassis.steer_wheel.init(Wheel_Speed_Control_Method, -1.0f);
+    chassis.omni_wheel.init(Wheel_Speed_Control_Method, 1.0f);
 
     wave_generator_init(&motor_wave, WAVE_SINE, 0.1f, 2.0f, 0.0f);
     wave_generator_enable(&motor_wave);
 
-    can_distribution_register(2, 0x201,  chassis_wheel_0_motor_rx_client);
-    can_distribution_register(2, 0x202,  chassis_wheel_1_motor_rx_client);
-    can_distribution_register(2, 0x203,  chassis_wheel_2_motor_rx_client);
-    can_distribution_register(2, 0x204,  chassis_wheel_3_motor_rx_client);
+    chassis_eskf_init(&chassis.eskf); // 初始化底盘ESKF状态观测器
+
+    can_distribution_register(1, 0x201,  chassis_wheel_0_motor_rx_client);
+    can_distribution_register(1, 0x202,  chassis_wheel_1_motor_rx_client);
+    can_distribution_register(1, 0x203,  chassis_wheel_2_motor_rx_client);
+    can_distribution_register(1, 0x204,  chassis_wheel_3_motor_rx_client);
 
     // can_distribution_register(1, 0x205, chassis_steer_0_motor_rx_client);
     // can_distribution_register(1, 0x206, chassis_steer_1_motor_rx_client);
     // can_distribution_register(1, 0x207, chassis_steer_2_motor_rx_client);
     // can_distribution_register(1, 0x208, chassis_steer_3_motor_rx_client);
 
-    can_distribution_register(1, 0x11, chassis_steer_0_motor_rx_client);
-    can_distribution_register(1, 0x12, chassis_steer_1_motor_rx_client);
-    can_distribution_register(1, 0x13, chassis_steer_2_motor_rx_client);
-    can_distribution_register(1, 0x14, chassis_steer_3_motor_rx_client);
+    // can_distribution_register(1, 0x11, chassis_steer_0_motor_rx_client);
+    // can_distribution_register(1, 0x12, chassis_steer_1_motor_rx_client);
+    // can_distribution_register(1, 0x13, chassis_steer_2_motor_rx_client);
+    // can_distribution_register(1, 0x14, chassis_steer_3_motor_rx_client);
 
     SAFE_DAEMON_PROCESS_REGISTER("chassis_wheel_0", chassis.wheel_motor[0], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
     SAFE_DAEMON_PROCESS_REGISTER("chassis_wheel_1", chassis.wheel_motor[1], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
     SAFE_DAEMON_PROCESS_REGISTER("chassis_wheel_2", chassis.wheel_motor[2], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
     SAFE_DAEMON_PROCESS_REGISTER("chassis_wheel_3", chassis.wheel_motor[3], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
 
-    SAFE_DAEMON_PROCESS_REGISTER("chassis_steer_0", chassis.steer_motor[0], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
-    SAFE_DAEMON_PROCESS_REGISTER("chassis_steer_1", chassis.steer_motor[1], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
-    SAFE_DAEMON_PROCESS_REGISTER("chassis_steer_2", chassis.steer_motor[2], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
-    SAFE_DAEMON_PROCESS_REGISTER("chassis_steer_3", chassis.steer_motor[3], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
+    // SAFE_DAEMON_PROCESS_REGISTER("chassis_steer_0", chassis.steer_motor[0], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
+    // SAFE_DAEMON_PROCESS_REGISTER("chassis_steer_1", chassis.steer_motor[1], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
+    // SAFE_DAEMON_PROCESS_REGISTER("chassis_steer_2", chassis.steer_motor[2], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
+    // SAFE_DAEMON_PROCESS_REGISTER("chassis_steer_3", chassis.steer_motor[3], SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
 }
 /**
  * 底盘模式切换
@@ -290,9 +296,9 @@ void chassis_update_measure(void)
     {
         // 获取舵向电机当前角度值
         // 舵向位置环使用连续总角度，避免每圈边界处目标角跳变。
-        chassis.now_steer_state.angle[i] = chassis.steer_motor[i].get_total_angle();
-        // chassis.now_steer_state.angle[i] = chassis.steer_motor[i].get_now_angle(); 
-        chassis.now_steer_state.speed[i] = chassis.steer_motor[i].get_now_omega(); 
+        // chassis.now_steer_state.angle[i] = chassis.steer_motor[i].get_total_angle();
+        // // chassis.now_steer_state.angle[i] = chassis.steer_motor[i].get_now_angle(); 
+        // chassis.now_steer_state.speed[i] = chassis.steer_motor[i].get_now_omega(); 
 
         // 获取轮向电机当前速度值
         chassis.now_wheel_state.angle[i] = chassis.wheel_motor[i].get_now_angle();
@@ -301,13 +307,46 @@ void chassis_update_measure(void)
 
     // 更新舵轮解算的相关参数
 
-    chassis.steer_wheel.update_now_state(chassis.now_steer_state, chassis.now_wheel_state);
+    // chassis.steer_wheel.update_now_state(chassis.now_steer_state, chassis.now_wheel_state);
 
     // 更新滤波后的轮电机速度值（一阶IIR低通，30Hz截止）
     
     // 使用底盘正运动学解算，计算底盘的实际速度
-    chassis.steer_wheel.forward_calculate_callback();
+    // chassis.steer_wheel.forward_calculate_callback();
+    chassis.omni_wheel.forward_calculate_callback();
    
+}
+
+/**
+ * @brief 更新底盘ESKF测量值
+ * @note  更新ESKF状态观测器的输入量
+ */
+void chassis_eskf_update_measure(void)
+{
+    chassis.now_robot_speed.vx = chassis.omni_wheel.get_robot_speed_vx();
+    chassis.now_robot_speed.vy = chassis.omni_wheel.get_robot_speed_vy(); 
+    chassis.now_robot_speed.vw = chassis.omni_wheel.get_robot_speed_vw();
+
+    // 更新ESKF输入结构体
+    chassis.eskf_input.dt = 0.002f; // 采样周期2ms
+    chassis.eskf_input.wheel_vx = chassis.now_robot_speed.vx; // 底盘实际的x轴速度
+    chassis.eskf_input.wheel_vy = chassis.now_robot_speed.vy; // 底盘实际的y轴速度
+    chassis.eskf_input.wheel_vw = chassis.now_robot_speed.vw; // 底盘实际的角速度
+    chassis.eskf_input.wheel_valid = 1; // 底盘速度有效标志位
+
+    chassis.eskf_input.imu_gx = chassis.imu_data->gyro[0]; // IMU加速度计x轴加速度
+    chassis.eskf_input.imu_gy = chassis.imu_data->gyro[1];
+    chassis.eskf_input.imu_gz = chassis.imu_data->gyro[2];
+
+    chassis.eskf_input.imu_ax = -chassis.imu_data->accel[0]; // IMU陀螺仪x轴角速度
+    chassis.eskf_input.imu_ay = -chassis.imu_data->accel[1];
+    chassis.eskf_input.imu_az = -chassis.imu_data->accel[2];
+
+    chassis.eskf_input.roll = chassis.imu_data->euler_angle.roll; // IMU解算的滚转角
+    chassis.eskf_input.pitch = chassis.imu_data->euler_angle.pitch; // IMU解算的俯仰角
+    chassis.eskf_input.attitude_valid = 1; // IMU姿态解算有效标志位
+
+    chassis_eskf_update(&chassis.eskf, &chassis.eskf_input, &chassis.eskf_output);
 }
 
 /**
@@ -421,41 +460,49 @@ void chassis_overall_mobile_control(void)
 void chassis_motor_calculate(void)
 {
     // 更新底盘整体运动学参数
-    chassis.steer_wheel.update_robot_state(chassis.slope_output_speed, chassis.now_mode);
+    chassis.omni_wheel.update_robot_state(chassis.slope_output_speed);
+    // chassis.steer_wheel.update_robot_state(chassis.slope_output_speed, chassis.now_mode);
     // 控制解算: 当前为速控, 调速控流水线 (力控/混控改调 force_calculate_callback / mixed_calculate_callback)
-    chassis.steer_wheel.speed_calculate_callback();
+    // chassis.steer_wheel.speed_calculate_callback();
+    chassis.omni_wheel.speed_calculate_callback();
     // 里程计解算
-    chassis.steer_wheel.encoder_odometry_callback();
+    // chassis.steer_wheel.encoder_odometry_callback();
+    chassis.omni_wheel.encoder_odometry_callback();
 
-    chassis.now_robot_speed.vx = chassis.steer_wheel.get_robot_speed_vx(); // 获取底盘实际速度
-    chassis.now_robot_speed.vy = chassis.steer_wheel.get_robot_speed_vy(); 
-    chassis.now_robot_speed.vw = chassis.steer_wheel.get_robot_speed_vw();
+    // chassis.now_robot_speed.vx = chassis.steer_wheel.get_robot_speed_vx(); // 获取底盘实际速度
+    // chassis.now_robot_speed.vy = chassis.steer_wheel.get_robot_speed_vy(); 
+    // chassis.now_robot_speed.vw = chassis.steer_wheel.get_robot_speed_vw();
 
-    chassis.odom_position.x = chassis.steer_wheel.get_position_x(); // 获取底盘实际位置
-    chassis.odom_position.y = chassis.steer_wheel.get_position_y();
-    chassis.odom_position.yaw = chassis.steer_wheel.get_position_yaw();
+    // chassis.odom_position.x = chassis.steer_wheel.get_position_x(); // 获取底盘实际位置
+    // chassis.odom_position.y = chassis.steer_wheel.get_position_y();
+    // chassis.odom_position.yaw = chassis.steer_wheel.get_position_yaw();
+
+    chassis.odom_position.x = chassis.omni_wheel.get_position_x(); // 获取底盘实际位置
+    chassis.odom_position.y = chassis.omni_wheel.get_position_y();
+    chassis.odom_position.yaw = chassis.omni_wheel.get_position_yaw();
 
     // 电机控制参数更新
     for (uint8_t i = 0; i < 4; i++)
     {
-        chassis.tgr_steer_state.angle[i] = chassis.steer_wheel.get_optimize_angle(i);
-        chassis.tgr_wheel_state.speed[i] = chassis.steer_wheel.get_optimize_speed(i);
+        // chassis.tgr_steer_state.angle[i] = chassis.steer_wheel.get_optimize_angle(i);
+        // chassis.tgr_wheel_state.speed[i] = chassis.steer_wheel.get_optimize_speed(i);
+        chassis.tgr_wheel_state.speed[i] = chassis.omni_wheel.get_wheel_speed(i);
     }
 
     // 舵向电机PID计算
-    for (uint8_t i = 0; i < 4; i++)
-    {
-        // 位置环
-        chassis.pid_steer_angle[i].set_now(chassis.now_steer_state.angle[i]); // 设置电机当前角度值
-        chassis.pid_steer_angle[i].set_target(chassis.tgr_steer_state.angle[i]); // 设置电机目标角度值
-        chassis.pid_steer_angle[i].pid_calculate_callback(); // 计算电机控制参数
-        chassis.tgr_steer_state.speed[i] = chassis.pid_steer_angle[i].get_out(); // 获取电机控制参数
+    // for (uint8_t i = 0; i < 4; i++)
+    // {
+    //     // 位置环
+    //     chassis.pid_steer_angle[i].set_now(chassis.now_steer_state.angle[i]); // 设置电机当前角度值
+    //     chassis.pid_steer_angle[i].set_target(chassis.tgr_steer_state.angle[i]); // 设置电机目标角度值
+    //     chassis.pid_steer_angle[i].pid_calculate_callback(); // 计算电机控制参数
+    //     chassis.tgr_steer_state.speed[i] = chassis.pid_steer_angle[i].get_out(); // 获取电机控制参数
 
-        // 速度环
-        chassis.pid_steer_omega[i].set_now(chassis.now_steer_state.speed[i]); // 设置电机当前速度值
-        chassis.pid_steer_omega[i].set_target(chassis.tgr_steer_state.speed[i]); // 设置电机目标速度值
-        chassis.pid_steer_omega[i].pid_calculate_callback(); // 计算电机控制参数
-    }
+    //     // 速度环
+    //     chassis.pid_steer_omega[i].set_now(chassis.now_steer_state.speed[i]); // 设置电机当前速度值
+    //     chassis.pid_steer_omega[i].set_target(chassis.tgr_steer_state.speed[i]); // 设置电机目标速度值
+    //     chassis.pid_steer_omega[i].pid_calculate_callback(); // 计算电机控制参数
+    // }
 
     // 轮向电机PID计算
     for (uint8_t i = 0; i < 4; i++)
@@ -477,8 +524,8 @@ void chassis_motor_calculate(void)
 
     for (uint8_t i = 0; i < 4; i++)
     {
-        chassis.steer_motor[i].set_control_torque(chassis.pid_steer_omega[i].get_out()); // 设置电机目标转矩值
-        chassis.steer_motor[i].calculate_callback();
+        // chassis.steer_motor[i].set_control_torque(chassis.pid_steer_omega[i].get_out()); // 设置电机目标转矩值
+        // chassis.steer_motor[i].calculate_callback();
 
         chassis.wheel_motor[i].set_target_torque(chassis.pid_wheel_omega[i].get_out()); // 设置轮向电机目标转矩值
         chassis.wheel_motor[i].external_calculate_callback();
@@ -487,7 +534,7 @@ void chassis_motor_calculate(void)
 
     // 发送数据
     // bsp_can_1_to_4_transmit(&hfdcan1, 0x1fe, can2_0x1fe_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
-    bsp_can_1_to_4_transmit(&hfdcan2, 0x200, can2_0x200_tx_data, Can_Transmit_Frequency_Div2); // 发送电机控制参数
+    bsp_can_1_to_4_transmit(&hfdcan1, 0x200, can1_0x200_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
 }
 
 /**
@@ -496,19 +543,19 @@ void chassis_motor_calculate(void)
 void chasiss_motor_test(void)
 {
     // 舵向电机PID计算
-    for (uint8_t i = 0; i < 4; i++)
-    {
-        // 位置环
-        chassis.pid_steer_angle[i].set_now(chassis.now_steer_state.angle[i]); // 设置电机当前角度值
-        chassis.pid_steer_angle[i].set_target(chassis.tgr_steer_state.angle[i]); // 设置电机目标角度值
-        chassis.pid_steer_angle[i].pid_calculate_callback(); // 计算电机控制参数
-        chassis.tgr_steer_state.speed[i] = chassis.pid_steer_angle[i].get_out(); // 获取电机控制参数
+    // for (uint8_t i = 0; i < 4; i++)
+    // {
+    //     // 位置环
+    //     chassis.pid_steer_angle[i].set_now(chassis.now_steer_state.angle[i]); // 设置电机当前角度值
+    //     chassis.pid_steer_angle[i].set_target(chassis.tgr_steer_state.angle[i]); // 设置电机目标角度值
+    //     chassis.pid_steer_angle[i].pid_calculate_callback(); // 计算电机控制参数
+    //     chassis.tgr_steer_state.speed[i] = chassis.pid_steer_angle[i].get_out(); // 获取电机控制参数
 
-        // 速度环
-        chassis.pid_steer_omega[i].set_now(chassis.now_steer_state.speed[i]); // 设置电机当前速度值
-        chassis.pid_steer_omega[i].set_target(chassis.tgr_steer_state.speed[i]); // 设置电机目标速度值
-        chassis.pid_steer_omega[i].pid_calculate_callback(); // 计算电机控制参数
-    }
+    //     // 速度环
+    //     chassis.pid_steer_omega[i].set_now(chassis.now_steer_state.speed[i]); // 设置电机当前速度值
+    //     chassis.pid_steer_omega[i].set_target(chassis.tgr_steer_state.speed[i]); // 设置电机目标速度值
+    //     chassis.pid_steer_omega[i].pid_calculate_callback(); // 计算电机控制参数
+    // }
 
     // 轮向电机PID计算
     for (uint8_t i = 0; i < 4; i++)
@@ -530,9 +577,9 @@ void chasiss_motor_test(void)
 
     for (uint8_t i = 0; i < 4; i++)
     {
-         chassis.steer_motor[i].set_control_torque(0.0f); // 设置电机目标转矩值
+        // chassis.steer_motor[i].set_control_torque(0.0f); // 设置电机目标转矩值
         // chassis.steer_motor[i].set_control_torque(chassis.pid_steer_omega[i].get_out()); // 设置电机目标转矩值
-        chassis.steer_motor[i].calculate_callback();
+        // chassis.steer_motor[i].calculate_callback();
 
         chassis.wheel_motor[i].set_target_torque(chassis.pid_wheel_omega[i].get_out()); // 设置轮向电机目标转矩值
         chassis.wheel_motor[i].external_calculate_callback();
@@ -541,7 +588,7 @@ void chasiss_motor_test(void)
 
     // 发送数据
     // bsp_can_1_to_4_transmit(&hfdcan1, 0x1fe, can2_0x1fe_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
-    bsp_can_1_to_4_transmit(&hfdcan2, 0x200, can2_0x200_tx_data, Can_Transmit_Frequency_Div2); // 发送电机控制参数
+    bsp_can_1_to_4_transmit(&hfdcan1, 0x200, can1_0x200_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
 }
 
 /*
@@ -653,10 +700,13 @@ extern "C" void chassis_task(void *argument)
         // 2. 更新底盘测量值
         chassis_update_measure();
 
-        // 3. 底盘整体移动控制
+        // 3. 更新底盘ESKF测量值
+        chassis_eskf_update_measure();
+
+        // 4. 底盘整体移动控制
         chassis_overall_mobile_control();
 
-        // 4. 底盘电机计算
+        // 5. 底盘电机计算
         // chasiss_motor_test();
         chassis_motor_calculate();   // 常规闭环控制
         // chassis_motor_sys_indef();   // 扫频辨识占用本帧(开环力矩输出)
@@ -665,6 +715,6 @@ extern "C" void chassis_task(void *argument)
         // chassis_motor_control_test(); // 底盘电机控制测试
 
         // 5. 延时等待下一次循环
-        osDelay(1); 
+        osDelay(2); 
     }
 }

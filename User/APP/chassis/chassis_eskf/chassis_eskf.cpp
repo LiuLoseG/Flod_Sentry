@@ -143,7 +143,9 @@ static uint8_t eskf_is_static(const chassis_eskf_t *f,
     if (in->attitude_valid) 
     {
         float acc_norm = sqrtf(ax * ax + ay * ay + az * az);
-        if (acc_norm > 0.8f) {
+
+        if (acc_norm > 0.8f) 
+        {
             return 0;
         }
     }
@@ -305,14 +307,17 @@ void chassis_eskf_init(chassis_eskf_t *f)
     memset(f, 0, sizeof(*f));
     f->gravity = 9.80665f;
     f->sigma_acc = 1.0f;
-    f->sigma_bias_acc = 0.12f;
-    f->sigma_bias_gyr = 0.02f;
+    f->sigma_bias_acc = 0.35f;
+    f->sigma_bias_gyr = 0.06f;
     f->wheel_v_meas_std = 0.005f;
     f->wheel_w_meas_std = 0.02f;
     f->slip_gain = 500.0f;
     f->slip_threshold_v = 0.005f;
     f->slip_threshold_w = 0.03f;
-    f->static_gyro_th = 0.02f;
+    // f->static_gyro_th = 0.02f;
+    // f->static_wheel_v_th = 0.02f;
+    // f->static_wheel_w_th = 0.03f;
+    f->static_gyro_th = 0.08f;
     f->static_wheel_v_th = 0.02f;
     f->static_wheel_w_th = 0.03f;
     chassis_eskf_reset(f);

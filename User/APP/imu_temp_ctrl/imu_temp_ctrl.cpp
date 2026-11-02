@@ -109,7 +109,7 @@ static pwm_class heater_pwm;
 static float heater_duty_cmd = 0.0f;
 
 // 陀螺零漂补偿值(参数校准), rad/s
-static float gyro_bias[3] = {0.001526523f, 0.00049747858f, 0.003300000f};
+static float gyro_bias[3] = {0.00312334462f, -0.00214757188f, 0.00308073405f};
 
 static imu_status_e imu_status = Imu_Status_Uninit;
 static uint32_t init_retry_ticks = 0;
