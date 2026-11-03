@@ -1,9 +1,9 @@
 /**
  * @file imu_temp_ctrl.cpp
  * @author Robin Liu (19038200162@163.com)
- * @brief 板载 BMI088 IMU: SPI 采样 → 恒温控制 → 零漂/刻度补偿 → 时间账本 → 四元数 EKF 姿态解算
+ * @brief 板载 BMI088 IMU: SPI 采样 → 恒温控制 → 零漂/刻度/杆臂补偿 → 时间账本 → 四元数 EKF 姿态解算
  * @date 2026-11-03
- * @version 1.7
+ * @version 2.0
  * @copyright HNAU-Robot (c) 2026
  */
 
@@ -289,6 +289,148 @@ static inline void imu_gyro_calibrate(float *gyro, const float *bias, const floa
 
 // ===== IMU_GYRO_CALIB_END =====
 
+/*------------------------------ 加速度计偏心补偿(杆臂补偿) ------------------------------*/
+
+// IMU 不在刚体旋转中心时, 加速度计除重力外还会读到旋转带来的两项附加加速度:
+//     a_meas = a_ref + α × r + ω × (ω × r)
+
+// 角加速度估计: 陀螺先一阶低通再差分, 避免 1kHz 差分把噪声放大 1/dt 倍
+// (0.004 rad/s 的陀螺噪声直接差分就是 4 rad/s², 乘 0.1 m 偏心等于 0.4 m/s² 假加速度)
+#define IMU_LEVER_GYRO_LPF_S        0.004f        // s, 供差分用的角速度低通时间常数
+#define IMU_LEVER_ALPHA_LPF_S       0.008f        // s, 角加速度低通时间常数
+// 角加速度限幅, rad/s². 200 rad/s² 相当于 0.17s 从静止拉到 ±2000dps 满量程
+#define IMU_LEVER_ALPHA_MAX_RAD_S2  200.0f
+// 补偿量限幅, m/s². 0.1 m 偏心 @ 6 rad/s 向心项 3.6 m/s², 留足余量;
+// 只为拦住异常数据把重力方向带飞, 正常工况远达不到
+#define IMU_LEVER_CORR_MAX_M_S2     30.0f
+// 距上一拍超过这么多帧, 上一拍样本已过期, 不能再拿它差分
+// (与野值抑制同口径: 差分的语义是"相邻两个 1kHz 采样点")
+#define IMU_LEVER_GAP_FRAMES        4.0f
+
+typedef struct
+{
+    float gyro_lpf[3];      // 供角加速度差分用的角速度低通值, rad/s
+    float alpha_lpf[3];     // 角加速度低通值, rad/s^2
+    float prev[3];          // 上一拍的陀螺低通值, rad/s
+    uint8_t started;        // 滤波器是否已初始化
+} imu_accel_lever_t;
+
+static inline void imu_accel_lever_reset(imu_accel_lever_t *st)
+{
+    st->gyro_lpf[0] = 0.0f;
+    st->gyro_lpf[1] = 0.0f;
+    st->gyro_lpf[2] = 0.0f;
+    st->alpha_lpf[0] = 0.0f;
+    st->alpha_lpf[1] = 0.0f;
+    st->alpha_lpf[2] = 0.0f;
+    st->prev[0] = 0.0f;
+    st->prev[1] = 0.0f;
+    st->prev[2] = 0.0f;
+    st->started = 0U;
+}
+
+/**
+ * @brief 对称限幅, 非有限值(除零/溢出产生的 NaN/Inf)一律归 0
+ */
+static inline float imu_lever_clamp(float value, float limit)
+{
+    if (!isfinite(value))
+    {
+        return 0.0f;
+    }
+
+    if (value > limit)
+    {
+        return limit;
+    }
+
+    if (value < -limit)
+    {
+        return -limit;
+    }
+
+    return value;
+}
+
+/**
+ * @brief 加速度计偏心(杆臂)补偿: 把加速度计读数折算到刚体旋转中心
+ * @param st      滤波器状态
+ * @param accel   加速度, m/s^2, 就地修正
+ * @param gyro    已扣零偏/刻度的角速度, rad/s
+ * @param lever_m 旋转中心 → IMU 的位置矢量, m, **BMI088 芯片自身坐标系**(与 gyro/accel 同系)
+ * @param frame_dt   单帧 DRDY 周期, s —— 角加速度差分的时间基
+ * @param elapsed_dt 距上一拍真实经过的时间, s —— 只用于长间隔判据
+ */
+static inline void imu_accel_lever_compensate(imu_accel_lever_t *st, float *accel,
+                                              const float *gyro, const float *lever_m,
+                                              float frame_dt, float elapsed_dt)
+{
+    if (!isfinite(frame_dt) || !(frame_dt > 0.0f))
+    {
+        imu_accel_lever_reset(st);
+        return;
+    }
+
+    for (uint8_t i = 0U; i < 3U; i++)
+    {
+        if (!isfinite(gyro[i]) || !isfinite(accel[i]) || !isfinite(lever_m[i]))
+        {
+            imu_accel_lever_reset(st);
+            return;
+        }
+    }
+
+    // 长间隔: 样本已不连续, 差分基准作废(与野值抑制的长间隔判据同口径)
+    const uint8_t gap = (isfinite(elapsed_dt) &&
+                         (elapsed_dt > (IMU_LEVER_GAP_FRAMES * frame_dt))) ? 1U : 0U;
+
+    if ((st->started == 0U) || (gap != 0U))
+    {
+        // 没有可用的上一拍(首拍/重连/长间隔): 角加速度按 0 处理, 本拍只做向心项
+        for (uint8_t i = 0U; i < 3U; i++)
+        {
+            st->gyro_lpf[i] = gyro[i];
+            st->alpha_lpf[i] = 0.0f;
+            st->prev[i] = gyro[i];
+        }
+        st->started = 1U;
+    }
+    else
+    {
+        const float gyro_coef = frame_dt / (IMU_LEVER_GYRO_LPF_S + frame_dt);
+        const float alpha_coef = frame_dt / (IMU_LEVER_ALPHA_LPF_S + frame_dt);
+
+        for (uint8_t i = 0U; i < 3U; i++)
+        {
+            st->gyro_lpf[i] += gyro_coef * (gyro[i] - st->gyro_lpf[i]);
+
+            const float alpha = imu_lever_clamp((st->gyro_lpf[i] - st->prev[i]) / frame_dt,
+                                                IMU_LEVER_ALPHA_MAX_RAD_S2);
+            st->prev[i] = st->gyro_lpf[i];
+            st->alpha_lpf[i] += alpha_coef * (alpha - st->alpha_lpf[i]);
+        }
+    }
+
+    // ω × (ω × r) = ω(ω·r) − r|ω|², 向心项是 ω 的二次量, 用瞬时值信噪比反而更好
+    const float w_dot_r = gyro[0] * lever_m[0] + gyro[1] * lever_m[1] + gyro[2] * lever_m[2];
+    const float w_sq = gyro[0] * gyro[0] + gyro[1] * gyro[1] + gyro[2] * gyro[2];
+
+    for (uint8_t i = 0U; i < 3U; i++)
+    {
+        const uint8_t j = (uint8_t)((i + 1U) % 3U);
+        const uint8_t k = (uint8_t)((i + 2U) % 3U);
+
+        // 切向项 (α × r)_i
+        const float tangential = st->alpha_lpf[j] * lever_m[k] - st->alpha_lpf[k] * lever_m[j];
+        // 向心项 (ω × (ω × r))_i
+        const float centripetal = gyro[i] * w_dot_r - lever_m[i] * w_sq;
+
+        accel[i] -= imu_lever_clamp(tangential + centripetal, IMU_LEVER_CORR_MAX_M_S2);
+    }
+}
+
+// ===== IMU_ACCEL_LEVER_END =====
+
 /*------------------------------ 温度控制 ------------------------------*/
 
 #define IMU_TEMP_REF_C                  50.0f          // 目标温度, ℃
@@ -346,13 +488,13 @@ static pwm_class heater_pwm;
 static float heater_duty_cmd = 0.0f;
 
 // 陀螺零漂补偿值(参数校准), rad/s
-static float gyro_bias[3] = {0.00312334462f, -0.00214757188f, 0.00308073405f};
+static float gyro_bias[3] = {0.00317657646f, -0.00223845663f, 0.00285839941f};
 
 // 陀螺刻度因子(标度因数修正), 无量纲, 1.0 = 不修正(参数校准)
-// 它与零偏同处原始域, 且误差 ∝ 总转角、正反转反号, 是"高速旋转后 yaw 漂移"的主因.
-// z 轴标定值来源与步骤见 imu_temp_ctrl.md §5.2.4(轮次 2: k*s=0.998706, s=0.9923 ⇒ 0.9936);
-// 换板或改动恒温点后需重新标定, 并按新刻度重测 gyro_bias[].
 static float gyro_scale[3] = {1.0f, 1.0f, 0.9936f};
+
+// IMU 安装位置相对刚体旋转中心的位置矢量(参数校准), m.
+static float imu_lever_arm_m[3] = {0.08f, 0.015f, 0.0f};
 
 // 陀螺积分的时间账本(定义见本文件 IMU_TIME_BASE 段)
 static imu_time_base_t gyro_time_base = {0.0f};
@@ -390,6 +532,9 @@ static uint8_t trim_seeded = 0U;
 
 // 陀螺野值抑制状态
 static imu_gyro_glitch_t gyro_glitch = {{0.0f, 0.0f, 0.0f}, 0U, {0U, 0U, 0U}};
+
+// 加速度计偏心补偿状态(角加速度估计)
+static imu_accel_lever_t accel_lever = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0U};
 
 // 积分时基: 上一次进入 INS_Task 时刻的 DWT 计数
 static uint32_t imu_elapsed_dwt_last = 0U;
@@ -572,6 +717,8 @@ static void imu_sensor_init(void)
             trim_seed_sum = 0.0f;
             trim_seed_span = 0.0f;
             imu_gyro_glitch_reset(&gyro_glitch);
+            // 离线前后的角速度不连续, 角加速度差分基准同样作废
+            imu_accel_lever_reset(&accel_lever);
             // 重连期间经历的时间不能算进账本, 否则会拿一帧新数据去"补"整段离线时间
             imu_elapsed_dwt_started = 0U;
             imu_frame.data_valid = 1U;
@@ -956,6 +1103,14 @@ static void INS_Task(float drdy_dt, float elapsed_dt)
 
             // 零偏/刻度换算(两者均为原始域标定量, 先扣零偏再乘刻度)
             imu_gyro_calibrate(gyro, gyro_bias, gyro_scale);
+
+            // 偏心补偿: 用已标定的角速度把加速度折算到刚体旋转中心(杆臂全 0 时直通)
+            // 差分时间基用单帧周期, 真实间隔只用于长间隔判据(不能用积分步长, 见函数注释)
+            imu_accel_lever_compensate(&accel_lever, accel, gyro, imu_lever_arm_m, frame_dt, elapsed_dt);
+            for (uint8_t i = 0U; i < 3U; i++)
+            {
+                imu_frame.accel[i] = accel[i];
+            }
 
             // 姿态失败只影响姿态输出: 温控只依赖 temperature, 不应被连带关闭
             if (imu_attitude_step(gyro, accel, integrate_dt) == 0U)
