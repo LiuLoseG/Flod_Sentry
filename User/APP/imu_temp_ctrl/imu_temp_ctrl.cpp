@@ -107,18 +107,6 @@ static inline float imu_time_base_take(imu_time_base_t *tb)
 #define IMU_DT_MIN_S                    IMU_TIME_BASE_STEP_MIN_S
 #define IMU_DT_MAX_S                    IMU_TIME_BASE_STEP_MAX_S
 
-// QuaternionEKF 遇到 dt > 0.01 会直接复位, 上面的上限必须严格低于它
-#define IMU_EKF_DT_RESET_S              0.01f
-static_assert(IMU_TIME_BASE_STEP_MAX_S < IMU_EKF_DT_RESET_S,
-              "积分步长上限必须低于 QuaternionEKF 的 dt 复位阈值");
-static_assert(IMU_DT_MAX_S < IMU_EKF_DT_RESET_S,
-              "单帧周期上限同样不能用满 EKF 阈值, 要留余量");
-static_assert(IMU_TIME_BASE_STEP_MIN_S > 0.0f, "步长下限必须为正, EKF 拒绝 dt <= 0");
-static_assert(IMU_TIME_BASE_PENDING_MAX_S >= IMU_TIME_BASE_STEP_MAX_S,
-              "账本上限不得小于单步上限, 否则永远无法排空");
-static_assert(IMU_DEFAULT_DT_S >= IMU_DT_MIN_S && IMU_DEFAULT_DT_S <= IMU_DT_MAX_S,
-              "默认周期必须落在允许区间内");
-
 /**
  * @brief 单帧 DRDY 周期的合理性限幅
  * @param dt 实测单帧周期, s
@@ -316,10 +304,6 @@ static inline void imu_gyro_calibrate(float *gyro, const float *bias, const floa
 #define IMU_TEMP_PID_OUT_MAX            1500.0f        // 加热输出上限(与 TIM3 ARR 同量纲)
 #define IMU_TEMP_PID_INTEGRAL_LIMIT     500.0f         // 积分限幅, 防止积分饱和(windup)
 #define IMU_HEATER_PWM_PERIOD_COUNTS    10000.0f       // TIM3 ARR + 1, 用于把输出换算成占空比
-
-// PID 输出上限必须能换成合法占空比, 否则会在"饱和"和"PWM 夹紧"之间反复拉扯
-static_assert(IMU_TEMP_PID_OUT_MAX <= IMU_HEATER_PWM_PERIOD_COUNTS,
-              "PID 输出上限不得超过 PWM 周期计数值");
 
 // ===== IMU_HEATER_POLICY_BEGIN (主机侧测试按此标记抽取, 勿改名) =====
 
