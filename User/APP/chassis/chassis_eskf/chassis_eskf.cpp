@@ -308,7 +308,7 @@ void chassis_eskf_init(chassis_eskf_t *f)
     f->gravity = 9.80665f;
     f->sigma_acc = 1.0f;
     f->sigma_bias_acc = 0.35f;
-    f->sigma_bias_gyr = 0.06f;
+    f->sigma_bias_gyr = 0.035f;
     f->wheel_v_meas_std = 0.005f;
     f->wheel_w_meas_std = 0.02f;
     f->slip_gain = 500.0f;
@@ -317,7 +317,7 @@ void chassis_eskf_init(chassis_eskf_t *f)
     // f->static_gyro_th = 0.02f;
     // f->static_wheel_v_th = 0.02f;
     // f->static_wheel_w_th = 0.03f;
-    f->static_gyro_th = 0.08f;
+    f->static_gyro_th = 0.02f;
     f->static_wheel_v_th = 0.02f;
     f->static_wheel_w_th = 0.03f;
     chassis_eskf_reset(f);

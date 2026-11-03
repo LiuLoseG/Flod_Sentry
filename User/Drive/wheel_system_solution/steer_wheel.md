@@ -309,7 +309,7 @@ mixed_calculate_callback()  →  inverse_calculate_callback(); core();       // 
 - **必须先 `update_now_state()`**：出力幅值依赖实测 `now_angle`，缺反馈时舵向角停在上电值，四轮会朝错误方向出力。
 - **力矩前馈必须排在逆解之后**：`inverse_calculate_callback()` / `speed_calculate_callback()` 入口会整体清零 `status.wheel_torque`（速控不做力矩前馈，清零是为了不让上一拍力矩残留），顺序颠倒会让前馈静默失效。这也是 `mixed_calculate_callback()` 不能调 `speed_calculate_callback()` 的原因：后者会把 `target_accel` 关断掉，前馈就永远算不出力。
 - 力矩上限 `max_wheel_torque` 与死区 `force_deadband` 直接作为本类成员（无结构体），由 `init()` 整份校验后两项一次写齐（质量/惯量为编译期常量，不进 init）；模块**不做加速度限幅**（`ax/ay/aw` 由上层裁剪）；死区以内的小力按 0 输出，且**不出力时舵向锁定当前角**（不做无意义摆动）。
-- **无隐式超时**：力控与速控同构，不另配超时门限。使能边界就是**目标加速度是否为零**：`set_robot_accel_x/y/w()` 写入，`speed_calculate_callback()` 入口整体清零。切模式 / 停车时切回速控流水线即可，这是显式契约——比靠 `control_period` 软件累加的隐式超时更可靠（调用周期一变门限就失真），也不会把"上层忘了关"掩盖成"到点自动归零"。
+- **无隐式超时**：力控与速控同构，不另配超时门限。使能边界就是**目标加速度是否为零**：`update_robot_accel({ax, ay, aw})` 写入，`speed_calculate_callback()` 入口整体清零。切模式 / 停车时切回速控流水线即可，这是显式契约——比靠 `control_period` 软件累加的隐式超时更可靠（调用周期一变门限就失真），也不会把"上层忘了关"掩盖成"到点自动归零"。
 - **无饱和标志位**：力矩输出已限幅在 ±`max_wheel_torque` 内，上层拿 `get_wheel_torque(i)` 与该上限一比即知是否触顶，不另存一份可能与实际值不同步的标志。
 - **三个优化开关是速控与力控共用的**：`set_cosine_optimize_enable(false)` 让两条路径同时"不按 `cos³e` 削减出力"；`set_nearest_optimize_enable(false)` 让两条路径都"只转解算/力方向本体、`dir` 恒 +1"；`set_target_step_limit_enable(false)` 让两条路径的舵向目标都直接跟随。同一个开关不会只关掉一边——否则同一条指令在两套流水线下的舵向行为会不一致。
 - **自检**：只给 `fw > 0`（`fx = fy = 0`）时应四轮切向出力、原地 CCW 转；只给 `fx > 0` 时应四轮同向指向前方。同时给 `vx` 与 `fx` 时混控的舵向必须跟**速度方向**（不是力的方向），力矩才是速度方向上的加/减速。大角度换向时观察 `get_cosine_optimize(i)`：应先接近 0 再随舵向对齐回升到 1。
@@ -584,7 +584,7 @@ wheel.speed_odometry_callback();     // 必须在 forward_calculate_callback() �
 | 输出 | `get_position_x/y/yaw()` / `get_speed_position_x/y/yaw()` | 两套里程计位姿 |
 | 复位 | `reset_position()` / `set_position()` / `reset_speed_position()` / `set_speed_position()` | 同上 |
 | 力控·读取 | 无（无读回接口） | 配置量由上层自己掌握（质量/惯量是常量）；要看本拍是否出力用 `get_wheel_torque(i)` |
-| 力控·输入 | `set_robot_accel_x/y/w(v)` | 目标加速度逐轴写入 (m/s² / m/s² / rad/s²)；单轴非有限值只跳过该轴。**零加速度 = 不出力**，无另设使能位 |
+| 力控·输入 | `update_robot_accel({ax, ay, aw})` | 目标加速度整份写入 (m/s² / m/s² / rad/s²)；单轴非有限值只跳过该轴。**零加速度 = 不出力**，无另设使能位 |
 | 力控·解算 | `force_calculate_callback()` | **纯力控**：加速度 → 舵向对齐目标 + 轮端力矩（`optimize_speed` 置 0） |
 | 力控·解算 | `mixed_calculate_callback()` | 力速混控：速度逆解给出舵向/轮速目标，再按当前实际舵向叠加加速度前馈力矩（须排在逆解之后，逆解入口清力矩）。**力矩符号按力投影定**，减速时与轮速方向相反 |
 | 力控·输出 | `get_wheel_torque(i)` | 轮端力矩 N·m（速控路径恒 0）；是否被 `max_wheel_torque` 截断，拿它与该上限比就知道，不另设标志位 |

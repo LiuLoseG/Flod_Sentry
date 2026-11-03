@@ -85,6 +85,8 @@ typedef struct
     // steer_wheel_class steer_wheel;
     omni_wheel_class omni_wheel;
 
+    wheel_robot_accel_t target_accel; // 目标加速度, m/s^2 / rad/s^2 (整份写入; 零 = 不出力, 速控流水线入口会整体清零)
+
     // 目标底盘速度(设定的目标量)，单位m/s
     wheel_robot_speed_t target_robot_speed; 
     // 当前底盘速度(运动学正解算)，单位m/s
@@ -108,6 +110,8 @@ typedef struct
     
     // 轮向电机速度环PID
     pid_class pid_wheel_omega[4];
+
+    pid_class pid_chassis_accel[3]; // 底盘加速度环PID对象数组
 
 /*------------------------------------电机目标和状态观测量---------------------------------------------*/
 

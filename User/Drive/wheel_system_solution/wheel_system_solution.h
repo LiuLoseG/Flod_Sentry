@@ -3,7 +3,7 @@
  * @author Robin Liu (19038200162@163.com)
  * @brief 
  * @date 2026-10-30
- * @version 1.47
+ * @version 1.50
  * @copyright HNAU-Robot (c) 2026
  * @note 正方向定义: 机器人坐标系 +X 向前, +Y 向左, +Z 向上; 角速度绕 Z 轴 CCW 为正
  */
@@ -31,7 +31,7 @@ typedef struct
 
 /**
  * @brief 机器人加速度 (机体系): 力控与力速混控的目标加速度, ax/ay: m/s^2, aw: rad/s^2
- * @note 由 set_robot_accel_x/y/w() 逐轴写入, 模块内按
+ * @note 由 update_robot_accel() 整体写入, 模块内按
  *        F = m·a、M = J·α 换算成等效力/力矩后再分配, 因此质量/惯量是各轮系类的
  */
 typedef struct
@@ -122,10 +122,10 @@ public:
               const float &__wheel_encoder_direction = 1.0f,
               const float &__control_period = 0.002f,
               // 力控死区和最大力矩限制
-              const float &__max_wheel_torque = 4.9f,
+              const float &__max_wheel_torque = 2.5f,
               const float &__force_deadband = 0.1f);
 
-    // 获取单轮角速度
+    // 逆解输出: 单轮轮端目标角速度, rad/s (电机域, 反馈量请自行留存)
     inline float get_wheel_speed(const uint8_t &__index) const;
 
     // 运动学正解(vx/vy/vw: m/s, rad/s)
@@ -148,10 +148,6 @@ public:
 
     // 轮向电机方向: +1 
     inline void set_wheel_encoder_direction(const float &__direction);
-    // 目标加速度, m/s^2 / rad/s^2
-    inline void set_robot_accel_x(const float &__accel_x);
-    inline void set_robot_accel_y(const float &__accel_y);
-    inline void set_robot_accel_w(const float &__accel_w);
     // 控制周期(里程计回调调用间隔), s; 仅速度里程计积分使用
     inline void set_control_period(const float &__control_period);
     // 单轮角速度(正解输入)
@@ -159,6 +155,9 @@ public:
 
     // 更新底盘目标速度
     inline void update_robot_state(const wheel_robot_speed_t &__target_speed);
+
+    // 目标加速度, m/s^2 / rad/s^2 (单轴非有限值只跳过该轴)
+    inline void update_robot_accel(const wheel_robot_accel_t &__target_accel);
 
     // 更新四轮当前测量状态
     inline void update_now_state(const wheel_state_t &__now_state, const float &__imu_yaw_rad = NAN);
@@ -254,8 +253,10 @@ protected:
     float odom_residual_dyaw = 0.0f;
     // 读变量
 
-    // angle 为里程计用轮向多圈转角, speed 为正/逆解共用
+    // 反馈量 (电机域): angle 为里程计用轮向多圈转角, speed 为实测轮速
     wheel_state_t status = {};
+    // 逆解输出: 四轮轮端目标角速度, rad/s (电机域, 可直接下发速度环)
+    float target_wheel_speed[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     // 四轮轮端目标力矩
     float wheel_torque[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     // 正运动学结果 (机器人速度, vx/vy: m/s, vw: rad/s)
@@ -284,7 +285,7 @@ public:
               const float &__max_wheel_torque = 4.9f,
               const float &__force_deadband = 0.1f);
 
-    // 获取单轮角速度
+    // 逆解输出: 单轮轮端目标角速度, rad/s (电机域, 反馈量请自行留存)
     inline float get_wheel_speed(const uint8_t &__index) const;
 
     // 运动学正解(vx/vy/vw: m/s, rad/s)
@@ -307,10 +308,6 @@ public:
 
     // 轮向电机方向 +1 
     inline void set_wheel_encoder_direction(const float &__direction);
-    // 目标加速度, m/s^2 / rad/s^2 (零 = 不出力; 速控流水线入口会整体清零)
-    inline void set_robot_accel_x(const float &__accel_x);
-    inline void set_robot_accel_y(const float &__accel_y);
-    inline void set_robot_accel_w(const float &__accel_w);
     // 控制周期(里程计回调调用间隔), s; 仅速度里程计积分使用
     inline void set_control_period(const float &__control_period);
     // 单轮角速度(正解输入)
@@ -318,6 +315,9 @@ public:
 
     // 更新底盘目标速度
     inline void update_robot_state(const wheel_robot_speed_t &__target_speed);
+
+    // 目标加速度, m/s^2 / rad/s^2 (单轴非有限值只跳过该轴; 零 = 不出力, 速控流水线入口会整体清零)
+    inline void update_robot_accel(const wheel_robot_accel_t &__target_accel);
 
     // 四轮当前测量状态
     inline void update_now_state(const wheel_state_t &__now_state, const float &__imu_yaw_rad = NAN);
@@ -414,8 +414,10 @@ protected:
     float odom_residual_dy = 0.0f;
     float odom_residual_dyaw = 0.0f;
 
-    // 运动学: angle 为里程计用轮向多圈转角, speed 为正/逆解共用
+    // 运动学: angle 为里程计用轮向多圈转角, speed 为实测轮速 (反馈量, 只由 update_now_state / set_wheel_speed 写)
     wheel_state_t status = {};
+    // 运动学: 逆解输出的四轮轮端目标角速度, rad/s (电机域); 与 status.speed 分离, 正解只读反馈
+    float target_wheel_speed[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     // 力控: 四轮轮端目标力矩, N·m ([0]=FL [1]=RL [2]=RR [3]=FR)
     float wheel_torque[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     // 正运动学结果 (机器人速度, vx/vy: m/s, vw: rad/s)
@@ -486,10 +488,7 @@ public:
 
     // 舵向目标单周期最大变化量, rad
     inline void set_target_max_step(const float &__target_max_step);
-    // 目标加速度, m/s^2 / rad/s^2 
-    inline void set_robot_accel_x(const float &__accel_x);
-    inline void set_robot_accel_y(const float &__accel_y);
-    inline void set_robot_accel_w(const float &__accel_w);
+
     // 轮向电机最大角速度, rad/s
     inline void set_max_wheel_speed(const float &__max_wheel_speed);
     // 静止判定阈值, m/s 与 rad/s (三轴均低于此值视为零指令)
@@ -511,6 +510,10 @@ public:
 
     // 更新底盘目标速度和控制模式
     inline void update_robot_state(const wheel_robot_speed_t &__target_speed, const uint8_t &__control_mode);
+
+    // 目标加速度, m/s^2 / rad/s^2 (单轴非有限值只跳过该轴)
+    inline void update_robot_accel(const wheel_robot_accel_t &__target_accel);
+
     // 各轮状态更新
     inline void update_now_state(const steer_state_t &__now_steer_state, const wheel_state_t &__now_wheel_state, const float &__imu_yaw_rad = NAN);
 
@@ -661,35 +664,23 @@ inline float omni_wheel_class::get_wheel_torque(const uint8_t &__index) const
     return (wheel_torque[__index]);
 }
 
-inline void omni_wheel_class::set_robot_accel_x(const float &__accel_x)
+inline void omni_wheel_class::update_robot_accel(const wheel_robot_accel_t &__target_accel)
 {
-    // 单轴校验: 非法值跳过该轴, 不影响其他两轴
-    if (!isfinite(__accel_x))
+    // 逐轴校验: 非法值只跳过该轴, 不影响其余两轴
+    if (isfinite(__target_accel.ax))
     {
-        return;
+        target_accel.ax = __target_accel.ax;
     }
 
-    target_accel.ax = __accel_x;
-}
-
-inline void omni_wheel_class::set_robot_accel_y(const float &__accel_y)
-{
-    if (!isfinite(__accel_y))
+    if (isfinite(__target_accel.ay))
     {
-        return;
+        target_accel.ay = __target_accel.ay;
     }
 
-    target_accel.ay = __accel_y;
-}
-
-inline void omni_wheel_class::set_robot_accel_w(const float &__accel_w)
-{
-    if (!isfinite(__accel_w))
+    if (isfinite(__target_accel.aw))
     {
-        return;
+        target_accel.aw = __target_accel.aw;
     }
-
-    target_accel.aw = __accel_w;
 }
 
 inline void omni_wheel_class::set_wheel_encoder_direction(const float &__direction)
@@ -766,7 +757,7 @@ inline float omni_wheel_class::get_wheel_speed(const uint8_t &__index) const
     {
         return 0.0f;
     }
-    return (status.speed[__index]);
+    return (target_wheel_speed[__index]);
 }
 
 inline void omni_wheel_class::set_wheel_speed(const uint8_t &__index, const float &__speed)
@@ -834,35 +825,23 @@ inline float mecanum_wheel_class::get_wheel_torque(const uint8_t &__index) const
     return (wheel_torque[__index]);
 }
 
-inline void mecanum_wheel_class::set_robot_accel_x(const float &__accel_x)
+inline void mecanum_wheel_class::update_robot_accel(const wheel_robot_accel_t &__target_accel)
 {
-    // 单轴校验: 非法值跳过该轴, 不影响其他两轴
-    if (!isfinite(__accel_x))
+    // 逐轴校验: 非法值只跳过该轴, 不影响其余两轴
+    if (isfinite(__target_accel.ax))
     {
-        return;
+        target_accel.ax = __target_accel.ax;
     }
 
-    target_accel.ax = __accel_x;
-}
-
-inline void mecanum_wheel_class::set_robot_accel_y(const float &__accel_y)
-{
-    if (!isfinite(__accel_y))
+    if (isfinite(__target_accel.ay))
     {
-        return;
+        target_accel.ay = __target_accel.ay;
     }
 
-    target_accel.ay = __accel_y;
-}
-
-inline void mecanum_wheel_class::set_robot_accel_w(const float &__accel_w)
-{
-    if (!isfinite(__accel_w))
+    if (isfinite(__target_accel.aw))
     {
-        return;
+        target_accel.aw = __target_accel.aw;
     }
-
-    target_accel.aw = __accel_w;
 }
 
 inline void mecanum_wheel_class::set_wheel_encoder_direction(const float &__direction)
@@ -939,7 +918,7 @@ inline float mecanum_wheel_class::get_wheel_speed(const uint8_t &__index) const
     {
         return 0.0f;
     }
-    return (status.speed[__index]);
+    return (target_wheel_speed[__index]);
 }
 
 inline void mecanum_wheel_class::set_wheel_speed(const uint8_t &__index, const float &__speed)
@@ -1007,35 +986,23 @@ inline float steer_wheel_class::get_wheel_torque(const uint8_t &__index) const
     return (status.wheel_torque[__index]);
 }
 
-inline void steer_wheel_class::set_robot_accel_x(const float &__accel_x)
+inline void steer_wheel_class::update_robot_accel(const wheel_robot_accel_t &__target_accel)
 {
-    // 单轴校验: 非法值跳过该轴, 不影响其他两轴
-    if (!isfinite(__accel_x))
+    // 逐轴校验: 非法值只跳过该轴, 不影响其余两轴
+    if (isfinite(__target_accel.ax))
     {
-        return;
+        target_accel.ax = __target_accel.ax;
     }
 
-    target_accel.ax = __accel_x;
-}
-
-inline void steer_wheel_class::set_robot_accel_y(const float &__accel_y)
-{
-    if (!isfinite(__accel_y))
+    if (isfinite(__target_accel.ay))
     {
-        return;
+        target_accel.ay = __target_accel.ay;
     }
 
-    target_accel.ay = __accel_y;
-}
-
-inline void steer_wheel_class::set_robot_accel_w(const float &__accel_w)
-{
-    if (!isfinite(__accel_w))
+    if (isfinite(__target_accel.aw))
     {
-        return;
+        target_accel.aw = __target_accel.aw;
     }
-
-    target_accel.aw = __accel_w;
 }
 
 inline float steer_wheel_class::get_solution_angle(const uint8_t &__index) const

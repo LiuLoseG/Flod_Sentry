@@ -138,6 +138,10 @@ void chassis_init(void)
         chassis.pid_wheel_omega[i].init(0.82f, 0.0f, 0.0f, 0.0f, 0.5f, 2.5f, 0.002f, 0.08f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机速度环PID初始化
     }
 
+    chassis.pid_chassis_accel[0].init(2.8f, 0.0f, 0.0f, 0.0f, 0.5f, 4.5f, 0.002f, 0.08f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 底盘加速度环PID初始化
+    chassis.pid_chassis_accel[1].init(2.8f, 0.0f, 0.0f, 0.0f, 0.5f, 4.5f, 0.002f, 0.08f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 底盘加速度环PID初始化
+    chassis.pid_chassis_accel[2].init(6.2f, 0.0f, 0.0f, 0.0f, 0.5f, 10.5f, 0.002f, 0.08f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 底盘加速度环PID初始化
+
     // 6. 设置底盘锁定模式
     chassis.now_method = Chassis_Lock_Method; 
     chassis.now_mode = Chassis_Zero_Force_Mode; // 默认底盘无力模式
@@ -310,7 +314,12 @@ void chassis_update_measure(void)
     // chassis.steer_wheel.update_now_state(chassis.now_steer_state, chassis.now_wheel_state);
 
     // 更新滤波后的轮电机速度值（一阶IIR低通，30Hz截止）
-    
+
+    // 反馈必须在正解之前写入: 正解只读 status.speed (实测轮速), 逆解不再写它
+    // imu_data 为 volatile 指针, 需先取值再传入(volatile 左值无法绑定 const float&)
+    const float imu_yaw = chassis.imu_data->euler_angle.yaw;
+    chassis.omni_wheel.update_now_state(chassis.now_wheel_state, imu_yaw);
+
     // 使用底盘正运动学解算，计算底盘的实际速度
     // chassis.steer_wheel.forward_calculate_callback();
     chassis.omni_wheel.forward_calculate_callback();
@@ -459,15 +468,32 @@ void chassis_overall_mobile_control(void)
  */
 void chassis_motor_calculate(void)
 {
+
+    chassis.pid_chassis_accel[0].set_target(chassis.slope_output_speed.vx); // 设置底盘加速度环的目标值为底盘的期望速度
+    chassis.pid_chassis_accel[0].set_now(chassis.now_robot_speed.vx); // 设置底盘加速度环的当前值为底盘的实际速度
+    chassis.pid_chassis_accel[0].pid_calculate_callback(); // 计算底盘加速度环的输出值
+
+    chassis.pid_chassis_accel[1].set_target(chassis.slope_output_speed.vy); // 设置底盘加速度环的目标值为底盘的期望速度
+    chassis.pid_chassis_accel[1].set_now(chassis.now_robot_speed.vy); // 设置底盘加速度环的当前值为底盘的实际速度
+    chassis.pid_chassis_accel[1].pid_calculate_callback(); // 计算底盘加速度环的输出值
+
+    chassis.pid_chassis_accel[2].set_target(chassis.slope_output_speed.vw); // 设置底盘加速度环的目标值为底盘的期望角速度
+    chassis.pid_chassis_accel[2].set_now(chassis.now_robot_speed.vw); // 设置底盘加速度环的当前值为底盘的实际角速度
+    chassis.pid_chassis_accel[2].pid_calculate_callback(); // 计算底盘加速度环的输出值
+
+    chassis.target_accel.ax = chassis.pid_chassis_accel[0].get_out(); // 获取底盘加速度环的输出值作为底盘的期望加速度
+    chassis.target_accel.ay = chassis.pid_chassis_accel[1].get_out(); // 获取底盘加速度环的输出值作为底盘的期望加速度
+    chassis.target_accel.aw = chassis.pid_chassis_accel[2].get_out(); // 获取底盘加速度环的输出值作为底盘的期望加速度
+
+    chassis.omni_wheel.update_robot_accel(chassis.target_accel);
+
     // 更新底盘整体运动学参数
     chassis.omni_wheel.update_robot_state(chassis.slope_output_speed);
-    // imu_data 为 volatile 指针, 需先取值再传入(volatile 左值无法绑定 const float&)
-    const float imu_yaw = chassis.imu_data->euler_angle.yaw;
-    chassis.omni_wheel.update_now_state(chassis.now_wheel_state, imu_yaw);
     // chassis.steer_wheel.update_robot_state(chassis.slope_output_speed, chassis.now_mode);
     // 控制解算: 当前为速控, 调速控流水线 (力控/混控改调 force_calculate_callback / mixed_calculate_callback)
     // chassis.steer_wheel.speed_calculate_callback();
     chassis.omni_wheel.speed_calculate_callback();
+    // chassis.omni_wheel.mixed_calculate_callback();
     // 里程计解算
     // chassis.steer_wheel.encoder_odometry_callback();
     chassis.omni_wheel.imu_odometry_callback();
@@ -530,6 +556,7 @@ void chassis_motor_calculate(void)
         // chassis.steer_motor[i].set_control_torque(chassis.pid_steer_omega[i].get_out()); // 设置电机目标转矩值
         // chassis.steer_motor[i].calculate_callback();
 
+        // chassis.wheel_motor[i].set_target_torque(chassis.omni_wheel.get_wheel_torque(i));
         chassis.wheel_motor[i].set_target_torque(chassis.pid_wheel_omega[i].get_out()); // 设置轮向电机目标转矩值
         chassis.wheel_motor[i].external_calculate_callback();
     }

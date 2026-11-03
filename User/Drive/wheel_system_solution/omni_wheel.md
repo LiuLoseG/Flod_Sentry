@@ -118,15 +118,13 @@ f₃ (FR) =  (√2/4)·( fx + fy) + fw/(4d)
 // 力控两项在 init() 里一次写齐 (质量/惯量为编译期常量, 不参与 init; 完整签名见 §6)
 omni.init(Wheel_Force_Control_Method, /*enc_dir*/ -1.0f, 0.001f,
           /*max_torque*/ 4.9f, /*force_deadband*/ 0.1f);
-omni.set_robot_accel_x(ax);                     // 目标加速度, 三轴分别写
-omni.set_robot_accel_y(ay);
-omni.set_robot_accel_w(aw);
+omni.update_robot_accel({ax, ay, aw});          // 目标加速度, 整份写入
 omni.force_calculate_callback();                // 加速度 → 轮端力矩
 for (i) drive_motor[i].set_target_torque(omni.get_wheel_torque(i));
 ```
 - **不做加速度限幅**：`ax/ay/aw` 由上层按整车能力裁剪，模块内直接乘质量/惯量成等效力，最后过**单轮力矩上限**（`max_wheel_torque`）；后者是逐轮截断——不像舵轮限速那样等比缩放，因为力控只关心"不出力矩上限"，形态退化的风险小于过流。
 - `force_deadband` 以下的小力按 0 输出，抑制静止时的力矩抖动；全向轮无反拖力矩需求时保持默认 0.1 N。
-- **无隐式超时**：力控与速控同构，不喂参数就不该解算，不另配超时门限。使能边界就是**目标加速度是否为零**：`set_robot_accel_x/y/w()` 写入，`speed_calculate_callback()` 入口整体清零；不另存一份使能位（两份状态只会同时写、不会分开读，存了反而多一条可能不同步的路径）。
+- **无隐式超时**：力控与速控同构，不喂参数就不该解算，不另配超时门限。使能边界就是**目标加速度是否为零**：`update_robot_accel({ax, ay, aw})` 写入，`speed_calculate_callback()` 入口整体清零；不另存一份使能位（两份状态只会同时写、不会分开读，存了反而多一条可能不同步的路径）。
 - **自检**：把 `ax = fx/m`、`aw = fw/J` 反代回本式，应还原逆解给出的 `(fx, fy, fw)`；`fx` 单项工况下四轮力应与 §3.2 的轮速符号族一致。
 
 ---
@@ -141,7 +139,7 @@ vy =  (√2/4)·R·( w₀ − w₁ − w₂ + w₃)
 vw =  (R / (4·d))·( w₀ + w₁ + w₂ + w₃)
 ```
 
-其中 `wᵢ` 即 `status.speed[i]`。
+其中 `wᵢ` 即 `status.speed[i]`。`status.speed` 只承载**实测反馈**（`update_now_state()` / `set_wheel_speed()` 写入），逆解输出写的是另一份 `target_wheel_speed[]`，所以正解与逆解的调用顺序互不影响。
 
 **逆/正解互逆性自检**：把 §3.2 的 `wᵢ` 代入上式应精确还原 `vx/vy/vw`。这是修改任何一处符号后必须跑的验证（本模块的逆解、正解、里程计三处符号是配套的）：
 
@@ -204,15 +202,15 @@ wheel.speed_odometry_callback();     // 必须在 forward_calculate_callback() �
 | 配置 | `set_wheel_encoder_direction(±1)` | 轮向电机极性，非 ±1 / 非有限被拒绝；`init()` 第二参已可指定，此接口用于运行期改 |
 | 配置 | `set_control_period(T)` | `T ≤ 0` 或非有限值被拒绝 |
 | 输入 | `update_robot_state({vx,vy,vw})` | 逆解目标速度 |
-| 输入 | `update_now_state(wheel_state_t, imu_yaw = 0.0f)` | 唯一反馈入口：取 `speed[]` 写 `status.speed`（逐通道校验），取 `angle[]` 提交里程计快照（整帧校验）+ IMU 航向；**须在正解之前写入**，逆解会覆盖 `status.speed`；不传 `imu_yaw` 时按 0 处理，此时应走 `encoder_odometry_callback()` |
-| 输入 | `set_wheel_speed(i, w)` | 单轮写入 `status.speed[i]`，`i ≥ 4` 被丢弃 |
+| 输入 | `update_now_state(wheel_state_t, imu_yaw = 0.0f)` | 唯一反馈入口：取 `speed[]` 写 `status.speed`（逐通道校验），取 `angle[]` 提交里程计快照（整帧校验）+ IMU 航向；**须在正解之前写入**（正解只读反馈；逆解写的是 `target_wheel_speed`，不会覆盖它）；不传 `imu_yaw` 时按 0 处理，此时应走 `encoder_odometry_callback()` |
+| 输入 | `set_wheel_speed(i, w)` | 单轮写入反馈 `status.speed[i]`，`i ≥ 4` 被丢弃 |
 | 解算 | `speed_calculate_callback()` | **速控入口**：关断力控输出 + 逆解，输出四轮目标角速度 |
 | 解算 | `inverse_calculate_callback()`（protected） | 纯逆运动学（不碰力控状态），仅供 `speed_`/`mixed_calculate_callback()` 内部调用 |
 | 解算 | `forward_calculate_callback()` | 输出 `robot_speed` |
 | 解算 | `encoder_odometry_callback()` | 编码器里程计（dyaw 自持） |
 | 解算 | `imu_odometry_callback()` | 编码器里程计（IMU 航向） |
 | 解算 | `speed_odometry_callback()` | 速度里程计 |
-| 输出 | `get_wheel_speed(i)` | 单轮角速度，`i ≥ 4` 返回 0 |
+| 输出 | `get_wheel_speed(i)` | 逆解输出 `target_wheel_speed[i]`，单轮目标角速度，`i ≥ 4` 返回 0 |
 | 输出 | `get_robot_speed_vx/vy/vw()` | 正解速度 |
 | 输出 | `get_position_x/y/yaw()` | 编码器里程计位姿 |
 | 输出 | `get_speed_position_x/y/yaw()` | 速度里程计位姿 |
@@ -220,7 +218,7 @@ wheel.speed_odometry_callback();     // 必须在 forward_calculate_callback() �
 | 复位 | `reset_speed_position()` / `set_speed_position()` | 速度里程计：清零 / 重定位 |
 | 力控·配置 | `init()` 的 `max_torque` / `force_deadband` 两形参 + 常量 `Chassis_Mass` / `Chassis_Inertia` | 单轮力矩上限与力死区**整份校验**，任一项非法则两项全不改；质量/惯量是编译期常量，改配重就改常量重编，无运行期改参接口 |
 | 力控·读取 | 无（无读回接口） | 配置量由上层自己掌握（质量/惯量是常量）；要看本拍是否出力用 `get_wheel_torque(i)` |
-| 力控·输入 | `set_robot_accel_x/y/w(v)` | 目标加速度逐轴写入 (m/s² / m/s² / rad/s²)；单轴非有限值只跳过该轴。**零加速度 = 不出力**，无另设使能位 |
+| 力控·输入 | `update_robot_accel({ax, ay, aw})` | 目标加速度整份写入 (m/s² / m/s² / rad/s²)；单轴非有限值只跳过该轴。**零加速度 = 不出力**，无另设使能位 |
 | 力控·解算 | `force_calculate_callback()` | 纯力控：加速度 → 轮端力矩（速度目标不参与） |
 | 力控·解算 | `mixed_calculate_callback()` | 力速混控：速度逆解 → `get_wheel_speed(i)` + 加速度 → 力矩前馈 |
 
@@ -277,7 +275,7 @@ void chassis_task(void)                     // 1 kHz
 | 上层需求 | 用哪个接口 | 说明 |
 |----------|------------|------|
 | 轮向速度环目标 | `get_wheel_speed(i)` | 逆解输出，rad/s，已是电机侧符号 |
-| 底盘速度反馈 | `get_robot_speed_vx/vy/vw()` | 要求本周期已调 `forward` 且未调 `inverse`（顺序见总览 §5.2 / §5.3） |
+| 底盘速度反馈 | `get_robot_speed_vx/vy/vw()` | 要求本周期已调 `forward`，且反馈已由 `update_now_state()` 写入（逆解顺序无关，两者已分缓冲） |
 | 定位 | `get_position_xxx` / `get_speed_position_xxx` | 两套独立，差值可评估打滑 |
 | 复位 / 重定位 | `reset_position` / `set_position` | 复位后下一帧才重建基准 |
 
@@ -309,6 +307,6 @@ void chassis_task(void)                     // 1 kHz
 | 直线走 1 m 里程计只有 0.95 m | `R` 偏小 | 按比例修正轮半径常量 |
 | 原地旋转航向差 5% | `d` 不准 | 用实测中心到轮心距离 |
 | 45° 方向速度偏大 / 偏小 | `√2/2` 假设不成立（轮子实际不是 45°） | 结构问题，需按实际方位角重推 |
-| 停转后位姿缓慢爬行 | 正解输入混入了目标轮速 | 检查是否先逆解后正解（总览 §5.3 约束 2） |
+| 停转后位姿缓慢爬行 | 正解输入混入了目标轮速（code 1.50 前的共享缓冲） | 已由 `status.speed` / `target_wheel_speed` 分缓冲结构性消除；若仍出现，检查是否把目标轮速经 `set_wheel_speed()` 写进了反馈通道 |
 
 通用现象（转向反、整车全反、慢速不动、位姿翻倍等）见 [总览 §8.2](./wheel_system_solution.md) 联调检查表。
