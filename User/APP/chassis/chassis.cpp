@@ -461,13 +461,16 @@ void chassis_motor_calculate(void)
 {
     // 更新底盘整体运动学参数
     chassis.omni_wheel.update_robot_state(chassis.slope_output_speed);
+    // imu_data 为 volatile 指针, 需先取值再传入(volatile 左值无法绑定 const float&)
+    const float imu_yaw = chassis.imu_data->euler_angle.yaw;
+    chassis.omni_wheel.update_now_state(chassis.now_wheel_state, imu_yaw);
     // chassis.steer_wheel.update_robot_state(chassis.slope_output_speed, chassis.now_mode);
     // 控制解算: 当前为速控, 调速控流水线 (力控/混控改调 force_calculate_callback / mixed_calculate_callback)
     // chassis.steer_wheel.speed_calculate_callback();
     chassis.omni_wheel.speed_calculate_callback();
     // 里程计解算
     // chassis.steer_wheel.encoder_odometry_callback();
-    chassis.omni_wheel.encoder_odometry_callback();
+    chassis.omni_wheel.imu_odometry_callback();
 
     // chassis.now_robot_speed.vx = chassis.steer_wheel.get_robot_speed_vx(); // 获取底盘实际速度
     // chassis.now_robot_speed.vy = chassis.steer_wheel.get_robot_speed_vy(); 

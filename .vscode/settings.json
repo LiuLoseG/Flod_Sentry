@@ -354,7 +354,7 @@
     "terminal.integrated.cursorStyle": "line",
     "terminal.integrated.cursorBlinking": true,
     "terminal.integrated.background": "#040610",
-    "emberprobe.sampleFrequencyHz": 10,
+    "emberprobe.sampleFrequencyHz": 100,
 
     // ========== Blockman ==========
     // Blockman 的标签解析(tagLexer)会对所有语言生效, 它把 C++ 中的 '<' (模板/比较)
