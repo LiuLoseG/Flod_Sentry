@@ -302,12 +302,13 @@ void omni_wheel_class::init(const wheel_control_method_e &__control_method,
         force_deadband = __force_deadband;
     }
 
-    // status 同时承载正/逆解轮速与里程计用多圈转角, 一并清零
+    // status 承载实测轮速与里程计用多圈转角, target_wheel_speed 是逆解输出, 一并清零
     status = {};
 
     for (uint8_t i = 0; i < 4; i++)
     {
         last_angle_rad[i] = 0.0f;
+        target_wheel_speed[i] = 0.0f;
     }
     target_speed = {0.0f, 0.0f, 0.0f};
     imu_yaw = 0.0f;
@@ -330,9 +331,10 @@ void omni_wheel_class::init(const wheel_control_method_e &__control_method,
 
 /**
  * @brief 全向轮逆运动学解算
- * @note  status.speed 是**电机域**轮速 (可直接下发 set_target_speed()): 先按几何约定
+ * @note  输出写 target_wheel_speed[] (电机域轮速, 可直接下发 set_target_speed()): 先按几何约定
  *        (驱动方向 t_i = (−sinφ_i, cosφ_i), 即轮心切向) 算出切向轮速, 再乘轮向方向系数转回电机域.
  *        公式本身不含硬件极性: 电机正方向与切向同向取 dir=+1, 反向取 dir=-1.
+ * @note  不写 status.speed (那是实测反馈), 因此本函数与 forward_calculate_callback() 的调用顺序无关.
  */
 void omni_wheel_class::inverse_calculate_callback()
 {
@@ -341,15 +343,16 @@ void omni_wheel_class::inverse_calculate_callback()
         return;
     }
 
-    status.speed[0] = wheel_encoder_direction * (SQRT_2_2 * (-target_speed.vx + target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // FL, φ=45°
-    status.speed[1] = wheel_encoder_direction * (SQRT_2_2 * (-target_speed.vx - target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // RL, φ=135°
-    status.speed[2] = wheel_encoder_direction * (SQRT_2_2 * ( target_speed.vx - target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // RR, φ=225°
-    status.speed[3] = wheel_encoder_direction * (SQRT_2_2 * ( target_speed.vx + target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // FR, φ=315°
+    target_wheel_speed[0] = wheel_encoder_direction * (SQRT_2_2 * (-target_speed.vx + target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // FL, φ=45°
+    target_wheel_speed[1] = wheel_encoder_direction * (SQRT_2_2 * (-target_speed.vx - target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // RL, φ=135°
+    target_wheel_speed[2] = wheel_encoder_direction * (SQRT_2_2 * ( target_speed.vx - target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // RR, φ=225°
+    target_wheel_speed[3] = wheel_encoder_direction * (SQRT_2_2 * ( target_speed.vx + target_speed.vy) + target_speed.vw * Wheel_Distance_To_Core) / Wheel_Radius; // FR, φ=315°
 }
 
 /**
  * @brief 全向轮正运动学解算
- * @note  输入是电机域轮速: 先乘方向系数还原成切向轮速 ws_i = dir·ω_i·R, 再按逆解的转置加权合成.
+ * @note  输入是 status.speed[] 的实测轮速 (电机域, 只由 update_now_state / set_wheel_speed 写):
+ *        先乘方向系数还原成切向轮速 ws_i = dir·ω_i·R, 再按逆解的转置加权合成.
  */
 void omni_wheel_class::forward_calculate_callback()
 {
@@ -573,12 +576,13 @@ void mecanum_wheel_class::init(const wheel_control_method_e &__control_method,
         force_deadband = __force_deadband;
     }
 
-    // status 同时承载正/逆解轮速与里程计用多圈转角, 一并清零
+    // status 承载实测轮速与里程计用多圈转角, target_wheel_speed 是逆解输出, 一并清零
     status = {};
 
     for (uint8_t i = 0; i < 4; i++)
     {
         last_angle_rad[i] = 0.0f;
+        target_wheel_speed[i] = 0.0f;
     }
     target_speed = {0.0f, 0.0f, 0.0f};
     imu_yaw = 0.0f;
@@ -601,7 +605,8 @@ void mecanum_wheel_class::init(const wheel_control_method_e &__control_method,
 
 /**
  * @brief 麦轮逆运动学解算
- * @note  status.speed 是**电机域**轮速 (可直接下发 set_target_speed()): 几何轮速再乘轮向方向系数.
+ * @note  输出写 target_wheel_speed[] (电机域轮速, 可直接下发 set_target_speed()): 几何轮速再乘轮向方向系数.
+ * @note  不写 status.speed (那是实测反馈), 因此本函数与 forward_calculate_callback() 的调用顺序无关.
  */
 void mecanum_wheel_class::inverse_calculate_callback()
 {
@@ -610,15 +615,16 @@ void mecanum_wheel_class::inverse_calculate_callback()
         return;
     }
 
-    status.speed[0] = wheel_encoder_direction * ( target_speed.vx - target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // FL
-    status.speed[1] = wheel_encoder_direction * ( target_speed.vx + target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // RL
-    status.speed[2] = wheel_encoder_direction * (-target_speed.vx + target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // RR
-    status.speed[3] = wheel_encoder_direction * (-target_speed.vx - target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // FR
+    target_wheel_speed[0] = wheel_encoder_direction * ( target_speed.vx - target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // FL
+    target_wheel_speed[1] = wheel_encoder_direction * ( target_speed.vx + target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // RL
+    target_wheel_speed[2] = wheel_encoder_direction * (-target_speed.vx + target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // RR
+    target_wheel_speed[3] = wheel_encoder_direction * (-target_speed.vx - target_speed.vy - target_speed.vw * Wheel_Sum_XY) / Wheel_Radius; // FR
 }
 
 /**
  * @brief 麦轮正运动学解算
- * @note  先把电机域轮速还原成几何轮速, 再参与合成.
+ * @note  输入是 status.speed[] 的实测轮速 (电机域, 只由 update_now_state / set_wheel_speed 写):
+ *        先把电机域轮速还原成几何轮速, 再参与合成.
  */
 void mecanum_wheel_class::forward_calculate_callback()
 {

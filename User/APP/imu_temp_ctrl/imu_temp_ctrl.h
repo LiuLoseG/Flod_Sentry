@@ -6,8 +6,8 @@
  *        2) 坐标系: 机体 X=前 Y=左 Z=上(右手系), yaw 绕 Z 逆时针为正, 角度自 +X 起算
  *        3) imu_frame 由 IMU 任务写、其余任务读, 单个 float 字段的读写是原子的(32 位对齐);
  *           需要多字段严格一致时应自行关中断拷贝
- * @date 2026-10-26
- * @version 0.7
+ * @date 2026-11-03
+ * @version 2.0
  * @copyright HNAU-Robot (c) 2026
  */
 #ifndef IMU_TEMP_CTRL_H
@@ -21,9 +21,9 @@ extern "C" {
 
 /**
  * @brief 上电陀螺零漂自标定开关
- *        1 = 加热到目标温度并稳定后采集 IMU_GYRO_CALIB_SAMPLES 帧求均值作为零漂(需上车验证后启用)
- *        0 = 直接使用 gyro_bias[] 中的实测补偿值(默认, 与旧版 IMU_CHECK_ENABLE = 0 行为一致)
- * @note  也可用 target_compile_definitions 覆盖, 便于分板/分车配置
+ *        1 = 恒温稳定后采样求均值作为零漂(需上车验证后启用)
+ *        0 = 直接使用 gyro_bias[] 中的实测补偿值(默认)
+ * @note  可用 target_compile_definitions 覆盖, 便于分板/分车配置
  */
 #ifndef IMU_GYRO_AUTO_CALIB_ENABLE
 #define IMU_GYRO_AUTO_CALIB_ENABLE 0
@@ -58,18 +58,18 @@ typedef struct
 {
     // 解算输出
     float gyro[3];              // 已扣除零漂的角速度, rad/s
-    float accel[3];             // 加速度, m/s^2
+    float accel[3];             // 加速度, m/s^2; 解算状态下已做偏心补偿(折算到旋转中心)
     float temperature;          // 当前温度, ℃
     euler_angle_t euler_angle;  // 欧拉角, rad
     float yaw_total;            // yaw 连续多圈角(不折叠到 ±pi), rad
-    float dt;                   // 实测采样周期, s
+    float dt;                   // 本拍姿态积分步长, s(累计排空后的实际积分时间)
 
     // 温控
     float ref_temperature;      // 目标温度, ℃
     float heater_out;           // 加热输出, 与 TIM3 ARR 同量纲(0 ~ ARR)
 
     // 状态
-    imu_status_e status;        // imu_status_e
+    imu_status_e status;        // 工作状态
     uint8_t data_valid;         // 1 = 本周期传感器数据有效
     uint32_t sample_count;      // 采样帧计数(温控分频基准)
 } imu_data_resolve_t;
