@@ -155,7 +155,7 @@ void chassis_init(void)
     }
 
     // 8. 初始化舵轮底盘的优化和控制参数
-    chassis.steer_wheel.init(-1.0f);
+    chassis.steer_wheel.init(Wheel_Speed_Control_Method, -1.0f);
 
     wave_generator_init(&motor_wave, WAVE_SINE, 0.1f, 2.0f, 0.0f);
     wave_generator_enable(&motor_wave);
@@ -422,8 +422,8 @@ void chassis_motor_calculate(void)
 {
     // 更新底盘整体运动学参数
     chassis.steer_wheel.update_robot_state(chassis.slope_output_speed, chassis.now_mode);
-    // 舵轮逆运动学解算
-    chassis.steer_wheel.inverse_calculate_callback();
+    // 控制解算: 当前为速控, 调速控流水线 (力控/混控改调 force_calculate_callback / mixed_calculate_callback)
+    chassis.steer_wheel.speed_calculate_callback();
     // 里程计解算
     chassis.steer_wheel.encoder_odometry_callback();
 

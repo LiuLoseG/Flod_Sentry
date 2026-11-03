@@ -131,7 +131,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
     # User/Drive/lcd_oled/st7789_73x219_lcd/st7789_73x219_lcd.cpp
 
-    User/Drive/wheel_system_solution/wheel_system_solution.cpp
+    # User/Drive/wheel_system_solution/wheel_system_solution.cpp
 
     # User/Drive/odometer/imu_odometer/imu_odometer.cpp
     # User/Drive/odometer/fusion_odometer/fusion_odometer.cpp
@@ -236,7 +236,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     User/Drive/sys_identificate/sys_sweep_freq
     User/Drive/sys_identificate/gimbal_identification
 
-    User/Drive/wheel_system_solution
+    # User/Drive/wheel_system_solution
 
     User/Drive/ws2812
 

@@ -27,6 +27,7 @@
 
 // #include "power.h"
 // #include "chassis_power.h"
+#include "Chassis_ESKF.h"
 #include "chassis_power_rls.h"
 #include "safe_daemon_process.h"
 
