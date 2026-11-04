@@ -488,13 +488,13 @@ static pwm_class heater_pwm;
 static float heater_duty_cmd = 0.0f;
 
 // 陀螺零漂补偿值(参数校准), rad/s
-static float gyro_bias[3] = {0.00317657646f, -0.00223845663f, 0.00285839941f};
+static float gyro_bias[3] = {0.0016286131f, -0.00465911673f, 0.00251661893f};
 
 // 陀螺刻度因子(标度因数修正), 无量纲, 1.0 = 不修正(参数校准)
 static float gyro_scale[3] = {1.0f, 1.0f, 0.9936f};
 
 // IMU 安装位置相对刚体旋转中心的位置矢量(参数校准), m.
-static float imu_lever_arm_m[3] = {0.08f, 0.015f, 0.0f};
+static float imu_lever_arm_m[3] = {0.00f, 0.00f, 0.0f};
 
 // 陀螺积分的时间账本(定义见本文件 IMU_TIME_BASE 段)
 static imu_time_base_t gyro_time_base = {0.0f};

@@ -2,8 +2,7 @@
 
 #include "dm_motor.h"
 #include "dji_motor_new.h"
-#include "lk_motor.h"
-#include "hi12_imu.h"
+#include "imu_temp_ctrl.h"
 #include "remote_center.h"
 
 #include "pid.h"
@@ -49,13 +48,10 @@ typedef enum
  */
 typedef struct
 {
-    float gimbal_yaw_angle;          // 云台偏航角度(来自于IMU)
     float small_yaw_angle;          // 小yaw云台偏航角度(来自于IMU)
-    float big_yaw_angle;            // 大yaw云台偏航角度(来自于IMU)
     float pitch_angle;              // 云台俯仰角度(来自于IMU)
 
     float small_yaw_omega;          // 小yaw云台偏航角速度(来自于IMU加速度)
-    float big_yaw_omega;            // 大yaw云台偏航角速度(来自于IMU加速度)
     float pitch_omega;              // 云台俯仰角速度(来自于IMU加速度)
 } gimbal_observate_control_t;
 
@@ -66,11 +62,9 @@ typedef struct
 typedef struct
 {
     float chassis_angular; // 底盘角速度补偿前馈量
-    float big_yaw_omega;   // 大yaw电机角速度前馈
     float small_yaw_omega; // 小yaw电机角速度前馈
     float pitch_omega;     // pitch电机角速度前馈
 
-    float big_yaw_torque;   // 大yaw电机力矩前馈
     float small_yaw_torque; // 小yaw电机力矩前馈
     float pitch_torque;     // pitch电机力矩前馈
 } gimbal_motor_feedforward_t;
@@ -103,7 +97,7 @@ typedef struct
 typedef struct
 {
     crsf_class *crsf; // 遥控器对象指针
-    volatile hi12_gyro *hi12_imu;                   // 陀螺仪对象指针 (volatile: 中断中更新)  
+    volatile imu_data_resolve_t *imu_data; // IMU解算结果对象指针
     gimbal_decision_source_t *source; // 云台控制用于决策的源数据
     robot_decision_class *decision; // 机器人决策对象指针
 
@@ -122,8 +116,6 @@ typedef struct
 
     // 前馈量相关
     float prev_target_small_yaw_angle;                   // 上一帧目标yaw角度, 用于计算角速度前馈
-    float prev_big_yaw_omega;                            // 上一帧大yaw角速度指令(经速率限制后), 平滑Follow/Scan切换阶跃
-    uint32_t big_yaw_omega_rl_cnt;                       // 大yaw角速度指令速率限制器的DWT计数缓存
     float prev_small_yaw_ff_omega;                       // 上一帧小yaw角速度前馈(经速率限制后), 用于平滑拐点
     float prev_pitch_ff_torque;                          // 上一帧pitch力矩前馈(经速率限制后), 用于平滑目标抖动
     float yaw_small_ff_dc_mean;                          // DC blocker 均值跟踪, 用于去除前馈目标角度的直流偏置
@@ -136,6 +128,7 @@ typedef struct
     gimbal_motor_feedforward_t feedforward_value;       // 云台电机前馈量
 
     float pitch_limit_angle;
+    float small_yaw_limit_angle;
 /*------------------------------------底盘角速度补偿前馈---------------------------------------------*/
     // 底盘角速度低通滤波器, 用于抑制底盘角速度的高频噪声对云台控制的影响
     low_pass_filter_class chassis_angular_lpf; 
@@ -148,8 +141,6 @@ typedef struct
     /* 旁路辨识器只读取反馈，不修改云台控制输出。 */
     // gimbal_identification_t identification_pitch;
     gimbal_identification_t identification_small_yaw;
-    // gimbal_identification_t identification_big_yaw;
-    // gimbal_identification_output_t identification_pitch_output;
     gimbal_identification_output_t identification_small_yaw_output;
     gimbal_identification_sample_t sample;
     float feedforward_small_yaw_torque;
@@ -158,27 +149,22 @@ typedef struct
     float yaw_small_ff_acc_lpf;                          // 前馈加速度项低通(抑制二阶微分噪声)
     float yaw_small_ff_torque_lpf;                       // 前馈力矩输出低通(最终兜底)
     uint32_t yaw_small_plan_dt_cnt;                      // 规划器更新周期DWT计数缓存(用实测dt替代写死0.001)
-    // gimbal_identification_output_t identification_big_yaw_output;
     /* 最近一次电机反馈帧到达本机的 DWT 时间戳，用于计算反馈年龄。 */
     uint32_t pitch_feedback_timestamp_us;
     uint32_t small_yaw_feedback_timestamp_us;
-    uint32_t big_yaw_feedback_timestamp_us;
     // Core::Control::Math::RLS<4> rls{1e-5f, 0.99999f};
     // Matrixf<4, 1> samples;
     // Matrixf<4, 1> params;
 /*----------------------------------遥控器控制PID---------------------------------------------*/
-    pid_class rc_yaw_big_angle_pid;            // 大yaw电机角度PID控制器
     gimbal_pid_t rc_yaw_small_pid;             // 小yaw电机PID控制器
     gimbal_pid_t rc_pitch_pid;                 // pitch电机PID控制器
 /*------------------------------------自瞄控制PID---------------------------------------------*/
-    gimbal_pid_t pc_yaw_big_pid;                // 大yaw电机角度PID控制器
     gimbal_pid_t pc_yaw_small_pid;             // 小yaw电机PID控制器
     gimbal_pid_t pc_pitch_pid;                 // pitch电机PID控制器
 /*------------------------------------自瞄前馈补偿量---------------------------------------------*/
     Feedforward_t pc_pitch_ffc;                // pitch电机前馈补偿量
     Feedforward_t pc_yaw_small_ffc;            // 小yaw电机前馈补偿量
 /*------------------------------------电机对象创建---------------------------------------------*/
-    lk_motor_normal_class yaw_big_motor;           // 大yaw电机对象
     dji_gm6020_motor_class yaw_small_motor;        // 小yaw电机对象
     dm_motor_normal_class pitch_motor;             // pitch电机对象
 /*------------------------------------云台控制方式---------------------------------------------*/

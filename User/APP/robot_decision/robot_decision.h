@@ -46,7 +46,6 @@ typedef struct
 // 云台控制用于决策的源数据
 typedef struct
 {
-    float big_yaw_angle;
     float small_yaw_angle;
     float vision_gyr_z;
 } gimbal_decision_source_t;

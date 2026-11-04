@@ -306,14 +306,14 @@ void robot_data_transmission_update(void)
     temp_vz = robot_decision.crsf->get_wheel() * CHASSIS_MAX_ROTATE_SPEED;  // 旋转速度
 
     // 云台偏航角度
-    if (gimbal_decision_source.small_yaw_angle == 0.0f || gimbal_decision_source.big_yaw_angle == 0.0f)
+    if (gimbal_decision_source.small_yaw_angle == 0.0f)
     {
         temp_yaw = 0.0f;
     }
     
     else
     {
-        temp_yaw = basic_math_loop_constrain(gimbal_decision_source.big_yaw_angle + (gimbal_decision_source.small_yaw_angle - YAW_SMALL_MOTOR_MID_ANGLE), -PI, PI);
+        temp_yaw = basic_math_loop_constrain(gimbal_decision_source.small_yaw_angle - YAW_SMALL_MOTOR_MID_ANGLE, -PI, PI);
     }
 
 #if YAW_RAD_MIDDLE_THAN_ZERO == 0   // 云台初始化yaw轴中值位置 <= 0.0f

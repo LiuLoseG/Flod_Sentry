@@ -90,13 +90,12 @@ safe_daemon_process_online_value<lk_motor_status>    → Motor_LK_Status_Enable
 - **总线负载（DM/LK 数量增长）**：DM/LK 掉线期间每 `period_ms` 发一帧使能（20ms → 50 帧/s，可忽略）；
   若将来 DM/LK 设备数量明显增多，需重新评估 CAN 负载（见规范 §6.5）。
 
-## 5. 当前注册表（6 个电机）
+## 5. 当前注册表（5 个电机）
 
 | 设备 | 类型 | 周期(ms) | 注册位置 |
 |---|---|---:|---|
 | `gimbal.pitch_motor` | DM 3519 | 20 | `gimbal_init()` 第 11 步 |
 | `gimbal.yaw_small_motor` | GM6020 | 5 | 同上 |
-| `gimbal.yaw_big_motor` | LK | 20 | 同上 |
 | `shoot.fric_r_motor` | C620 | 5 | `shoot_init()` 末尾 |
 | `shoot.fric_l_motor` | C620 | 5 | 同上 |
 | `shoot.trigger_motor` | C610 | 5 | 同上 |

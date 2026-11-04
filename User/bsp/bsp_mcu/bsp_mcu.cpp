@@ -28,8 +28,8 @@ extern "C" void bsp_mcu_init(void)
     // bsp_uart_init(&huart3, wit_gyro_uart_callback); // 初始化UART3，使用中断模式
     bsp_uart_init(&huart7, crsf_rx_idle_callback); // 初始化UART7，无回调函数
 
-    h12_imu_init(&uart10_manager); // 初始化HI12 IMU数据结构，传入UART管理器
-    bsp_uart_init(&huart10, hi12_gyro_uart_callback); // 初始化UART10，使用中断模式
+    // h12_imu_init(&uart10_manager); // 初始化HI12 IMU数据结构，传入UART管理器
+    // bsp_uart_init(&huart10, hi12_gyro_uart_callback); // 初始化UART10，使用中断模式
     
     // bsp_uart_init(&huart1, NULL); // 初始化VOFA UART，使用中断模式
     // mspm0_imu_init(&mspm0_data, &uart10_manager); // 初始化MSPM0 IMU数据结构，传入UART管理器
