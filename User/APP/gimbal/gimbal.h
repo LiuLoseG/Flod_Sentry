@@ -142,19 +142,26 @@ typedef struct
     // gimbal_identification_t identification_pitch;
     gimbal_identification_t identification_small_yaw;
     gimbal_identification_output_t identification_small_yaw_output;
-    gimbal_identification_sample_t sample;
+    // gimbal_identification_sample_t sample;
 
     gimbal_identification_t identification_pitch;
     gimbal_identification_output_t identification_pitch_output;
-    gimbal_identification_sample_t sample_pitch;
+    // gimbal_identification_sample_t sample_pitch;
 
     float feedforward_small_yaw_torque;
+    float feedforward_pitch_torque;                      // pitch力矩前馈(与小yaw同结构, 与PID输出同向约定, 送电机时取负)
     /* ---- 小yaw轨迹规划/前馈降噪状态 ---- */
     float yaw_small_plan_target_lpf;                     // 规划器输入目标低通(抑制target量化台阶,使规划器可用更高增益)
     float yaw_small_plan_rate_lpf;                       // 规划器输出角速度低通(削掉加速度拐角后才送速度环)
     float yaw_small_ff_acc_lpf;                          // 前馈加速度项低通(抑制二阶微分噪声)
     float yaw_small_ff_torque_lpf;                       // 前馈力矩输出低通(最终兜底)
     uint32_t yaw_small_plan_dt_cnt;                      // 规划器更新周期DWT计数缓存(用实测dt替代写死0.001)
+    /* ---- pitch轨迹规划/前馈降噪状态 ---- */
+    float pitch_plan_target_lpf;                         // 规划器输入目标低通(抑制target量化台阶,使规划器可用更高增益)
+    float pitch_plan_rate_lpf;                           // 规划器输出角速度低通(削掉加速度拐角后才送速度环)
+    float pitch_ff_acc_lpf;                              // 前馈加速度项低通(抑制二阶微分噪声)
+    float pitch_ff_torque_lpf;                           // 前馈力矩输出低通(最终兜底)
+    uint32_t pitch_plan_dt_cnt;                          // 规划器更新周期DWT计数缓存(用实测dt替代写死0.001)
     /* 最近一次电机反馈帧到达本机的 DWT 时间戳，用于计算反馈年龄。 */
     uint32_t pitch_feedback_timestamp_us;
     uint32_t small_yaw_feedback_timestamp_us;

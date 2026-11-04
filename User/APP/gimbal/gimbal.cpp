@@ -41,6 +41,32 @@ float yaw_c_angle = 0.00112f;
  * 幅值损失 <0.5%、相位滞后约 5.7°, 而 10ms 尺度上的 |a| 峰值约降 38%。 */
 #define YAW_SMALL_PLAN_RATE_LPF_TAU_S  0.020f
 
+/* pitch规划角速度输出低通时间常数(s)
+ * pitch轴惯量和阻尼都比小yaw大, 且带重力负载, 同样的 bang-bang 拐角冲击会被
+ * 更大的等效质量放大成更长时间的低频晃动, 因此这里取略大的时间常数
+ * (截止 8Hz -> 6.4Hz), 对 0.8Hz 级跟踪信号的幅值损失/相位滞后可忽略。 */
+#define PITCH_PLAN_RATE_LPF_TAU_S      0.025f
+
+/* ---- pitch轴前馈力矩系数(与小yaw同结构 + 重力项):
+ *      tau = J*a + B*w + Fc*tanh(w/eps) + A*sin(th) + C*cos(th)
+ *      A/C 为旁路辨识器 identification_pitch 输出的重力 sin/cos 系数(Nm),
+ *      其自变量是辨识样本里的 gravity_angle_rad, 即 IMU pitch 角(rad)。
+ *      注意: A/C 与 J/B/Fc 同源, 都是"电机反馈力矩"那一侧的系数。 ----*/
+#define PITCH_FF_J                    0.00790790934f
+#define PITCH_FF_B                    0.0208724756f
+#define PITCH_FF_FC                   0.193853885f
+#define PITCH_FF_A                    0.144259989f      // 重力 sin 系数 Nm (辨识值)
+#define PITCH_FF_C                    -0.68604672f      // 重力 cos 系数 Nm (辨识值)
+#define PITCH_FF_EPS                  0.08f          // 摩擦速度过渡尺度 rad/s (须与辨识器 friction_velocity_rad_s 一致)
+#define PITCH_FF_RATE_DEADBAND        0.05f          // 库仑项低速死区 rad/s
+#define PITCH_FF_ACC_LPF_ALPHA        0.05f          // 加速度项低通(≈8Hz@1kHz)
+#define PITCH_FF_TORQUE_LPF_ALPHA     0.03f          // 前馈力矩输出低通(≈5Hz@1kHz)
+#define PITCH_FF_TORQUE_MAX           0.60f          // 仅动态项(J*a+B*w+Fc)的兜底限幅 Nm
+/* 重力项必须单独限幅后再与动态项相加: |A*sin+C*cos| 峰值 = sqrt(A^2+C^2) ≈ 0.71 Nm,
+ * 已经超过 PITCH_FF_TORQUE_MAX(0.60), 若把重力也塞进 0.6 的限幅里会被直接削掉。 */
+#define PITCH_FF_GRAVITY_MAX          1.00f          // 重力项单独限幅 Nm (≈1.4 倍峰值)
+#define PITCH_FF_TOTAL_MAX            1.50f          // 合计兜底限幅 Nm (必须小于 PITCH_TORQUE_LIMIT=1.8)
+
 // 轨迹规划器参数配置
 reference_config_t yaw_small_track_plan_config = {
     .max_rate_rad_s = 5.0f,           // 最大角速度，单位：rad/s
@@ -58,9 +84,9 @@ reference_config_t yaw_small_track_plan_config = {
 // 轨迹规划器参数配置
 reference_config_t pitch_track_plan_config = {
     .max_rate_rad_s = 5.0f,           // 最大角速度，单位：rad/s
-    .max_accel_rad_s2 = 35.0f,        // 最大角加速度，单位：rad/s^2 (不要降低: 它同时决定跟随的加速度能力, 降低会加大跟踪滞后)
-    .max_jerk_rad_s3 = 4500.0f,       // 最大角加加速度，单位：rad/s^3 (≈透明, 仅挡异常尖峰; 太小会削掉正常拐点)
-    .position_gain_per_s = 25.0f,      // 位置比例增益，单位：1/秒 (P滞后≈v/Kp)
+    .max_accel_rad_s2 = 64.0f,        // 最大角加速度，单位：rad/s^2 (不要降低: 它同时决定跟随的加速度能力, 降低会加大跟踪滞后)
+    .max_jerk_rad_s3 = 6500.0f,       // 最大角加加速度，单位：rad/s^3 (≈透明, 仅挡异常尖峰; 太小会削掉正常拐点)
+    .position_gain_per_s = 54.0f,      // 位置比例增益，单位：1/秒 (P滞后≈v/Kp)
     .dt_min_s = 0.0009f,               // 最小采样时间，单位：秒
     .dt_max_s = 0.005f,                // 最大采样时间，单位：秒
     .wrap_angle = true,                // 是否进行角度环绕处理(最短角规划)
@@ -98,16 +124,21 @@ static void gimbal_yaw_small_motor_rx_client(const volatile FDCAN_RxFrame_TypeDe
 }
 
 /**
- * @brief 初始化小型云台偏航轴的旁路 J/B 候选参数辨识器。
+ * @brief 初始化云台单轴的旁路 J/B 候选参数辨识器配置
+ * @param axis 轴类型决定参数个数与重力项: YAW 3 参(J,B,Fc), PITCH 5 参(另加 sin/cos 重力)
+ * @param configuration_id 必须与该轴送入 sample.configuration_id 完全一致,
+ *                         否则每帧都被判 CONFIGURATION_MISMATCH 并直接返回, 估计值永不更新
+ * @note 初值是 RLS 的可运行起点, 不是出厂标定值
  */
-static void gimbal_identification_init_small_yaw(gimbal_identification_config_t *config,
-                                          gimbal_identification_axis_t axis)
+static void gimbal_identification_config_init(gimbal_identification_config_t *config,
+                                              gimbal_identification_axis_t axis,
+                                              uint32_t configuration_id)
 {
     uint8_t count;
     if (config == NULL) return;
     memset(config, 0, sizeof(*config));
 
-    config->configuration_id = GIMBAL_IDENTIFICATION_CONFIGURATION_SMALL_YAW;
+    config->configuration_id = configuration_id;
 
     config->axis = axis;
     config->window_s = 0.05f;                 // 50 ms：覆盖约 50 个 1 kHz 控制周期，降低单帧噪声
@@ -117,9 +148,9 @@ static void gimbal_identification_init_small_yaw(gimbal_identification_config_t 
     count = axis == GIMBAL_IDENTIFICATION_YAW ? 3u : 5u;
     rls_last_default_config(&config->rls, count);
 
-    config->rls.initial[0] = 0.00868642889f;          // J 起步量：仅用于 RLS 初值，不是实测标定值
-    config->rls.initial[1] = 0.001053927f;         // B 起步量：保持与小型云台输出轴量级同阶
-    config->rls.initial[2] = 0.0442793258f;          // Fc 起步量：给低速摩擦项一个非零可学习初值
+    config->rls.initial[0] = 0.00868642889f;            // J 起步量：仅用于 RLS 初值，不是实测标定值
+    config->rls.initial[1] = 0.001053927f;              // B 起步量：保持与小型云台输出轴量级同阶
+    config->rls.initial[2] = 0.0442793258f;             // Fc 起步量：给低速摩擦项一个非零可学习初值
 
     config->rls.minimum[0] = 0.000001f;      // J 必须为正，禁止 RLS 退化成非物理负惯量
     config->rls.minimum[1] = 0.0f;
@@ -152,29 +183,32 @@ static void gimbal_identification_init_small_yaw(gimbal_identification_config_t 
 
 }
 
-/**
- * @brief 初始化小型云台偏航轴的旁路 J/B 候选参数辨识器。
- */
-static void gimbal_identification_init_pitch(gimbal_identification_config_t *config,
-                                          gimbal_identification_axis_t axis)
+static void gimbal_identification_pitch_config_init(gimbal_identification_config_t *config,
+                                              gimbal_identification_axis_t axis,
+                                              uint32_t configuration_id)
 {
     uint8_t count;
     if (config == NULL) return;
     memset(config, 0, sizeof(*config));
 
-    config->configuration_id = GIMBAL_IDENTIFICATION_CONFIGURATION_SMALL_YAW;
+    config->configuration_id = configuration_id;
 
     config->axis = axis;
     config->window_s = 0.05f;                 // 50 ms：覆盖约 50 个 1 kHz 控制周期，降低单帧噪声
     config->max_gap_s = 0.02f;                // 20 ms：允许少量任务抖动，但不跨越明显丢帧
     config->feedback_timeout_s = 0.02f;       // 反馈超过 20 ms 未更新就丢弃，避免错位回归
     config->friction_velocity_rad_s = 0.08f;  // tanh 平滑 sign(omega)，约覆盖低速摩擦过渡区
+    /* 必须与 gimbal_identification.cpp::config_valid() 的期望一致:
+     * YAW 3 参(J,B,Fc), PITCH 5 参(另加 A,C)。
+     * 这里曾误写成 `axis == 5u`(恒 false → count=0)，会让 parameter_count=0，
+     * config_valid() 失败 → gimbal_identification_init() 把整个实例 memset 清零并
+     * 返回 false，之后 pitch 辨识每帧都走 BAD_CONFIG 分支，参数永不更新且无任何报错。 */
     count = axis == GIMBAL_IDENTIFICATION_YAW ? 3u : 5u;
     rls_last_default_config(&config->rls, count);
 
-    config->rls.initial[0] = 0.00868642889f;          // J 起步量：仅用于 RLS 初值，不是实测标定值
-    config->rls.initial[1] = 0.001053927f;         // B 起步量：保持与小型云台输出轴量级同阶
-    config->rls.initial[2] = 0.0442793258f;          // Fc 起步量：给低速摩擦项一个非零可学习初值
+    config->rls.initial[0] = PITCH_FF_J;          // J 起步量：仅用于 RLS 初值，不是实测标定值
+    config->rls.initial[1] = PITCH_FF_B;         // B 起步量：保持与小型云台输出轴量级同阶
+    config->rls.initial[2] = PITCH_FF_FC;          // Fc 起步量：给低速摩擦项一个非零可学习初值
 
     config->rls.minimum[0] = 0.000001f;      // J 必须为正，禁止 RLS 退化成非物理负惯量
     config->rls.minimum[1] = 0.0f;
@@ -188,24 +222,23 @@ static void gimbal_identification_init_pitch(gimbal_identification_config_t *con
     config->rls.feature_scale[1] = 1.0f;     // 角速度通常次之，缩放改善 B 列条件数
     config->rls.feature_scale[2] = 1.0f;     // 扭矩通常最小，缩放改善 Fc 列条件数
 
-    if (axis == GIMBAL_IDENTIFICATION_PITCH) {
-        config->rls.initial[3] = 0.0f;       // sin 重力项无先验方向，使用零中心
-        config->rls.initial[4] = 0.1f;       // cos 重力项提供轻微非零起点，避免初期完全失激励
+    config->rls.initial[3] = PITCH_FF_A;       // sin 重力项无先验方向，使用零中心
+    config->rls.initial[4] = PITCH_FF_C;       // cos 重力项提供轻微非零起点，避免初期完全失激励
 
-        config->rls.minimum[3] = -5.0f;
-        config->rls.minimum[4] = -5.0f;
+    config->rls.minimum[3] = -5.0f;
+    config->rls.minimum[4] = -5.0f;
 
-        config->rls.maximum[3] = 5.0f;
-        config->rls.maximum[4] = 5.0f;
+    config->rls.maximum[3] = 5.0f;
+    config->rls.maximum[4] = 5.0f;
 
-        config->rls.feature_scale[3] = 1.0f;
-        config->rls.feature_scale[4] = 1.0f;
-    }
+    config->rls.feature_scale[3] = 1.0f;
+    config->rls.feature_scale[4] = 1.0f;
 
     config->rls.dt_min_s = 0.000001f;
     config->rls.dt_max_s = 0.1f;
 
 }
+
 
 // /**
 //  * @brief 初始化云台轴的旁路 J/B 候选参数辨识器。
@@ -227,6 +260,44 @@ static void gimbal_identification_init_pitch(gimbal_identification_config_t *con
 // }
 
 /**
+ * @brief 填充单轴辨识样本
+ * @note 逐字段显式赋值: 两个轴共用一个填充入口, 避免"上一轴的反馈年龄/时间对齐
+ *       状态被带进下一轴"或漏赋值(未赋值字段会被 qualify() 判坏并逐帧清窗口)。
+ * @param torque_limit 该轴力矩指令限幅 Nm, 仅用于饱和判据
+ */
+static void gimbal_identification_sample_fill(gimbal_identification_sample_t *sample,
+                                              uint32_t timestamp_us,
+                                              uint32_t configuration_id,
+                                              bool enabled,
+                                              bool valid,
+                                              float feedback_age_s,
+                                              float angle_rad,
+                                              float rate_rad_s,
+                                              float gravity_angle_rad,
+                                              float torque_nm,
+                                              float torque_limit)
+{
+    sample->timestamp_us = timestamp_us;
+    sample->segment_id = 0u;
+    sample->configuration_id = configuration_id;
+    sample->angle_rad = angle_rad;
+    sample->rate_rad_s = rate_rad_s;
+    sample->gravity_angle_rad = gravity_angle_rad;
+    sample->torque_nm = torque_nm;
+    sample->feedback_age_s = feedback_age_s;
+    sample->enabled = enabled;
+    sample->valid = valid;
+    sample->saturated = fabsf(torque_nm) >= 0.98f * torque_limit;
+    sample->operating_conditions_valid = enabled && valid;
+    sample->torque_calibrated = true;
+    sample->torque_time_aligned = valid;
+}
+
+/* 最近一帧送进辨识器的样本, 仅用于调试观察(两轴各一份, 不参与控制) */
+static gimbal_identification_sample_t gimbal_pitch_ident_sample;
+static gimbal_identification_sample_t gimbal_yaw_ident_sample;
+
+/**
  * @brief 旁路采集同一控制周期的反馈并更新候选模型。
  * @note 不注入激励、不覆盖 PID/前馈/电机目标；ready 仅代表候选数据门槛通过。
  */
@@ -235,61 +306,58 @@ static void gimbal_identification_update_all(void)
     const uint32_t timestamp_us = (uint32_t)bsp_dwt_get_timeline_us();
     const bool enabled = gimbal.now_method != Gimbal_Method_Zero_Force;
 
-    // const float pitch_feedback_age_s =
-    //     gimbal.pitch_feedback_timestamp_us == 0u
-    //         ? 1.0f
-    //         : (float)(timestamp_us - gimbal.pitch_feedback_timestamp_us) * 0.000001f;
+    const float pitch_feedback_age_s =
+        gimbal.pitch_feedback_timestamp_us == 0u
+            ? 1.0f
+            : (float)(timestamp_us - gimbal.pitch_feedback_timestamp_us) * 0.000001f;
 
     const float small_yaw_feedback_age_s =
         gimbal.small_yaw_feedback_timestamp_us == 0u
             ? 1.0f
             : (float)(timestamp_us - gimbal.small_yaw_feedback_timestamp_us) * 0.000001f;
 
-    // const bool pitch_valid =
-    //     gimbal.imu_attitude_ready != 0u &&
-    //     gimbal.pitch_motor.get_status() == Motor_DM_Status_Enable &&
-    //     pitch_feedback_age_s <= 0.02f;
+    const bool pitch_valid =
+        gimbal.imu_attitude_ready != 0u &&
+        gimbal.pitch_motor.get_status() == Motor_DM_Status_Enable &&
+        pitch_feedback_age_s <= 0.02f;
 
     const bool small_yaw_valid =
         gimbal.yaw_small_motor.get_status() == Motor_DJI_Status_Enable &&
         small_yaw_feedback_age_s <= 0.02f;
 
-    // gimbal_identification_sample_t sample;
+    /* Pitch：角度/角速度/力矩全部取电机输出轴(DM反馈), 三者同坐标系;
+     * 角度用 total_angle 保持多圈连续, 避免单圈 ±PI 跳变被当成巨大速率;
+     * 重力相位取 IMU pitch(真实仰角), 因此辨识出的 A/C 是电机力矩系下的重力项。 */
+    gimbal_identification_sample_fill(&gimbal_pitch_ident_sample,
+                                      timestamp_us,
+                                      GIMBAL_IDENTIFICATION_CONFIGURATION_PITCH,
+                                      enabled,
+                                      pitch_valid,
+                                      pitch_feedback_age_s,
+                                      gimbal.pitch_motor.get_total_angle() - PITCH_MOTOR_MID_ANGLE,
+                                      gimbal.pitch_motor.get_now_omega(),
+                                      gimbal.now_value.pitch_angle,
+                                      gimbal.pitch_motor.get_now_torque(),
+                                      PITCH_TORQUE_LIMIT);
+    (void)gimbal_identification_update(&gimbal.identification_pitch,
+                                       &gimbal_pitch_ident_sample,
+                                       &gimbal.identification_pitch_output);
 
-    /* 每次重建完整样本，避免把上个轴的重力项或状态带入当前轴。 */
-    memset(&gimbal.sample, 0, sizeof(gimbal.sample));
-    gimbal.sample.timestamp_us = timestamp_us;
-    gimbal.sample.segment_id = 0u;
-    gimbal.sample.enabled = enabled;
-    // sample.feedback_age_s = pitch_feedback_age_s;
-    gimbal.sample.feedback_age_s = small_yaw_feedback_age_s;
-    gimbal.sample.torque_calibrated = true;
-    // sample.torque_time_aligned = pitch_valid;
-
-    // /* Pitch：使用输出轴角度、输出轴角速度和输出轴反馈扭矩。 */
-    // sample.configuration_id = GIMBAL_IDENTIFICATION_CONFIGURATION_PITCH;
-    // sample.valid = pitch_valid;
-    // sample.operating_conditions_valid = enabled && pitch_valid;
-    // sample.angle_rad = gimbal.pitch_motor.get_now_angle() - PITCH_MOTOR_MID_ANGLE;
-    // sample.rate_rad_s = gimbal.pitch_motor.get_now_omega();
-    // sample.gravity_angle_rad = gimbal.now_value.pitch_angle;
-    // sample.torque_nm = gimbal.pitch_motor.get_now_torque();
-    // sample.saturated = fabsf(sample.torque_nm) >= 0.98f * PITCH_TORQUE_LIMIT;
-    // (void)gimbal_identification_update(&gimbal.identification_pitch, &sample,
-    //                                    &gimbal.identification_pitch_output);
-
-    /* 小 yaw：get_now_angle 是输出轴连续角，避免 single_angle 在 ±PI 处的单圈跳变。 */
-    gimbal.sample.configuration_id = GIMBAL_IDENTIFICATION_CONFIGURATION_SMALL_YAW;
-    gimbal.sample.valid = small_yaw_valid;
-    gimbal.sample.feedback_age_s = small_yaw_feedback_age_s;
-    gimbal.sample.torque_time_aligned = small_yaw_valid;
-    gimbal.sample.operating_conditions_valid = enabled && small_yaw_valid;
-    gimbal.sample.angle_rad = gimbal.yaw_small_motor.get_now_angle() - YAW_SMALL_MOTOR_MID_ANGLE;
-    gimbal.sample.rate_rad_s = gimbal.yaw_small_motor.get_now_omega();
-    gimbal.sample.gravity_angle_rad = 0.0f;
-    gimbal.sample.torque_nm = gimbal.yaw_small_motor.get_now_torque();
-    gimbal.sample.saturated = fabsf(gimbal.sample.torque_nm) >= 0.98f * YAW_SMALL_TORQUE_LIMIT;
-    (void)gimbal_identification_update(&gimbal.identification_small_yaw, &gimbal.sample,
+    /* 小 yaw：get_now_angle 是输出轴连续角，避免 single_angle 在 ±PI 处的单圈跳变；
+     * 该轴无重力项, gravity_angle_rad 固定 0。 */
+    gimbal_identification_sample_fill(&gimbal_yaw_ident_sample,
+                                      timestamp_us,
+                                      GIMBAL_IDENTIFICATION_CONFIGURATION_SMALL_YAW,
+                                      enabled,
+                                      small_yaw_valid,
+                                      small_yaw_feedback_age_s,
+                                      gimbal.yaw_small_motor.get_now_angle() - YAW_SMALL_MOTOR_MID_ANGLE,
+                                      gimbal.yaw_small_motor.get_now_omega(),
+                                      0.0f,
+                                      gimbal.yaw_small_motor.get_now_torque(),
+                                      YAW_SMALL_TORQUE_LIMIT);
+    (void)gimbal_identification_update(&gimbal.identification_small_yaw,
+                                       &gimbal_yaw_ident_sample,
                                        &gimbal.identification_small_yaw_output);
 }
 
@@ -340,10 +408,10 @@ void gimbal_init(void)
 
     gimbal.pitch_gravity_comp_filter.init(5.0f, 0.001f);
     // gimbal_identification_init_all();
-    gimbal_identification_init_small_yaw(&identification_small_yaw_config, GIMBAL_IDENTIFICATION_YAW);
+    gimbal_identification_config_init(&identification_small_yaw_config, GIMBAL_IDENTIFICATION_YAW, GIMBAL_IDENTIFICATION_CONFIGURATION_SMALL_YAW);
     (void)gimbal_identification_init(&gimbal.identification_small_yaw, &identification_small_yaw_config);
 
-    gimbal_identification_init_pitch(&identification_pitch_config, GIMBAL_IDENTIFICATION_PITCH);
+    gimbal_identification_pitch_config_init(&identification_pitch_config, GIMBAL_IDENTIFICATION_PITCH, GIMBAL_IDENTIFICATION_CONFIGURATION_PITCH);
     (void)gimbal_identification_init(&gimbal.identification_pitch, &identification_pitch_config);
 
     gimbal.feedforward_value.small_yaw_omega = 0.0f;
@@ -359,6 +427,12 @@ void gimbal_init(void)
     gimbal.yaw_small_ff_acc_lpf = 0.0f;      // 前馈加速度项低通初始状态
     gimbal.yaw_small_ff_torque_lpf = 0.0f;   // 前馈力矩输出低通初始状态
     gimbal.yaw_small_plan_dt_cnt = 0;        // 规划器DWT计数缓存初始状态
+    gimbal.pitch_plan_target_lpf = 0.0f;     // pitch规划器输入目标低通初始状态(首帧重播种)
+    gimbal.pitch_plan_rate_lpf = 0.0f;       // pitch规划器输出角速度低通初始状态(首帧规划器 rate 亦为0)
+    gimbal.pitch_ff_acc_lpf = 0.0f;          // pitch前馈加速度项低通初始状态
+    gimbal.pitch_ff_torque_lpf = 0.0f;       // pitch前馈力矩输出低通初始状态
+    gimbal.pitch_plan_dt_cnt = 0;            // pitch规划器DWT计数缓存初始状态
+    gimbal.feedforward_pitch_torque = 0.0f;  // pitch力矩前馈输出初始状态
     gimbal.pitch_ff_ref_lpf = gimbal.target_value.pitch_angle;  // [数据平滑] 直接播种到当前目标, 避免上电爬升
     gimbal.prev_pitch_ff_omega = 0.0f;      // [拐点缓冲] 加速度限制器初始状态
 
@@ -947,7 +1021,7 @@ void gimbal_motor_calculate(void)
         gimbal.rc_pitch_pid.pid_omega.set_now(gimbal.now_value.pitch_omega);
         gimbal.rc_pitch_pid.pid_omega.pid_calculate_callback();
         gimbal.pitch_motor.set_control_torque(basic_math_constrain(-gimbal.rc_pitch_pid.pid_omega.get_out() - 0.65f, -PITCH_TORQUE_LIMIT, PITCH_TORQUE_LIMIT));
-    }   
+    }
 
     else if (gimbal.now_method == Gimbal_Method_Auto)   // 自瞄控制模式
     {
@@ -977,7 +1051,7 @@ void gimbal_motor_calculate(void)
         gimbal.pc_pitch_pid.pid_angle.set_now(gimbal.now_value.pitch_angle);
         // gimbal.pc_pitch_pid.pid_angle.set_now(gimbal.filter_imu_pitch_angle.get_out());
         gimbal.pc_pitch_pid.pid_angle.pid_calculate_callback();
-        gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out() + gimbal.feedforward_value.pitch_omega;
+        gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out() + gimbal.pitch_plan_rate_lpf * 0.5f;
         // gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out();
         // gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out();
 
@@ -985,7 +1059,7 @@ void gimbal_motor_calculate(void)
         gimbal.pc_pitch_pid.pid_omega.set_now(gimbal.now_value.pitch_omega);
         // gimbal.pc_pitch_pid.pid_omega.set_now(gimbal.filter_pitch_pitch_omega.get_out());
         gimbal.pc_pitch_pid.pid_omega.pid_calculate_callback();
-        gimbal.pitch_motor.set_control_torque(basic_math_constrain(-gimbal.pc_pitch_pid.pid_omega.get_out(), -PITCH_TORQUE_LIMIT, PITCH_TORQUE_LIMIT));
+        gimbal.pitch_motor.set_control_torque(basic_math_constrain(-gimbal.pc_pitch_pid.pid_omega.get_out() -gimbal.feedforward_pitch_torque, -PITCH_TORQUE_LIMIT, PITCH_TORQUE_LIMIT));
         // gimbal.pitch_motor.set_control_torque(-gimbal.pc_pitch_pid.pid_omega.get_out());
         // gimbal.pitch_motor.set_control_torque(-gimbal.pc_pitch_pid.pid_omega.get_out());
     }
@@ -1016,14 +1090,6 @@ void gimbal_motor_parameter_test()
         dt = 0.001f;    // 首次调用/异常周期兜底, 不跨大间隔积分
     }
 
-    /* 1. 规划器输入预滤波:
-     *    target_value 由 now + 增量逐帧重算, 单步中位约 12 LSB(9.4e-3 rad),
-     *    直接喂给规划器会被 gain/dt 放大成加速度尖峰。
-     *    先在输入端做一阶低通, 规划器就不必靠降低 gain 来被动滤波,
-     *    因此可以把 position_gain 提上去, 同时改善滞后与噪声。
-     *    alpha=0.03 -> 截止约 4.9Hz, τ≈33ms: 视觉目标会有 0.1rad 级单帧台阶,
-     *    alpha=0.10(τ≈10ms) 基本没滤掉, 台阶会直接踢起规划器振荡。
-     */
     {
         const float alpha = 0.03f;
         if (first_call)
@@ -1033,15 +1099,11 @@ void gimbal_motor_parameter_test()
             reference_track_plan_reset(&gimbal.yaw_small_track_plan,
                                       gimbal.target_value.small_yaw_angle);
         }
-        gimbal.yaw_small_plan_target_lpf +=
-            alpha * (gimbal.target_value.small_yaw_angle - gimbal.yaw_small_plan_target_lpf);
+        gimbal.yaw_small_plan_target_lpf += alpha * (gimbal.target_value.small_yaw_angle - gimbal.yaw_small_plan_target_lpf);
     }
 
     /* 2. 轨迹规划: 用滤波后的目标 + 实测dt */
-    reference_track_plan_update(&gimbal.yaw_small_track_plan,
-                               gimbal.yaw_small_plan_target_lpf,
-                               dt,
-                               &gimbal.yaw_small_plan_output);
+    reference_track_plan_update(&gimbal.yaw_small_track_plan, gimbal.yaw_small_plan_target_lpf, dt, &gimbal.yaw_small_plan_output);
 
     /* 3. 规划角速度低通: 速度环前馈只用规划器算出的 rate, 该 rate 在误差超过
      *    max_accel/gain 后就是斜率 ±max_accel 的折线, 拐角处加速度阶跃会直接
@@ -1049,8 +1111,7 @@ void gimbal_motor_parameter_test()
      *    时间常数采用 dt/(tau+dt) 形式, 与采样周期解耦。 */
     {
         const float rate_lpf_alpha = dt / (YAW_SMALL_PLAN_RATE_LPF_TAU_S + dt);
-        gimbal.yaw_small_plan_rate_lpf +=
-            rate_lpf_alpha * (gimbal.yaw_small_plan_output.rate_rad_s - gimbal.yaw_small_plan_rate_lpf);
+        gimbal.yaw_small_plan_rate_lpf += rate_lpf_alpha * (gimbal.yaw_small_plan_output.rate_rad_s - gimbal.yaw_small_plan_rate_lpf);
     }
 
     /* 4. 前馈力矩: 用真实物理系数, 并抑制二阶微分噪声
@@ -1068,8 +1129,7 @@ void gimbal_motor_parameter_test()
         const float rate = gimbal.yaw_small_plan_output.rate_rad_s;
 
         /* 加速度项低通: ~8Hz, 抑制量化台阶被二阶微分放大 */
-        gimbal.yaw_small_ff_acc_lpf +=
-            0.05f * (gimbal.yaw_small_plan_output.accel_rad_s2 - gimbal.yaw_small_ff_acc_lpf);
+        gimbal.yaw_small_ff_acc_lpf += 0.05f * (gimbal.yaw_small_plan_output.accel_rad_s2 - gimbal.yaw_small_ff_acc_lpf);
 
         /* 库仑项: 低速死区, 避免速度过零时符号翻转造成方波抖动 */
         float coulomb = 0.0f;
@@ -1097,73 +1157,89 @@ void gimbal_motor_parameter_test()
 }
 
 /**
- * @brief 云台测试任务用于调试和验证云台电机参数
- * @note 该任务在实际应用中可用于验证云台电机的控制性能和参数设置，确保云台在不同控制模式下的稳定性和响应速度。
+ * @brief pitch轴轨迹规划与前馈力矩计算(与小yaw同结构)
+ * @note 1. 目标预滤波: 抑制PC零阶保持/目标量化台阶
+ *       2. 轨迹规划: 限速/限加速度, 输出 rate/accel 供前馈使用
+ *       3. 规划角速度低通: 圆化 bang-bang 拐角
+ *       4. 力矩前馈: tau = J*a + B*w + Fc*tanh(w/eps) + A*sin(th) + C*cos(th)
+ *          其中 A/C 为辨识器输出的重力项系数, th 取规划器输入的参考角。
+ *       约定: 前馈量定义在"增大pitch角"方向, 与PID输出同向, 送电机时整体取负。
  */
-void gimbal_motor_parameter_test()
+void gimbal_motor_parameter_pitch_test()
 {
-    // 首帧标志: yaw_small_plan_dt_cnt 尚未被 bsp_dwt_get_deltat32 更新过
-    const bool first_call = (gimbal.yaw_small_plan_dt_cnt == 0u);
+    // 首帧标志: pitch_plan_dt_cnt 尚未被 bsp_dwt_get_deltat32 更新过
+    const bool first_call = (gimbal.pitch_plan_dt_cnt == 0u);
 
-    float dt = bsp_dwt_get_deltat32(&gimbal.yaw_small_plan_dt_cnt);
-    if (!(dt >= yaw_small_track_plan_config.dt_min_s &&
-          dt <= yaw_small_track_plan_config.dt_max_s))
+    float dt = bsp_dwt_get_deltat32(&gimbal.pitch_plan_dt_cnt);
+    if (!(dt >= pitch_track_plan_config.dt_min_s && dt <= pitch_track_plan_config.dt_max_s))
     {
         dt = 0.001f;    // 首次调用/异常周期兜底, 不跨大间隔积分
     }
 
+    /* 1. 规划器输入预滤波 */
     {
         const float alpha = 0.03f;
         if (first_call)
         {
             /* 首帧把规划器对齐到当前目标, 避免从 init 时的 0 起跳造成一次大冲击 */
-            gimbal.yaw_small_plan_target_lpf = gimbal.target_value.small_yaw_angle;
-            reference_track_plan_reset(&gimbal.yaw_small_track_plan,
-                                      gimbal.target_value.small_yaw_angle);
+            gimbal.pitch_plan_target_lpf = gimbal.target_value.pitch_angle;
+            reference_track_plan_reset(&gimbal.pitch_track_plan, gimbal.target_value.pitch_angle);
         }
-        gimbal.yaw_small_plan_target_lpf +=
-            alpha * (gimbal.target_value.small_yaw_angle - gimbal.yaw_small_plan_target_lpf);
+        gimbal.pitch_plan_target_lpf += alpha * (gimbal.target_value.pitch_angle - gimbal.pitch_plan_target_lpf);
     }
 
     /* 2. 轨迹规划: 用滤波后的目标 + 实测dt */
-    reference_track_plan_update(&gimbal.yaw_small_track_plan,
-                               gimbal.yaw_small_plan_target_lpf,
-                               dt,
-                               &gimbal.yaw_small_plan_output);
+    reference_track_plan_update(&gimbal.pitch_track_plan, gimbal.pitch_plan_target_lpf, dt, &gimbal.pitch_plan_output);
 
+    /* 3. 规划角速度低通: 拐角圆化后再送速度环 */
     {
-        const float rate_lpf_alpha = dt / (YAW_SMALL_PLAN_RATE_LPF_TAU_S + dt);
-        gimbal.yaw_small_plan_rate_lpf +=
-            rate_lpf_alpha * (gimbal.yaw_small_plan_output.rate_rad_s - gimbal.yaw_small_plan_rate_lpf);
+        const float rate_lpf_alpha = dt / (PITCH_PLAN_RATE_LPF_TAU_S + dt);
+        gimbal.pitch_plan_rate_lpf += rate_lpf_alpha * (gimbal.pitch_plan_output.rate_rad_s - gimbal.pitch_plan_rate_lpf);
     }
 
+    /* 4. 前馈力矩: tau = J*a + B*w + Fc*tanh(w/eps) + 重力项 */
     {
-        const float J_ff  = 0.00868642889f;    // 等效惯量 Nm/(rad/s^2)
-        const float B_ff  = 0.001053927f;    // 阻尼 Nm/(rad/s)
-        const float Fc_ff = 0.0442793258f;    // 库仑摩擦 Nm
-        const float EPS   = 0.08f;      // 摩擦速度过渡尺度 rad/s
-
-        const float rate = gimbal.yaw_small_plan_output.rate_rad_s;
+        const float rate = gimbal.pitch_plan_output.rate_rad_s;
 
         /* 加速度项低通: ~8Hz, 抑制量化台阶被二阶微分放大 */
-        gimbal.yaw_small_ff_acc_lpf +=
-            0.05f * (gimbal.yaw_small_plan_output.accel_rad_s2 - gimbal.yaw_small_ff_acc_lpf);
+        gimbal.pitch_ff_acc_lpf += PITCH_FF_ACC_LPF_ALPHA * (gimbal.pitch_plan_output.accel_rad_s2 - gimbal.pitch_ff_acc_lpf);
 
         /* 库仑项: 低速死区, 避免速度过零时符号翻转造成方波抖动 */
         float coulomb = 0.0f;
-        if (fabsf(rate) > 0.05f)
+        if (fabsf(rate) > PITCH_FF_RATE_DEADBAND)
         {
-            coulomb = Fc_ff * tanhf(rate / EPS);
+            coulomb = PITCH_FF_FC * tanhf(rate / PITCH_FF_EPS);
         }
 
-        float ff_raw = J_ff * gimbal.yaw_small_ff_acc_lpf
-                     + B_ff * rate
-                     + coulomb;
+        /* 4.1 动态项(随参考速率/加速度变化), 单独限幅 */
+        float ff_dynamic = PITCH_FF_J * gimbal.pitch_ff_acc_lpf
+                         + PITCH_FF_B * rate
+                         + coulomb;
+        ff_dynamic = basic_math_constrain(ff_dynamic, -PITCH_FF_TORQUE_MAX, PITCH_FF_TORQUE_MAX);
+
+        /* 4.2 重力项 A*sin(th) + C*cos(th)
+         *   - 相位角取"规划器输入参考角"而不是实测 IMU pitch: 重力补偿是开环通道,
+         *     用参考角不吃量化/噪声, 也不会把实测值经前馈再灌回反馈环;
+         *     pitch_plan_target_lpf 已做过一阶低通, 本身足够平滑, 无需再加滤波。
+         *   - 符号: 辨识回归是 tau_motor(电机反馈力矩) = ... + A*sin + C*cos;
+         *     本函数所有前馈量定义在"增大pitch角"方向(送电机时整体取负),
+         *     所以重力项要整体取负再加进来。旁证: 辨识出的常值项 C = -0.697 Nm,
+         *     与手动模式里手工补的那 -0.65 Nm 偏置同号同量级(该偏置是直接加在
+         *     set_control_torque 上的), 说明 A/C 与电机指令侧同号 => 前馈侧取负。
+         *   - 上机校验: 让 pitch 在 0 附近缓慢扫动, 观察 feedforward_pitch_torque
+         *     的符号是否与"托住负载所需方向"一致; 若明显反向, 只改这一个负号。 */
+        const float gravity_angle = gimbal.pitch_plan_target_lpf;
+        float ff_gravity = -(PITCH_FF_A * sinf(gravity_angle) + PITCH_FF_C * cosf(gravity_angle));
+        ff_gravity = basic_math_constrain(ff_gravity, -PITCH_FF_GRAVITY_MAX, PITCH_FF_GRAVITY_MAX);
+
+        /* 4.3 合成 + 总兜底: 防止识别参数偏差把异常大前馈直接注入电机的 */
+        float ff_raw = ff_dynamic + ff_gravity;
+        ff_raw = basic_math_constrain(ff_raw, -PITCH_FF_TOTAL_MAX, PITCH_FF_TOTAL_MAX);
 
         /* 输出低通兜底: ~5Hz, 削掉残余高频尖峰(不改变低频幅值) */
-        gimbal.yaw_small_ff_torque_lpf += 0.03f * (ff_raw - gimbal.yaw_small_ff_torque_lpf);
+        gimbal.pitch_ff_torque_lpf += PITCH_FF_TORQUE_LPF_ALPHA * (ff_raw - gimbal.pitch_ff_torque_lpf);
 
-        gimbal.feedforward_small_yaw_torque = gimbal.yaw_small_ff_torque_lpf;
+        gimbal.feedforward_pitch_torque = gimbal.pitch_ff_torque_lpf;
     }
 }
 
@@ -1191,6 +1267,9 @@ extern "C" void gimbal_task(void *argument)
         // 必须放在 control_decision 之后(拿到本周期的 target_value)、
         // 且放在 motor_calculate 之前(本周期即可使用新规划量), 避免多一个周期延迟
         gimbal_motor_parameter_test();
+
+        // pitch轴轨迹规划与前馈力矩(与小yaw同结构), 与yaw一样夹在决策与电机计算之间
+        gimbal_motor_parameter_pitch_test();
 
         // 更新云台前馈量
         // gimbal_update_feedforward();
