@@ -52,11 +52,11 @@ float yaw_c_angle = 0.00112f;
  *      A/C 为旁路辨识器 identification_pitch 输出的重力 sin/cos 系数(Nm),
  *      其自变量是辨识样本里的 gravity_angle_rad, 即 IMU pitch 角(rad)。
  *      注意: A/C 与 J/B/Fc 同源, 都是"电机反馈力矩"那一侧的系数。 ----*/
-#define PITCH_FF_J                    0.00790790934f
-#define PITCH_FF_B                    0.0208724756f
-#define PITCH_FF_FC                   0.193853885f
-#define PITCH_FF_A                    0.144259989f      // 重力 sin 系数 Nm (辨识值)
-#define PITCH_FF_C                    -0.68604672f      // 重力 cos 系数 Nm (辨识值)
+#define PITCH_FF_J                    0.0100852549f
+#define PITCH_FF_B                    0.0296297334f
+#define PITCH_FF_FC                   0.186175033f
+#define PITCH_FF_A                    0.00154406193f      // 重力 sin 系数 Nm (辨识值)
+#define PITCH_FF_C                    -0.681183577f      // 重力 cos 系数 Nm (辨识值)
 #define PITCH_FF_EPS                  0.08f          // 摩擦速度过渡尺度 rad/s (须与辨识器 friction_velocity_rad_s 一致)
 #define PITCH_FF_RATE_DEADBAND        0.05f          // 库仑项低速死区 rad/s
 #define PITCH_FF_ACC_LPF_ALPHA        0.05f          // 加速度项低通(≈8Hz@1kHz)
