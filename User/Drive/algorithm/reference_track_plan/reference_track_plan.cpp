@@ -51,6 +51,7 @@ static bool reference_config_valid(const reference_config_t *c)
     return c != NULL && isfinite(c->max_rate_rad_s) && c->max_rate_rad_s > 0.0f &&
     isfinite(c->max_accel_rad_s2) && c->max_accel_rad_s2 > 0.0f && isfinite(c->max_jerk_rad_s3) &&
     isfinite(c->position_gain_per_s) && c->position_gain_per_s > 0.0f &&
+    isfinite(c->rate_servo_gain_per_s) && c->rate_servo_gain_per_s > 0.0f &&
     isfinite(c->dt_min_s) && c->dt_min_s > 0.0f &&
     isfinite(c->dt_max_s) && c->dt_max_s >= c->dt_min_s;
     (!c->accel_sat_guard_enable ||
@@ -196,8 +197,8 @@ bool reference_track_plan_update(reference_track_plan_t *plan, float target_angl
     // 限制角速度在最大角速度范围内
     desired_rate = basic_math_constrain(desired_rate, -c->max_rate_rad_s, c->max_rate_rad_s);
 
-    // 记录"未限幅需求加速度", 供饱和检测
-    raw_accel = (desired_rate - plan->value.rate_rad_s) / dt_s;
+    raw_accel = c->rate_servo_gain_per_s * (desired_rate - plan->value.rate_rad_s);
+    // raw_accel = (desired_rate - plan->value.rate_rad_s) / dt_s;
     if (!isfinite(raw_accel))
     {
         return false;
