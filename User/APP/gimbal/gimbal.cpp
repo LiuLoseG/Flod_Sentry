@@ -824,9 +824,10 @@ void gimbal_control_decision(void)
                 {
                     /*----------------------------参数调节段------------------------------*/
                     // gimbal.target_value.pitch_angle = gimbal.now_value.pitch_angle;  // pitch保持当前角度
-                    gimbal.target_value.pitch_angle = basic_math_constrain(wave_generator_calc(&yaw_wave), gimbal.pitch_limit_angle + PITCH_MIN_OFFSET, gimbal.pitch_limit_angle + PITCH_MAX_OFFSET);      
+                    // gimbal.target_value.pitch_angle = basic_math_constrain(wave_generator_calc(&yaw_wave), gimbal.pitch_limit_angle + PITCH_MIN_OFFSET, gimbal.pitch_limit_angle + PITCH_MAX_OFFSET);   
+                    gimbal.target_value.pitch_angle = basic_math_constrain(gimbal.decision->pc_to_mcu_aim.get_pitch_angle(), gimbal.pitch_limit_angle + PITCH_MIN_OFFSET, gimbal.pitch_limit_angle + PITCH_MAX_OFFSET);
                     // 波形直接作为小yaw目标, 限幅基准与手动模式一致
-                    gimbal.target_value.small_yaw_angle = gimbal.now_value.small_yaw_angle;
+                    gimbal.target_value.small_yaw_angle = basic_math_constrain(gimbal.decision->pc_to_mcu_aim.get_yaw_angle(), gimbal.small_yaw_limit_angle + YAW_SMALL_MIN_OFFSET, gimbal.small_yaw_limit_angle + YAW_SMALL_MAX_OFFSET);
                     // gimbal.target_value.small_yaw_angle = basic_math_constrain(wave_generator_calc(&yaw_wave), gimbal.small_yaw_limit_angle + YAW_SMALL_MIN_OFFSET, gimbal.small_yaw_limit_angle + YAW_SMALL_MAX_OFFSET);
                 }
             }
@@ -1015,12 +1016,12 @@ void gimbal_motor_calculate(void)
         gimbal.rc_pitch_pid.pid_angle.set_target(basic_math_constrain(gimbal.target_value.pitch_angle, gimbal.pitch_limit_angle + PITCH_MIN_OFFSET, gimbal.pitch_limit_angle + PITCH_MAX_OFFSET));
         gimbal.rc_pitch_pid.pid_angle.set_now(gimbal.now_value.pitch_angle);
         gimbal.rc_pitch_pid.pid_angle.pid_calculate_callback();
-        gimbal.target_value.pitch_omega = gimbal.rc_pitch_pid.pid_angle.get_out();
+        gimbal.target_value.pitch_omega = gimbal.rc_pitch_pid.pid_angle.get_out() + gimbal.pitch_plan_rate_lpf * 0.5f;
 
         gimbal.rc_pitch_pid.pid_omega.set_target(gimbal.target_value.pitch_omega);
         gimbal.rc_pitch_pid.pid_omega.set_now(gimbal.now_value.pitch_omega);
         gimbal.rc_pitch_pid.pid_omega.pid_calculate_callback();
-        gimbal.pitch_motor.set_control_torque(basic_math_constrain(-gimbal.rc_pitch_pid.pid_omega.get_out() - 0.65f, -PITCH_TORQUE_LIMIT, PITCH_TORQUE_LIMIT));
+        gimbal.pitch_motor.set_control_torque(basic_math_constrain(-gimbal.rc_pitch_pid.pid_omega.get_out() - gimbal.feedforward_pitch_torque, -PITCH_TORQUE_LIMIT, PITCH_TORQUE_LIMIT));
     }
 
     else if (gimbal.now_method == Gimbal_Method_Auto)   // 自瞄控制模式
@@ -1059,7 +1060,7 @@ void gimbal_motor_calculate(void)
         gimbal.pc_pitch_pid.pid_omega.set_now(gimbal.now_value.pitch_omega);
         // gimbal.pc_pitch_pid.pid_omega.set_now(gimbal.filter_pitch_pitch_omega.get_out());
         gimbal.pc_pitch_pid.pid_omega.pid_calculate_callback();
-        gimbal.pitch_motor.set_control_torque(basic_math_constrain(-gimbal.pc_pitch_pid.pid_omega.get_out() -gimbal.feedforward_pitch_torque, -PITCH_TORQUE_LIMIT, PITCH_TORQUE_LIMIT));
+        gimbal.pitch_motor.set_control_torque(basic_math_constrain(-gimbal.pc_pitch_pid.pid_omega.get_out() - gimbal.feedforward_pitch_torque, -PITCH_TORQUE_LIMIT, PITCH_TORQUE_LIMIT));
         // gimbal.pitch_motor.set_control_torque(-gimbal.pc_pitch_pid.pid_omega.get_out());
         // gimbal.pitch_motor.set_control_torque(-gimbal.pc_pitch_pid.pid_omega.get_out());
     }
