@@ -30,6 +30,7 @@ typedef struct {
     float max_accel_rad_s2;         // 最大角加速度，单位：rad/s^2
     float max_jerk_rad_s3;          // 最大角加加速度，单位：rad/s^3
     float position_gain_per_s;      // 位置比例增益，单位：1/秒
+    float rate_servo_gain_per_s;    // 速率环增益 a=K*(期望角速度-角速度)，单位：1/秒
     float dt_min_s;                 // 最小采样时间，单位：秒
     float dt_max_s;                 // 最大采样时间，单位：秒
     bool wrap_angle;                // 是否进行角度环绕处理(最短角规划)

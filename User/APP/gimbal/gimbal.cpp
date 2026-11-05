@@ -102,7 +102,8 @@ reference_config_t yaw_small_track_plan_config = {
     .max_rate_rad_s = 5.0f,           // 最大角速度，单位：rad/s
     .max_accel_rad_s2 = 60.0f,        // 最大角加速度，单位：rad/s^2
     .max_jerk_rad_s3 = 6000.0f,       // 最大角加加速度，单位：rad/s^3 (≈透明, 仅挡异常尖峰; 太小会削掉正常拐点)
-    .position_gain_per_s = 35.0f,      // 位置比例增益，单位：1/秒 (P滞后≈v/Kp)
+    .position_gain_per_s = 55.0f,      // 位置比例增益，单位：1/秒 (P滞后≈v/Kp)
+    .rate_servo_gain_per_s = 450.0f,   // 速率环增益，单位：1/秒 (wn=13.8Hz, zeta=0.80)
     .dt_min_s = 0.0009f,               // 最小采样时间，单位：秒
     .dt_max_s = 0.005f,                // 最大采样时间，单位：秒
     .wrap_angle = true,                // 是否进行角度环绕处理(最短角规划)
