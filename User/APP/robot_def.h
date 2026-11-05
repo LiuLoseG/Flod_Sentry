@@ -35,14 +35,14 @@
 #define YAW_MOTOR_MID_ANGLE 2.47546154f
 
 // pitch轴电机中间位置角度 (单位: rad)
-#define PITCH_MOTOR_MID_ANGLE -2.73815346f
+#define PITCH_MOTOR_MID_ANGLE -2.80162191f
 // 小yaw电机中间位置角度 (单位: rad)          
 #define YAW_SMALL_MOTOR_MID_ANGLE 2.47546154f      
 
 // 云台PITCH轴限辐，0.780412078 - 1.320412078 = -0.599690202 留0.04f的余量
 #define PITCH_MIN_OFFSET -0.50f 
 // 云台PITCH轴限辐，2.02034688 - 1.38010228 = 0.6402446 留0.08f的余量           
-#define PITCH_MAX_OFFSET 0.65f               
+#define PITCH_MAX_OFFSET 0.68f               
 
 // 云台YAW轴限辐，2.88848591 - 3.49364138 = -0.60515547 留0.04f的余量
 #define YAW_SMALL_MIN_OFFSET -0.56515547f 

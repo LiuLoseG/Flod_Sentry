@@ -49,16 +49,34 @@ float dt_y = 0.001f;  // 1ms
  * (截止 8Hz -> 6.4Hz), 对 0.8Hz 级跟踪信号的幅值损失/相位滞后可忽略。 */
 #define PITCH_PLAN_RATE_LPF_TAU_S      0.025f
 
+/* 规划器输入目标一阶低通时间常数(s)
+ * 原实现 alpha=0.03 硬编码(1kHz 下等效 tau=32.3ms), 这是纯群延迟: 目标先被
+ * 拖慢 32ms 才进规划器, 之后无论环路多快都补不回来, 实测它独占规划滞后的 60%。
+ * 目标本身已是 2ms 级更新、量化台阶中位数仅 0.03°, 这级只需滤掉量化毛刺,
+ * 取 6ms 即可。注意必须用 dt/(tau+dt) 形式, 才能与采样周期解耦。 */
+#define YAW_SMALL_PLAN_INPUT_LPF_TAU_S 0.0015f
+#define PITCH_PLAN_INPUT_LPF_TAU_S     0.0015f
+
+/* 参考前馈低通时间常数(s)
+ * ω_ff: 视觉侧的"目标角速度"是差分/估计出来的, 带二阶噪声。实测叠加 0.3rad/s 噪声时,
+ *       不滤会让规划误差 rms 从 0.40° 恶化到 0.85°(比完全不接前馈的 0.52° 还差);
+ *       10ms 低通能把同一噪声压回 0.43°, 同时保留前馈的滞后补偿能力。
+ * α_ff: 目标角加速度是二阶量, 噪声更大, 且对误差的边际贡献本就很小, 取 20ms。 */
+#define YAW_SMALL_REF_FF_OMEGA_LPF_TAU_S 0.010f
+#define PITCH_REF_FF_OMEGA_LPF_TAU_S     0.010f
+#define YAW_SMALL_REF_FF_ACCEL_LPF_TAU_S 0.020f
+#define PITCH_REF_FF_ACCEL_LPF_TAU_S     0.020f
+
 /* ---- pitch轴前馈力矩系数(与小yaw同结构 + 重力项):
  *      tau = J*a + B*w + Fc*tanh(w/eps) + A*sin(th) + C*cos(th)
  *      A/C 为旁路辨识器 identification_pitch 输出的重力 sin/cos 系数(Nm),
  *      其自变量是辨识样本里的 gravity_angle_rad, 即 IMU pitch 角(rad)。
  *      注意: A/C 与 J/B/Fc 同源, 都是"电机反馈力矩"那一侧的系数。 ----*/
-#define PITCH_FF_J                    0.0100852549f
-#define PITCH_FF_B                    0.0296297334f
-#define PITCH_FF_FC                   0.186175033f
-#define PITCH_FF_A                    0.00154406193f      // 重力 sin 系数 Nm (辨识值)
-#define PITCH_FF_C                    -0.681183577f      // 重力 cos 系数 Nm (辨识值)
+#define PITCH_FF_J                    0.00999190006f
+#define PITCH_FF_B                    0.0370137729f
+#define PITCH_FF_FC                   0.177762061f
+#define PITCH_FF_A                    0.052014865f      // 重力 sin 系数 Nm (辨识值)
+#define PITCH_FF_C                    -0.687797964f      // 重力 cos 系数 Nm (辨识值)
 #define PITCH_FF_EPS                  0.08f          // 摩擦速度过渡尺度 rad/s (须与辨识器 friction_velocity_rad_s 一致)
 #define PITCH_FF_RATE_DEADBAND        0.05f          // 库仑项低速死区 rad/s
 #define PITCH_FF_ACC_LPF_ALPHA        0.05f          // 加速度项低通(≈8Hz@1kHz)
@@ -391,10 +409,10 @@ void gimbal_init(void)
     // 角度环Ki=0 (无积分), 前馈通过Feedforward_Calculate独立提供
     // 注意: pid_class的k_f是简单差分前馈, 由Feedforward_Calculate的OLS前馈替代, 设为0避免重复
     gimbal.rc_pitch_pid.pid_angle.init(12.85f, 0.0f, 0.25f, 0.0f, 2.0f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.1f, PID_D_First_ENABLE);
-    gimbal.rc_pitch_pid.pid_omega.init(0.58f, 0.0f, 0.0f, 0.0f, 1.0f, 3.2f);
+    gimbal.rc_pitch_pid.pid_omega.init(0.62f, 0.0f, 0.0f, 0.0f, 1.0f, 3.2f);
 
     gimbal.pc_pitch_pid.pid_angle.init(12.85f, 0.0f, 0.25f, 0.0f, 2.0f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.1f, PID_D_First_ENABLE);
-    gimbal.pc_pitch_pid.pid_omega.init(0.58f, 0.0f, 0.0f, 0.0f, 1.0f, 3.2f, 0.001f, 0.0f, 0.32f, 0.65f, 0.8f, PID_D_First_ENABLE);
+    gimbal.pc_pitch_pid.pid_omega.init(0.62f, 0.0f, 0.0f, 0.0f, 1.0f, 3.2f, 0.001f, 0.0f, 0.32f, 0.65f, 0.8f, PID_D_First_ENABLE);
 
     // 6.初始化上一帧目标角度
     gimbal.prev_target_small_yaw_angle = gimbal.target_value.small_yaw_angle;
@@ -436,6 +454,14 @@ void gimbal_init(void)
     gimbal.pitch_ff_acc_lpf = 0.0f;          // pitch前馈加速度项低通初始状态
     gimbal.pitch_ff_torque_lpf = 0.0f;       // pitch前馈力矩输出低通初始状态
     gimbal.pitch_plan_dt_cnt = 0;            // pitch规划器DWT计数缓存初始状态
+    gimbal.pitch_ref_omega_ff = 0.0f;        // PC目标角速度前馈初始值
+    gimbal.pitch_ref_accel_ff = 0.0f;        // PC目标角加速度前馈初始值
+    gimbal.yaw_small_ref_omega_ff = 0.0f;    // PC目标角速度前馈初始值
+    gimbal.yaw_small_ref_accel_ff = 0.0f;    // PC目标角加速度前馈初始值
+    gimbal.pitch_ref_omega_ff_lpf = 0.0f;    // 前馈低通状态
+    gimbal.pitch_ref_accel_ff_lpf = 0.0f;
+    gimbal.yaw_small_ref_omega_ff_lpf = 0.0f;
+    gimbal.yaw_small_ref_accel_ff_lpf = 0.0f;
     gimbal.feedforward_pitch_torque = 0.0f;  // pitch力矩前馈输出初始状态
     gimbal.pitch_ff_ref_lpf = gimbal.target_value.pitch_angle;  // [数据平滑] 直接播种到当前目标, 避免上电爬升
     gimbal.prev_pitch_ff_omega = 0.0f;      // [拐点缓冲] 加速度限制器初始状态
@@ -638,10 +664,31 @@ void gimbal_robot_decision_source_update(void)
 }
 
 /**
+ * @brief PC 前馈量统一做有效性检查与物理限幅
+ * @note  协议 25 字节是裸 memcpy, 没有长度/量纲校验, 因此 NaN、异常大值必须在这里挡住:
+ *        NaN 直接归零; 数值按规划器自身的物理上限夹紧(前馈不该超过规划器能走的最大速度)。
+ */
+static float gimbal_sanitize_feedforward(float value, float limit)
+{
+    if (!isfinite(value))
+    {
+        return 0.0f;
+    }
+    return basic_math_constrain(value, -limit, limit);
+}
+
+/**
  * @brief 更新云台控制决策(控制目标设定)
  */
 void gimbal_control_decision(void)
 {
+    /* 参考前馈默认置零: 只有自瞄跟随模式下才使用 PC 下发的目标角速度/角加速度前馈,
+     * 其余模式(零力矩/遥控/索敌扫频)一律为 0, 保持原有行为不变。 */
+    gimbal.pitch_ref_omega_ff = 0.0f;
+    gimbal.pitch_ref_accel_ff = 0.0f;
+    gimbal.yaw_small_ref_omega_ff = 0.0f;
+    gimbal.yaw_small_ref_accel_ff = 0.0f;
+
     if (gimbal.now_method == Gimbal_Method_Zero_Force)  // 零力矩模式(电机失能)
     {
         gimbal.pc_pitch_pid.pid_angle.set_integral_error(0.0f);
@@ -829,12 +876,42 @@ void gimbal_control_decision(void)
                 else
                 {
                     /*----------------------------参数调节段------------------------------*/
+                    const float pitch_pc_target = gimbal.decision->pc_to_mcu_aim.get_pitch_angle();
+                    const float yaw_pc_target   = gimbal.decision->pc_to_mcu_aim.get_yaw_angle();
+                    const float pitch_min = gimbal.pitch_limit_angle + PITCH_MIN_OFFSET;
+                    const float pitch_max = gimbal.pitch_limit_angle + PITCH_MAX_OFFSET;
+                    const float yaw_min   = gimbal.small_yaw_limit_angle + YAW_SMALL_MIN_OFFSET;
+                    const float yaw_max   = gimbal.small_yaw_limit_angle + YAW_SMALL_MAX_OFFSET;
+
                     // gimbal.target_value.pitch_angle = gimbal.now_value.pitch_angle;  // pitch保持当前角度
                     // gimbal.target_value.pitch_angle = basic_math_constrain(wave_generator_calc(&yaw_wave), gimbal.pitch_limit_angle + PITCH_MIN_OFFSET, gimbal.pitch_limit_angle + PITCH_MAX_OFFSET);   
-                    gimbal.target_value.pitch_angle = basic_math_constrain(gimbal.decision->pc_to_mcu_aim.get_pitch_angle(), gimbal.pitch_limit_angle + PITCH_MIN_OFFSET, gimbal.pitch_limit_angle + PITCH_MAX_OFFSET);
+                    gimbal.target_value.pitch_angle = basic_math_constrain(pitch_pc_target, pitch_min, pitch_max);
                     // 波形直接作为小yaw目标, 限幅基准与手动模式一致
-                    gimbal.target_value.small_yaw_angle = basic_math_constrain(gimbal.decision->pc_to_mcu_aim.get_yaw_angle(), gimbal.small_yaw_limit_angle + YAW_SMALL_MIN_OFFSET, gimbal.small_yaw_limit_angle + YAW_SMALL_MAX_OFFSET);
+                    gimbal.target_value.small_yaw_angle = basic_math_constrain(yaw_pc_target, yaw_min, yaw_max);
                     // gimbal.target_value.small_yaw_angle = basic_math_constrain(wave_generator_calc(&yaw_wave), gimbal.small_yaw_limit_angle + YAW_SMALL_MIN_OFFSET, gimbal.small_yaw_limit_angle + YAW_SMALL_MAX_OFFSET);
+
+                    /* 目标角速度/角加速度前馈: 协议里本来就有这两组字段(单位 rad/s, rad/s^2,
+                     * 方向与目标角相同), 之前 MCU 从未读取。接入后规划器按"位置误差 + 前馈"
+                     * 生成参考, 恒速段不再靠位置环"追出来", 从而消掉与目标角速度成正比的滞后。
+                     * 目标被软限位削掉时不给前馈, 否则会持续顶着限位出力。 */
+                    if (pitch_pc_target >= pitch_min && pitch_pc_target <= pitch_max)
+                    {
+                        gimbal.pitch_ref_omega_ff = gimbal_sanitize_feedforward(
+                            gimbal.decision->pc_to_mcu_aim.get_ff_pitch_w(),
+                            pitch_track_plan_config.max_rate_rad_s);
+                        gimbal.pitch_ref_accel_ff = gimbal_sanitize_feedforward(
+                            gimbal.decision->pc_to_mcu_aim.get_ff_pitch_a(),
+                            pitch_track_plan_config.max_accel_rad_s2);
+                    }
+                    if (yaw_pc_target >= yaw_min && yaw_pc_target <= yaw_max)
+                    {
+                        gimbal.yaw_small_ref_omega_ff = gimbal_sanitize_feedforward(
+                            gimbal.decision->pc_to_mcu_aim.get_ff_yaw_w(),
+                            yaw_small_track_plan_config.max_rate_rad_s);
+                        gimbal.yaw_small_ref_accel_ff = gimbal_sanitize_feedforward(
+                            gimbal.decision->pc_to_mcu_aim.get_ff_yaw_a(),
+                            yaw_small_track_plan_config.max_accel_rad_s2);
+                    }
                 }
             }
 
@@ -1022,7 +1099,7 @@ void gimbal_motor_calculate(void)
         gimbal.rc_pitch_pid.pid_angle.set_target(basic_math_constrain(gimbal.target_value.pitch_angle, gimbal.pitch_limit_angle + PITCH_MIN_OFFSET, gimbal.pitch_limit_angle + PITCH_MAX_OFFSET));
         gimbal.rc_pitch_pid.pid_angle.set_now(gimbal.now_value.pitch_angle);
         gimbal.rc_pitch_pid.pid_angle.pid_calculate_callback();
-        gimbal.target_value.pitch_omega = gimbal.rc_pitch_pid.pid_angle.get_out() + gimbal.pitch_plan_rate_lpf * 0.5f;
+        gimbal.target_value.pitch_omega = gimbal.rc_pitch_pid.pid_angle.get_out() + gimbal.pitch_plan_rate_lpf * 0.72f;
 
         gimbal.rc_pitch_pid.pid_omega.set_target(gimbal.target_value.pitch_omega);
         gimbal.rc_pitch_pid.pid_omega.set_now(gimbal.now_value.pitch_omega);
@@ -1042,7 +1119,9 @@ void gimbal_motor_calculate(void)
         gimbal.pc_yaw_small_pid.pid_angle.set_now(gimbal.now_value.small_yaw_angle);
         gimbal.pc_yaw_small_pid.pid_angle.pid_calculate_callback();
         // gimbal.target_value.small_yaw_omega = gimbal.pc_yaw_small_pid.pid_angle.get_out() + gimbal.feedforward_value.small_yaw_omega;
-        gimbal.target_value.small_yaw_omega = gimbal.pc_yaw_small_pid.pid_angle.get_out() + gimbal.yaw_small_plan_rate_lpf * 0.5f;
+        /* 规划角速度全额前馈(原为 0.5): 半额前馈留下的缺口必须由位置环用误差补,
+         * 稳态误差 = 0.5*v/Kp, 与目标角速度成正比, 这也是跟踪滞后的主因之一。 */
+        gimbal.target_value.small_yaw_omega = gimbal.pc_yaw_small_pid.pid_angle.get_out() + gimbal.yaw_small_plan_rate_lpf;
         // gimbal.target_value.small_yaw_omega = gimbal.pc_yaw_small_pid.pid_angle.get_out();
 
         gimbal.pc_yaw_small_pid.pid_omega.set_target(gimbal.target_value.small_yaw_omega);
@@ -1058,7 +1137,9 @@ void gimbal_motor_calculate(void)
         gimbal.pc_pitch_pid.pid_angle.set_now(gimbal.now_value.pitch_angle);
         // gimbal.pc_pitch_pid.pid_angle.set_now(gimbal.filter_imu_pitch_angle.get_out());
         gimbal.pc_pitch_pid.pid_angle.pid_calculate_callback();
-        gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out() + gimbal.pitch_plan_rate_lpf * 0.5f;
+        /* 规划角速度全额前馈(原为 0.5), 理由同小yaw: 半额前馈的缺口要由位置环补,
+         * 于是稳态误差与目标角速度成正比。 */
+        gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out() + gimbal.pitch_plan_rate_lpf;
         // gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out();
         // gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out();
 
@@ -1105,7 +1186,7 @@ void gimbal_motor_parameter_test()
     }
 
     {
-        const float alpha = 0.03f;
+        const float alpha = dt_y / (YAW_SMALL_PLAN_INPUT_LPF_TAU_S + dt_y);
         if (first_call)
         {
             /* 首帧把规划器对齐到当前目标, 避免从 init 时的 0 起跳造成一次大冲击 */
@@ -1116,8 +1197,21 @@ void gimbal_motor_parameter_test()
         gimbal.yaw_small_plan_target_lpf += alpha * (gimbal.target_value.small_yaw_angle - gimbal.yaw_small_plan_target_lpf);
     }
 
-    /* 2. 轨迹规划: 用滤波后的目标 + 实测dt */
-    reference_track_plan_update(&gimbal.yaw_small_track_plan, gimbal.yaw_small_plan_target_lpf, dt_y, &gimbal.yaw_small_plan_output);
+    /* 2. 参考前馈低通: ω_ff/α_ff 由视觉侧差分得到, 含二阶噪声, 直接进规划器会把噪声
+     *    当成速率需求, 反而比不接前馈更差(见宏定义处实测)。这里只滤前馈, 不动目标通路。 */
+    {
+        const float a_w = dt_y / (YAW_SMALL_REF_FF_OMEGA_LPF_TAU_S + dt_y);
+        const float a_a = dt_y / (YAW_SMALL_REF_FF_ACCEL_LPF_TAU_S + dt_y);
+        gimbal.yaw_small_ref_omega_ff_lpf += a_w * (gimbal.yaw_small_ref_omega_ff - gimbal.yaw_small_ref_omega_ff_lpf);
+        gimbal.yaw_small_ref_accel_ff_lpf += a_a * (gimbal.yaw_small_ref_accel_ff - gimbal.yaw_small_ref_accel_ff_lpf);
+    }
+
+    /* 3. 轨迹规划: 目标 + 前馈 + 实测dt
+     *    注意不要在这里对目标做 tau*omega_ff 的超前补偿: 规划器内部已用 omega_ff 建立
+     *    速率需求, 再超前一次等于重复注入速率信息, 实测最大误差会从 3.2° 放大到 8.1°。 */
+    reference_track_plan_update(&gimbal.yaw_small_track_plan, gimbal.yaw_small_plan_target_lpf,
+                                gimbal.yaw_small_ref_omega_ff_lpf, gimbal.yaw_small_ref_accel_ff_lpf,
+                                dt_y, &gimbal.yaw_small_plan_output);
 
     /* 3. 规划角速度低通: 速度环前馈只用规划器算出的 rate, 该 rate 在误差超过
      *    max_accel/gain 后就是斜率 ±max_accel 的折线, 拐角处加速度阶跃会直接
@@ -1192,7 +1286,7 @@ void gimbal_motor_parameter_pitch_test()
 
     /* 1. 规划器输入预滤波 */
     {
-        const float alpha = 0.03f;
+        const float alpha = dt / (PITCH_PLAN_INPUT_LPF_TAU_S + dt);
         if (first_call)
         {
             /* 首帧把规划器对齐到当前目标, 避免从 init 时的 0 起跳造成一次大冲击 */
@@ -1202,8 +1296,18 @@ void gimbal_motor_parameter_pitch_test()
         gimbal.pitch_plan_target_lpf += alpha * (gimbal.target_value.pitch_angle - gimbal.pitch_plan_target_lpf);
     }
 
-    /* 2. 轨迹规划: 用滤波后的目标 + 实测dt */
-    reference_track_plan_update(&gimbal.pitch_track_plan, gimbal.pitch_plan_target_lpf, dt, &gimbal.pitch_plan_output);
+    /* 2. 参考前馈低通(理由同小yaw: 视觉差分量含二阶噪声, 必须滤后再进规划器) */
+    {
+        const float a_w = dt / (PITCH_REF_FF_OMEGA_LPF_TAU_S + dt);
+        const float a_a = dt / (PITCH_REF_FF_ACCEL_LPF_TAU_S + dt);
+        gimbal.pitch_ref_omega_ff_lpf += a_w * (gimbal.pitch_ref_omega_ff - gimbal.pitch_ref_omega_ff_lpf);
+        gimbal.pitch_ref_accel_ff_lpf += a_a * (gimbal.pitch_ref_accel_ff - gimbal.pitch_ref_accel_ff_lpf);
+    }
+
+    /* 3. 轨迹规划: 目标 + 前馈 + 实测dt (不做 tau*omega_ff 超前补偿, 理由见小yaw处注释) */
+    reference_track_plan_update(&gimbal.pitch_track_plan, gimbal.pitch_plan_target_lpf,
+                                gimbal.pitch_ref_omega_ff_lpf, gimbal.pitch_ref_accel_ff_lpf,
+                                dt, &gimbal.pitch_plan_output);
 
     /* 3. 规划角速度低通: 拐角圆化后再送速度环 */
     {

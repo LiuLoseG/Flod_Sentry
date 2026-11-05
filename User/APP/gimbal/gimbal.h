@@ -162,6 +162,16 @@ typedef struct
     float pitch_ff_acc_lpf;                              // 前馈加速度项低通(抑制二阶微分噪声)
     float pitch_ff_torque_lpf;                           // 前馈力矩输出低通(最终兜底)
     uint32_t pitch_plan_dt_cnt;                          // 规划器更新周期DWT计数缓存(用实测dt替代写死0.001)
+    /* ---- PC 下发的参考前馈(仅自瞄跟随模式有效, 其余模式每帧置零) ---- */
+    float pitch_ref_omega_ff;                            // pitch目标角速度前馈(rad/s, 增大pitch角方向)
+    float pitch_ref_accel_ff;                            // pitch目标角加速度前馈(rad/s^2, 同向)
+    float yaw_small_ref_omega_ff;                        // 小yaw目标角速度前馈(rad/s)
+    float yaw_small_ref_accel_ff;                        // 小yaw目标角加速度前馈(rad/s^2)
+    /* 前馈低通状态: 视觉差分量带二阶噪声, 必须滤后再进规划器(见宏定义处实测数据) */
+    float pitch_ref_omega_ff_lpf;
+    float pitch_ref_accel_ff_lpf;
+    float yaw_small_ref_omega_ff_lpf;
+    float yaw_small_ref_accel_ff_lpf;
     /* 最近一次电机反馈帧到达本机的 DWT 时间戳，用于计算反馈年龄。 */
     uint32_t pitch_feedback_timestamp_us;
     uint32_t small_yaw_feedback_timestamp_us;

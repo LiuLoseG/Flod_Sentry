@@ -128,15 +128,18 @@ bool reference_track_plan_reset(reference_track_plan_t *plan, float angle_rad)
 }
 
 /**
- * @brief 更新参考轨迹规划
+ * @brief 更新参考轨迹规划(含目标角速度/角加速度前馈)
  * @param plan 总体轨迹规划结构体
  * @param target_angle_rad 目标角度
+ * @param omega_ff_rad_s 目标角速度前馈(rad/s), 与目标角同向
+ * @param accel_ff_rad_s2 目标角加速度前馈(rad/s^2), 与目标角同向
  * @param dt_s 时间步长
  * @param out_value 输出的参考值
  * @retval true: 更新成功
  * @retval false: 更新失败
  */
-bool reference_track_plan_update(reference_track_plan_t *plan, float target_angle_rad, 
+bool reference_track_plan_update(reference_track_plan_t *plan, float target_angle_rad,
+                                float omega_ff_rad_s, float accel_ff_rad_s2,
                                 float dt_s, reference_value_t *output)
 {
     const reference_config_t *c;
@@ -164,6 +167,16 @@ bool reference_track_plan_update(reference_track_plan_t *plan, float target_angl
         return false;
     }
 
+    // 前馈失效保护: NaN/Inf 直接当 0 处理, 不让它污染规划器状态
+    if (!isfinite(omega_ff_rad_s))
+    {
+        omega_ff_rad_s = 0.0f;
+    }
+    if (!isfinite(accel_ff_rad_s2))
+    {
+        accel_ff_rad_s2 = 0.0f;
+    }
+
     c = &plan->config;
 
     if(dt_s < c->dt_min_s || dt_s > c->dt_max_s
@@ -185,8 +198,10 @@ bool reference_track_plan_update(reference_track_plan_t *plan, float target_angl
         gain *= plan->gain_scale;      // gain_scale ∈ [sat_gain_scale, 1.0]
     }
 
-    // 根据角度误差计算出角速度(拟定的角速度) 
-    desired_rate = gain * error;
+    /* 速率需求 = 位置环提议 + 目标角速度前馈
+     * 前馈给准时 error 会自然趋于 0, Kp*e 项随之消失, 两者不会重复出力;
+     * 前馈缺失(视觉没填)时退化为纯 Kp*e, 与不带前馈的版本完全一致。 */
+    desired_rate = gain * error + omega_ff_rad_s;
 
     // 防止非正常的角速度值(无理数)
     if (!isfinite(error) || !isfinite(desired_rate))
@@ -197,7 +212,9 @@ bool reference_track_plan_update(reference_track_plan_t *plan, float target_angl
     // 限制角速度在最大角速度范围内
     desired_rate = basic_math_constrain(desired_rate, -c->max_rate_rad_s, c->max_rate_rad_s);
 
-    raw_accel = c->rate_servo_gain_per_s * (desired_rate - plan->value.rate_rad_s);
+    /* 加速度前馈直接进加速度需求: 让 rate 更快到达 desired_rate, 消掉速率环的一阶滞后。
+     * 该值随后仍要过 jerk/accel 限幅, 因此异常大的前馈只会表现成一次受限的斜坡, 不会突跳。 */
+    raw_accel = c->rate_servo_gain_per_s * (desired_rate - plan->value.rate_rad_s) + accel_ff_rad_s2;
     // raw_accel = (desired_rate - plan->value.rate_rad_s) / dt_s;
     if (!isfinite(raw_accel))
     {

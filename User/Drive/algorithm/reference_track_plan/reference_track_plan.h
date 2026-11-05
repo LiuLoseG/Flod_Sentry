@@ -61,6 +61,22 @@ bool reference_track_plan_init(reference_track_plan_t *plan, const reference_con
 // 重置参考轨迹规划
 bool reference_track_plan_reset(reference_track_plan_t *plan, float angle_rad);
 
-// 更新参考轨迹规划
-bool reference_track_plan_update(reference_track_plan_t *plan, float target_angle_rad, 
+/**
+ * @brief 更新参考轨迹规划(含目标角速度/角加速度前馈)
+ * @param plan 总体轨迹规划结构体
+ * @param target_angle_rad 目标角度(rad)
+ * @param omega_ff_rad_s 目标角速度前馈(rad/s), 与目标角同向; 传 0 等价于纯位置环跟踪
+ * @param accel_ff_rad_s2 目标角加速度前馈(rad/s^2), 与目标角同向
+ * @param dt_s 时间步长(s)
+ * @param output 输出的参考值
+ * @retval true: 更新成功
+ * @retval false: 更新失败
+ *
+ * @note 前馈并入"速率需求"而不是叠加在输出上: desired_rate = Kp*e + omega_ff,
+ *       raw_accel = K*(desired_rate - rate) + accel_ff。这样前馈只用来"提前"建立
+ *       速率需求, 若前馈给得准, 位置误差自然趋近 0, Kp*e 项自动消失, 不会重复出力。
+ *       若改成在输出上叠加, 则前馈与 Kp*e 会变成两份, 增益等效翻倍。
+ */
+bool reference_track_plan_update(reference_track_plan_t *plan, float target_angle_rad,
+                                float omega_ff_rad_s, float accel_ff_rad_s2,
                                 float dt_s, reference_value_t *output);
