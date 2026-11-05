@@ -81,16 +81,16 @@ reference_config_t yaw_small_track_plan_config = {
     .wrap_angle = true,                // 是否进行角度环绕处理(最短角规划)
     .accel_sat_guard_enable = true,    // 轨迹规划器饱和守护函数
     .sat_gain_scale = 0.5f,           // 饱和时位置增益缩放系数, 0 < scale < 1 (建议 0.4~0.6)
-    .sat_release_per_s = 2.0f,        // 饱和解除后增益恢复速率, 单位 1/s (建议 1~3)
+    .sat_release_per_s = 2.0f,        // 饱和解除后增益恢复速率, 单位 1/s 
 };
 
 // 轨迹规划器参数配置
 reference_config_t pitch_track_plan_config = {
     .max_rate_rad_s = 5.0f,           // 最大角速度，单位：rad/s
     .max_accel_rad_s2 = 64.0f,        // 最大角加速度，单位：rad/s^2 (不要降低: 它同时决定跟随的加速度能力, 降低会加大跟踪滞后)
-    .max_jerk_rad_s3 = 6500.0f,       // 最大角加加速度，单位：rad/s^3 (≈透明, 仅挡异常尖峰; 太小会削掉正常拐点)
-    .position_gain_per_s = 54.0f,      // 位置比例增益，单位：1/秒 (P滞后≈v/Kp)
-    .rate_servo_gain_per_s = 140.0f,   // 速率环增益，单位：1/秒 (wn=13.8Hz, zeta=0.80)
+    .max_jerk_rad_s3 = 6850.0f,       // 最大角加加速度，单位：rad/s^3 (≈透明, 仅挡异常尖峰; 太小会削掉正常拐点)
+    .position_gain_per_s = 65.0f,      // 位置比例增益，单位：1/秒 (P滞后≈v/Kp)
+    .rate_servo_gain_per_s = 350.0f,   // 速率环增益，单位：1/秒 (wn=13.8Hz, zeta=0.80)
     .dt_min_s = 0.0009f,               // 最小采样时间，单位：秒
     .dt_max_s = 0.005f,                // 最大采样时间，单位：秒
     .wrap_angle = true,                // 是否进行角度环绕处理(最短角规划)
@@ -588,7 +588,9 @@ void gimbal_update_measure(void)
         gimbal.now_value.small_yaw_angle = gimbal.imu_data->euler_angle.yaw;
         gimbal.now_value.pitch_angle = gimbal.imu_data->euler_angle.pitch;
 
-        gimbal.pitch_limit_angle = (gimbal.imu_data->euler_angle.roll + (gimbal.pitch_motor.get_total_angle() - PITCH_MOTOR_MID_ANGLE));
+        /* 软限位基准是车体角 = 世界角 ∓ 关节角: pitch 用世界俯仰角(不是 roll), DM 输出轴正方向与
+         * 云台 pitch 正方向相反, 故关节项取 "+"; yaw 两轴同向, 故取 "-"。 */
+        gimbal.pitch_limit_angle = (gimbal.imu_data->euler_angle.pitch + (gimbal.pitch_motor.get_total_angle() - PITCH_MOTOR_MID_ANGLE));
         gimbal.small_yaw_limit_angle = (gimbal.imu_data->euler_angle.yaw - (gimbal.yaw_small_motor.get_now_angle() - YAW_SMALL_MOTOR_MID_ANGLE));
     }
 
