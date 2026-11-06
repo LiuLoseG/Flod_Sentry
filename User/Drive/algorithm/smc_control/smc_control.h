@@ -6,7 +6,7 @@
 
 #include <cmath>
 
-#define SAMPLE_PERIOD 0.002
+#define SAMPLE_PERIOD 0.001
 #define V_EORROR_INTEGRAL_MAX 2000
 #define P_EORROR_INTEGRAL_MAX 2000
 
@@ -36,8 +36,8 @@ typedef struct {
     float v_error_integral;//速度误差积分
 //    float v_error_integral_max; //积分限幅
 
-    float pos_error_eps;   //误差精度
-    float vol_error_eps;   //误差精度
+    float pos_error_eps;   // 位置误差死区阀值
+    float vol_error_eps;   // 速度误差死区阀值
     float error_last;
 }RError;
 

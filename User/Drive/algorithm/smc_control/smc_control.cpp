@@ -138,6 +138,7 @@ float cSMC::SmcCalculate()
             if (std::abs(smc.error.p_error) - smc.error.pos_error_eps < 0)
             {
                 smc.error.p_error = 0;
+                smc.u = 0.0f; 
                 return 0;
             }
 
@@ -152,6 +153,7 @@ float cSMC::SmcCalculate()
             if (std::abs(smc.error.p_error) - smc.error.pos_error_eps < 0)
             {
                 smc.error.p_error = 0;
+                smc.u = 0.0f; 
                 return 0;
             }
 
@@ -166,6 +168,7 @@ float cSMC::SmcCalculate()
             if (std::abs(smc.error.p_error) - smc.error.pos_error_eps < 0)
             {
                 smc.error.p_error = 0;
+                smc.u = 0.0f; 
                 return 0;
             }
 
@@ -196,6 +199,7 @@ float cSMC::SmcCalculate()
             if (std::abs(smc.error.p_error) - smc.error.pos_error_eps < 0)
             {
                 smc.error.p_error = 0;
+                smc.u = 0.0f; 
                 return 0;
             }
 
