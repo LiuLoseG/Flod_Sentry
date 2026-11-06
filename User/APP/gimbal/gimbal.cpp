@@ -1227,11 +1227,10 @@ void gimbal_motor_parameter_test()
             alpha * (gimbal.target_value.small_yaw_angle - gimbal.yaw_small_plan_target_lpf);
     }
 
-    /* 2. 轨迹规划: 用滤波后的目标 + 实测dt */
-    reference_track_plan_update(&gimbal.yaw_small_track_plan,
-                               gimbal.yaw_small_plan_target_lpf,
-                               dt,
-                               &gimbal.yaw_small_plan_output);
+    /* 2. 轨迹规划: 用滤波后的目标 + 实测dt
+     *    目标侧无角速度/角加速度前馈来源(视觉只给角度), 两路前馈传 0 即为纯位置环跟踪
+     */
+    reference_track_plan_update(&gimbal.yaw_small_track_plan, gimbal.yaw_small_plan_target_lpf, 0.0f, 0.0f, dt, &gimbal.yaw_small_plan_output);
 
     /* 3. 前馈力矩: 用真实物理系数, 并抑制二阶微分噪声
      *    tau = J*accel + B*rate + Fc*tanh(rate/eps)
@@ -1248,8 +1247,7 @@ void gimbal_motor_parameter_test()
         const float rate = gimbal.yaw_small_plan_output.rate_rad_s;
 
         /* 加速度项低通: ~8Hz, 抑制量化台阶被二阶微分放大 */
-        gimbal.yaw_small_ff_acc_lpf +=
-            0.05f * (gimbal.yaw_small_plan_output.accel_rad_s2 - gimbal.yaw_small_ff_acc_lpf);
+        gimbal.yaw_small_ff_acc_lpf += 0.05f * (gimbal.yaw_small_plan_output.accel_rad_s2 - gimbal.yaw_small_ff_acc_lpf);
 
         /* 库仑项: 低速死区, 避免速度过零时符号翻转造成方波抖动 */
         float coulomb = 0.0f;
