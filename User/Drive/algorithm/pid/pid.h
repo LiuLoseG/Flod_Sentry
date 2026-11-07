@@ -101,6 +101,8 @@ public:
 
     inline void set_anti_windup_out_max(const float &__anti_windup_out_max);
 
+    void pid_clear();
+
     void pid_calculate_callback();
 
 protected:
