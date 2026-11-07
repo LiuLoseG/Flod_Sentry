@@ -91,6 +91,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     User/Drive/algorithm/slope_math/slope_math.cpp
     User/Drive/algorithm/pid/pid.cpp
     User/Drive/algorithm/pid_fuse/pid_fuse.cpp
+    User/Drive/algorithm/smc_control/smc_control.cpp
     User/Drive/algorithm/user_lib/user_lib.cpp
     User/Drive/algorithm/wave_generator/wave_generator.cpp
 
@@ -194,6 +195,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     User/Drive/algorithm/rls/rls_last
     User/Drive/algorithm/pid
     User/Drive/algorithm/pid_fuse
+    User/Drive/algorithm/smc_control
     User/Drive/algorithm/user_lib
     User/Drive/algorithm/wave_generator
 
