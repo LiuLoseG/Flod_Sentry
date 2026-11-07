@@ -29,7 +29,8 @@ void gimbal_smc_init()
     gimbal_smc.motor_yaw.init(&hfdcan1, 0x11, 0x01, Motor_DM_Control_Method_Normal_MIT, 3.1415926f, 35.0f, 10.0f);
 
     gimbal_smc.smc_yaw.Init();
-    gimbal_smc.smc_yaw.SetParam(0.0004f, 75.0f, 65.0f, 0.03f, 1.0f, 0.3f, EXPONENT, 0.001f);
+    // gimbal_smc.smc_yaw.SetParam(0.0004f, 45.0f, 70.0f, 0.03f, 1.0f, 0.3f, EXPONENT, 0.004f);
+    gimbal_smc.smc_yaw.SetParam(0.0004f, 24.0f, 58.0f, 0.03f, 1.0f, 0.3f, VELSMC, 0.004f);
 
     can_distribution_register(0x01, 0x11, gimbal_yaw_smc_motor_rx_client);
 
@@ -87,7 +88,8 @@ void gimbal_smc_control(void)
 
     else
     {
-        gimbal_smc.smc_yaw.ErrorUpdate(gimbal_smc.tgt_yaw.angle, gimbal_smc.now_yaw.angle, gimbal_smc.now_yaw.speed);
+        // gimbal_smc.smc_yaw.ErrorUpdate(gimbal_smc.tgt_yaw.angle, gimbal_smc.now_yaw.angle, gimbal_smc.now_yaw.speed);
+        gimbal_smc.smc_yaw.ErrorUpdate(gimbal_smc.tgt_yaw.speed, gimbal_smc.now_yaw.speed);
         gimbal_smc.smc_yaw.SmcCalculate();
         gimbal_smc.motor_yaw.set_control_torque(basic_math_constrain(gimbal_smc.smc_yaw.Out(), -0.3f, 0.3f));
     }
