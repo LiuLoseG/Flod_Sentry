@@ -51,6 +51,7 @@ static bool reference_config_valid(const reference_config_t *c)
     return c != NULL && isfinite(c->max_rate_rad_s) && c->max_rate_rad_s > 0.0f &&
     isfinite(c->max_accel_rad_s2) && c->max_accel_rad_s2 > 0.0f && isfinite(c->max_jerk_rad_s3) &&
     isfinite(c->position_gain_per_s) && c->position_gain_per_s > 0.0f &&
+    isfinite(c->rate_servo_gain_per_s) && c->rate_servo_gain_per_s > 0.0f &&
     isfinite(c->dt_min_s) && c->dt_min_s > 0.0f &&
     isfinite(c->dt_max_s) && c->dt_max_s >= c->dt_min_s;
     (!c->accel_sat_guard_enable ||
@@ -127,16 +128,19 @@ bool reference_track_plan_reset(reference_track_plan_t *plan, float angle_rad)
 }
 
 /**
- * @brief 更新参考轨迹规划
+ * @brief 更新参考轨迹规划(含目标角速度/角加速度前馈)
  * @param plan 总体轨迹规划结构体
  * @param target_angle_rad 目标角度
+ * @param omega_ff_rad_s 目标角速度前馈(rad/s), 与目标角同向
+ * @param accel_ff_rad_s2 目标角加速度前馈(rad/s^2), 与目标角同向
  * @param dt_s 时间步长
  * @param out_value 输出的参考值
  * @retval true: 更新成功
  * @retval false: 更新失败
  */
-bool reference_track_plan_update(reference_track_plan_t *plan, float target_angle_rad, 
-                                float dt_s, reference_value_t *output)
+bool reference_track_plan_update(reference_track_plan_t *plan, float target_angle_rad,
+                                 float omega_ff_rad_s, float accel_ff_rad_s2,
+                                 float dt_s, reference_value_t *output)
 {
     const reference_config_t *c;
     reference_value_t next;
@@ -157,16 +161,24 @@ bool reference_track_plan_update(reference_track_plan_t *plan, float target_angl
         return false;
     }
 
-    if(plan == NULL || !plan->is_initialized || !reference_config_valid(&plan->config) 
-       || !isfinite(target_angle_rad) || !isfinite(dt_s))
+    if(plan == NULL || !plan->is_initialized || !reference_config_valid(&plan->config) || !isfinite(target_angle_rad) || !isfinite(dt_s))
     {
         return false;
     }
 
+    // 前馈失效保护: NaN/Inf 直接当 0 处理, 不让它污染规划器状态
+    if (!isfinite(omega_ff_rad_s))
+    {
+        omega_ff_rad_s = 0.0f;
+    }
+    if (!isfinite(accel_ff_rad_s2))
+    {
+        accel_ff_rad_s2 = 0.0f;
+    }
+
     c = &plan->config;
 
-    if(dt_s < c->dt_min_s || dt_s > c->dt_max_s
-       || !isfinite(plan->value.angle_rad) || !isfinite(plan->value.rate_rad_s))
+    if(dt_s < c->dt_min_s || dt_s > c->dt_max_s || !isfinite(plan->value.angle_rad) || !isfinite(plan->value.rate_rad_s))
     {
         return false;
     }
@@ -174,18 +186,15 @@ bool reference_track_plan_update(reference_track_plan_t *plan, float target_angl
     // 当前目标角度与参考轨迹规划点的角度误差
     error = angle_error(target_angle_rad, plan->value.angle_rad, c->wrap_angle);
 
-    /* ===== P1: 位置增益(含饱和感知缩放) =====
-     * 机理: accel 顶限幅 => 参考被迫削斜率 => 该频点附加约 -90° 相位;
-     *       若环路增益仍 >=1, 闭环进入近极限环。饱和时把位置增益按 sat_gain_scale 缩小,
-     *       用"降低环路增益"换回相位裕度, 打破"饱和->振荡"的正反馈。 */
+    // 位置环增益
     gain = c->position_gain_per_s;
     if (c->accel_sat_guard_enable)
     {
         gain *= plan->gain_scale;      // gain_scale ∈ [sat_gain_scale, 1.0]
     }
 
-    // 根据角度误差计算出角速度(拟定的角速度) 
-    desired_rate = gain * error;
+    // 速率需求 = 位置环提供 + 目标角速度前馈
+    desired_rate = gain * error + omega_ff_rad_s;
 
     // 防止非正常的角速度值(无理数)
     if (!isfinite(error) || !isfinite(desired_rate))
@@ -196,8 +205,9 @@ bool reference_track_plan_update(reference_track_plan_t *plan, float target_angl
     // 限制角速度在最大角速度范围内
     desired_rate = basic_math_constrain(desired_rate, -c->max_rate_rad_s, c->max_rate_rad_s);
 
-    // 记录"未限幅需求加速度", 供饱和检测
-    raw_accel = (desired_rate - plan->value.rate_rad_s) / dt_s;
+    // 加速度前馈直接进加速度需求，让 rate 更快到达 desired_rate, 消掉速率环的一阶滞后。
+    raw_accel = c->rate_servo_gain_per_s * (desired_rate - plan->value.rate_rad_s) + accel_ff_rad_s2;
+    // raw_accel = (desired_rate - plan->value.rate_rad_s) / dt_s;
     if (!isfinite(raw_accel))
     {
         return false;
@@ -211,9 +221,7 @@ bool reference_track_plan_update(reference_track_plan_t *plan, float target_angl
         // 限制角加速度的变化率(角加加速度)在最大角加加速度范围内
         float max_delta_accel = c->max_jerk_rad_s3 * dt_s;
         
-        float jerk_clamp = basic_math_constrain(desired_accel, 
-            plan->value.accel_rad_s2 - max_delta_accel,
-            plan->value.accel_rad_s2 + max_delta_accel);
+        float jerk_clamp = basic_math_constrain(desired_accel, plan->value.accel_rad_s2 - max_delta_accel, plan->value.accel_rad_s2 + max_delta_accel);
         // 检测是否被限幅削峰，如果被限幅则标记 limited = true
         if (fabsf(jerk_clamp - desired_accel) > 1e-6f) limited = true;
         desired_accel = jerk_clamp;
