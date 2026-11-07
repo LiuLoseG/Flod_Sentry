@@ -60,6 +60,26 @@ void pid_class::init(const float &__k_p, const float &__k_i, const float &__k_d,
 }
 
 /**
+ * @brief PID复位, 清空积分、微分滤波器与历史状态, 参数保持不变
+ */
+void pid_class::pid_clear()
+{
+    integral_error = 0.0f;
+    d_filter_out = 0.0f;
+
+    term = {};
+
+    out = 0.0f;
+    out_unsaturated = 0.0f;
+    pre_out = 0.0f;
+    pre_error = 0.0f;
+
+    // 历史值对齐当前输入, 避免复位后首帧的微分/前馈冲击
+    pre_now = now;
+    pre_target = target;
+}
+
+/**
  * @brief PID调整值, 计算周期与D_T相同
  *
  */

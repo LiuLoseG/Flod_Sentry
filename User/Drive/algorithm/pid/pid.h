@@ -44,14 +44,14 @@ typedef enum
  */
 typedef struct
 {
-    float p_out;        // P输出
-    float i_out;        // I输出
-    float d_out;        // D输出
-    float f_out;        // 前馈输出
+    float p_out = 0.0f;             // P输出
+    float i_out = 0.0f;             // I输出
+    float d_out = 0.0f;             // D输出
+    float f_out = 0.0f;             // 前馈输出
     
-    float error;        // 当前误差
-    float abs_error;     // 当前误差绝对值
-    float speed_ratio;    // 积分变速比例系数
+    float error = 0.0f;             // 当前误差
+    float abs_error = 0.0f;         // 当前误差绝对值
+    float speed_ratio = 0.0f;       // 积分变速比例系数
 } pid_term_t;
 
 /**
@@ -100,6 +100,8 @@ public:
     inline void set_anti_windup_gain(const float &__anti_windup_gain);
 
     inline void set_anti_windup_out_max(const float &__anti_windup_out_max);
+
+    void pid_clear();
 
     void pid_calculate_callback();
 

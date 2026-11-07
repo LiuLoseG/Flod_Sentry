@@ -102,7 +102,8 @@ reference_config_t yaw_small_track_plan_config = {
     .max_rate_rad_s = 5.0f,           // 最大角速度，单位：rad/s
     .max_accel_rad_s2 = 60.0f,        // 最大角加速度，单位：rad/s^2
     .max_jerk_rad_s3 = 6000.0f,       // 最大角加加速度，单位：rad/s^3 (≈透明, 仅挡异常尖峰; 太小会削掉正常拐点)
-    .position_gain_per_s = 35.0f,      // 位置比例增益，单位：1/秒 (P滞后≈v/Kp)
+    .position_gain_per_s = 55.0f,      // 位置比例增益，单位：1/秒 (P滞后≈v/Kp)
+    .rate_servo_gain_per_s = 450.0f,   // 速率环增益，单位：1/秒 (wn=13.8Hz, zeta=0.80)
     .dt_min_s = 0.0009f,               // 最小采样时间，单位：秒
     .dt_max_s = 0.005f,                // 最大采样时间，单位：秒
     .wrap_angle = true,                // 是否进行角度环绕处理(最短角规划)
@@ -1226,11 +1227,10 @@ void gimbal_motor_parameter_test()
             alpha * (gimbal.target_value.small_yaw_angle - gimbal.yaw_small_plan_target_lpf);
     }
 
-    /* 2. 轨迹规划: 用滤波后的目标 + 实测dt */
-    reference_track_plan_update(&gimbal.yaw_small_track_plan,
-                               gimbal.yaw_small_plan_target_lpf,
-                               dt,
-                               &gimbal.yaw_small_plan_output);
+    /* 2. 轨迹规划: 用滤波后的目标 + 实测dt
+     *    目标侧无角速度/角加速度前馈来源(视觉只给角度), 两路前馈传 0 即为纯位置环跟踪
+     */
+    reference_track_plan_update(&gimbal.yaw_small_track_plan, gimbal.yaw_small_plan_target_lpf, 0.0f, 0.0f, dt, &gimbal.yaw_small_plan_output);
 
     /* 3. 前馈力矩: 用真实物理系数, 并抑制二阶微分噪声
      *    tau = J*accel + B*rate + Fc*tanh(rate/eps)
@@ -1247,8 +1247,7 @@ void gimbal_motor_parameter_test()
         const float rate = gimbal.yaw_small_plan_output.rate_rad_s;
 
         /* 加速度项低通: ~8Hz, 抑制量化台阶被二阶微分放大 */
-        gimbal.yaw_small_ff_acc_lpf +=
-            0.05f * (gimbal.yaw_small_plan_output.accel_rad_s2 - gimbal.yaw_small_ff_acc_lpf);
+        gimbal.yaw_small_ff_acc_lpf += 0.05f * (gimbal.yaw_small_plan_output.accel_rad_s2 - gimbal.yaw_small_ff_acc_lpf);
 
         /* 库仑项: 低速死区, 避免速度过零时符号翻转造成方波抖动 */
         float coulomb = 0.0f;
