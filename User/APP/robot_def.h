@@ -69,7 +69,7 @@
 #define FRICT_TORQUE_ERR_HIGH  0.030f  // 偏差高于此值使用α_max(真实力矩事件)
 
 // 拨盘电机齿轮减速比
-#define TRTGGER_TOOTHED_REDUCTION 2.5f    
+#define TRTGGER_TOOTHED_REDUCTION 1.25f
 
 // 拨盘满载弹丸数量
 #define TRIGGER_PILL_NUM        9.0f               
@@ -78,7 +78,7 @@
 #define TRIGGER_PILL_TURN_RAD ((TRTGGER_TOOTHED_REDUCTION * 2.0f * PI) / TRIGGER_PILL_NUM)       
 
 // 拨盘电机默认旋转频率18HZ(单位: Hz)
-#define TRIGGER_AMMO_FREQUENCY_DEFAULT   18.0f
+#define TRIGGER_AMMO_FREQUENCY_DEFAULT   5.0f
 // 拨盘电机默认旋转速度18HZ(单位: rad/s)
 #define TRIGGER_DRIVER_OMEGA_DEFAULT ((TRIGGER_AMMO_FREQUENCY_DEFAULT / 9.0f * TRTGGER_TOOTHED_REDUCTION) * 2.0f * PI)
 

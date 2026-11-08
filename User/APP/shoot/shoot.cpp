@@ -73,8 +73,8 @@ void shoot_init(void)
     shoot.fric_r_motor.pid_omega.init(0.00135f, 0.0f, 0.0f, 0.0f, 5.0f, 20.0f);
     shoot.fric_l_motor.pid_omega.init(0.00135f, 0.0f, 0.0f, 0.0f, 5.0f, 20.0f);
 
-    shoot.trigger_motor.pid_angle.init(30.0f, 0.0f, 0.0f, 0.0f, 5.0f, 35.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE);
-    shoot.trigger_motor.pid_omega.init(0.85f, 0.0f, 0.004f, 0.0f, 5.0f, 10.0f);
+    shoot.trigger_motor.pid_angle.init(15.0f, 0.0f, 0.0f, 0.0f, 5.0f, 35.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE);
+    shoot.trigger_motor.pid_omega.init(1.2f, 0.0f, 0.003f, 0.0f, 5.0f, 10.0f);
 
     // 斜坡函数初始化，摩擦轮电机转速缓慢上升
     shoot.fric_r_slope.init(0.12f, 0.12f, Slope_First_REAL);
@@ -91,7 +91,7 @@ void shoot_init(void)
     shoot.fric_spin_up_flag = false;    // 摩擦轮电机转速上升标志位, 0:未上升, 1:已上升
 
     // 波形生成器初始化，拨盘电机角度跟踪波形
-    wave_generator_init(&trigger_wave, WAVE_SQUARE, 0.2f, 1.7453f, 0.0f);
+    wave_generator_init(&trigger_wave, WAVE_SQUARE, 0.2f, TRIGGER_PILL_TURN_RAD, 0.0f);
     wave_generator_enable(&trigger_wave);
 
     // 注册 CAN 接收分发规则（统一分发层）
@@ -112,7 +112,7 @@ void shoot_init(void)
 void shoot_update_mode(void)
 {
     // 卡弹状态机计算
-    shoot.jamming_fsm.fsm_calculate_callback();  // 卡弹状态机计算
+    // shoot.jamming_fsm.fsm_calculate_callback();  // 卡弹状态机计算
 
     switch (shoot.crsf->get_left_toggle())
     {
@@ -256,7 +256,7 @@ void shoot_frict_motor_spin_up(void)
 void shoot_control_decision(void)
 {
     // 摩擦轮电机失能切换提速
-    shoot_frict_motor_spin_up();  
+    // shoot_frict_motor_spin_up();  
 
     switch (shoot.now_mode)
     {
@@ -476,10 +476,10 @@ void shoot_motor_parameter_test(void)
 {
     shoot_update_measure();
 
-    shoot.target_value.trigger_angle = wave_generator_calc(&trigger_wave);
+    // shoot.target_value.trigger_angle = wave_generator_calc(&trigger_wave);
     shoot.trigger_motor.set_target_angle(shoot.target_value.trigger_angle);
     shoot.trigger_motor.internal_calculate_callback();
-    bsp_can_1_to_4_transmit(&hfdcan3, 0x200, can3_0x200_tx_data, Can_Transmit_Frequency_Div1);
+    bsp_can_1_to_4_transmit(&hfdcan2, 0x200, can2_0x200_tx_data, Can_Transmit_Frequency_Div1);
 }
 
 /**
