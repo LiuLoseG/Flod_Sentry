@@ -1,8 +1,16 @@
+/**
+ * @file gimbal.h
+ * @author Robin Liu (19038200162@163.com)
+ * @brief 
+ * @date 2026-11-08
+ * @version 0.1
+ * @copyright HNAU-Robot (c) 2026
+ */
+
 #pragma once
 
 #include "dm_motor.h"
-#include "dji_motor_new.h"
-#include "lk_motor.h"
+#include "imu_temp_ctrl.h"
 #include "hi12_imu.h"
 #include "remote_center.h"
 
@@ -12,16 +20,12 @@
 
 #include "robot_def.h"
 #include "basic_math.h"
-#include "controller.h"
 
 #include "robot_decision.h"
 #include "general_filter.h"
 #include "wave_generator.h"
-#include "rls.h"
 #include "gimbal_identification.h"
 #include "reference_track_plan.h"
-
-#include "kalman_new.h"
 
 /**
  * @brief 云台模式枚举
@@ -38,10 +42,25 @@ typedef enum
  */
 typedef enum
 {
-    Gimbal_Auto_Disable = 0,
-    Gimbal_Auto_Follow = 1,
-    Gimbal_Auto_Scan = 2,
+    Gimbal_Auto_Disable = 0,        // 自瞄关闭
+    Gimbal_Auto_Follow = 1,         // 自瞄跟随 
+    Gimbal_Auto_Scan = 2,           // 自瞄扫描
 } gimbal_mode_e;
+
+/**
+ * @brief 云台原始控制数据输入和滤波值
+ */
+typedef struct
+{
+    float yaw_angle;          // 目标偏航角度
+    float pitch_angle;        // 目标俯仰角度
+
+    float yaw_omega;          // 目标偏航角速度
+    float pitch_omega;        // 目标俯仰角速度
+
+    float yaw_torque;         // 目标偏航力矩
+    float pitch_torque;       // 目标俯仰力矩
+} gimbal_input_control_t;
 
 /**
  * @brief 云台角度、角速度结构体
@@ -49,14 +68,18 @@ typedef enum
  */
 typedef struct
 {
-    float gimbal_yaw_angle;          // 云台偏航角度(来自于IMU)
-    float small_yaw_angle;          // 小yaw云台偏航角度(来自于IMU)
-    float big_yaw_angle;            // 大yaw云台偏航角度(来自于IMU)
-    float pitch_angle;              // 云台俯仰角度(来自于IMU)
+    float gimbal_yaw_angle;          // 云台偏航角度(IMU)
 
-    float small_yaw_omega;          // 小yaw云台偏航角速度(来自于IMU加速度)
-    float big_yaw_omega;            // 大yaw云台偏航角速度(来自于IMU加速度)
-    float pitch_omega;              // 云台俯仰角速度(来自于IMU加速度)
+    float small_yaw_angle;           // 小yaw角度
+    float small_pitch_angle;         // 小pitch角度
+    float big_yaw_angle;             // 大yaw角度
+    float big_pitch_angle;           // 大pitch角度
+
+    float small_yaw_omega;           // 小yaw角速度
+    float small_pitch_omega;         // 小pitch角速度
+    float big_yaw_omega;             // 大yaw角速度
+    float big_pitch_omega;           // 大pitch角速度
+
 } gimbal_observate_control_t;
 
 /**
@@ -66,14 +89,55 @@ typedef struct
 typedef struct
 {
     float chassis_angular; // 底盘角速度补偿前馈量
-    float big_yaw_omega;   // 大yaw电机角速度前馈
-    float small_yaw_omega; // 小yaw电机角速度前馈
-    float pitch_omega;     // pitch电机角速度前馈
 
-    float big_yaw_torque;   // 大yaw电机力矩前馈
+    float small_yaw_omega; // 小yaw电机角速度前馈
+    float small_pitch_omega; // 小pitch电机角速度前馈
+    float big_yaw_omega;   // 大yaw电机角速度前馈
+    float big_pitch_omega; // 大pitch电机角速度前馈
+
     float small_yaw_torque; // 小yaw电机力矩前馈
-    float pitch_torque;     // pitch电机力矩前馈
+    float small_pitch_torque; // 小pitch电机力矩前馈
+    float big_yaw_torque;   // 大yaw电机力矩前馈
+    float big_pitch_torque; // 大pitch电机力矩前馈
+
 } gimbal_motor_feedforward_t;
+
+/**
+ * @brief 云台自瞄低通滤波器结构体
+ */
+typedef struct
+{
+    low_pass_filter_class yaw_angle;
+    low_pass_filter_class pitch_angle;
+
+    low_pass_filter_class yaw_omega;
+    low_pass_filter_class pitch_omega;
+
+    low_pass_filter_class yaw_torque;
+    low_pass_filter_class pitch_torque;
+} gimbal_low_pass_filter_t;
+
+/**
+ * @brief 云台任务两次反馈时间s
+ */
+typedef struct
+{
+    float small_yaw_s;     // 小yaw电机反馈时间戳(s)
+    float small_pitch_s;   // 小pitch电机反馈时间戳(s)
+    float big_yaw_s;       // 大yaw电机反馈时间戳(s)
+    float big_pitch_s;     // 大pitch电机反馈时间戳(s)
+} gimbal_feedback_timestamp_t;
+
+/**
+ * @brief 云台电机反馈时间戳us
+ */
+typedef struct
+{
+    uint32_t small_yaw_us;     // 小yaw电机反馈时间戳(us)
+    uint32_t small_pitch_us;   // 小pitch电机反馈时间戳(us)
+    uint32_t big_yaw_us;       // 大yaw电机反馈时间戳(us)
+    uint32_t big_pitch_us;     // 大pitch电机反馈时间戳(us)
+} gimbal_timestamp_us_t;
 
 /**
  * @brief 云台PID结构体
@@ -81,20 +145,9 @@ typedef struct
  */
 typedef struct
 {
-    pid_class pid_angle; // 云台角度PID控制器
-    pid_class pid_omega; // 云台角速度PID控制器
+    pid_class angle; // 云台角度PID控制器
+    pid_class speed; // 云台角速度PID控制器
 } gimbal_pid_t;
-
-/**
- * @brief pitch轴重力补偿结构体
- * @note 用于补偿pitch轴的重力影响，提升控制精度
- */
-typedef struct
-{
-    // 多项拟合系数(3:三次项系数 2:二次项系数 1:一次项系数 0:常数系数)
-    float factor[4]; // pitch轴重力补偿系数
-    float amount; // pitch轴重力补偿量
-} pitch_gravity_compensation_t;
 
 /**
  * @brief 云台结构体
@@ -102,85 +155,85 @@ typedef struct
  */
 typedef struct
 {
-    crsf_class *crsf; // 遥控器对象指针
-    volatile hi12_gyro *hi12_imu;                   // 陀螺仪对象指针 (volatile: 中断中更新)  
-    gimbal_decision_source_t *source; // 云台控制用于决策的源数据
-    robot_decision_class *decision; // 机器人决策对象指针
 
-    // Core::Control::Math::RLS<2> rls{1e-5f, 0.99999f};
-/*-----------------------------------当期值、目标值、滤波值获取---------------------------------------------*/
-    gimbal_observate_control_t now_value;          // 云台当前角度、角速度
-    gimbal_observate_control_t filter_value;       // 云台滤波后的角度、角速度
-    gimbal_observate_control_t target_value;       // 云台目标角度、角速度
+/*-------------------------------------总观测指针--------------------------------------------*/    
+    crsf_class *crsf;                   // 遥控器对象指针
+    volatile imu_data_resolve_t *imu_data; // IMU数据对象指针 (volatile: 中断中更新)
+    volatile hi12_gyro *hi12_imu;       // 陀螺仪对象指针 (volatile: 中断中更新)  
+    gimbal_decision_source_t *source;   // 云台控制用于决策的源数据
+    robot_decision_class *decision;     // 机器人决策对象指针
 
-    // 扫频索敌
-    float now_s_yaw_angle;
+/*------------------------------当期值、目标值、滤波值获取-------------------------------------*/
 
-    // yaw,pitch角度扫描方向标志
-    uint8_t pit_towards_flag;
-    uint8_t yaw_towards_flag;
+    // 传感器当前值
+    gimbal_observate_control_t now_val;
+    // 传感器滤波值          
+    gimbal_observate_control_t now_fil_val;    
 
-    // 前馈量相关
-    float prev_target_small_yaw_angle;                   // 上一帧目标yaw角度, 用于计算角速度前馈
-    float prev_big_yaw_omega;                            // 上一帧大yaw角速度指令(经速率限制后), 平滑Follow/Scan切换阶跃
-    uint32_t big_yaw_omega_rl_cnt;                       // 大yaw角速度指令速率限制器的DWT计数缓存
-    float prev_small_yaw_ff_omega;                       // 上一帧小yaw角速度前馈(经速率限制后), 用于平滑拐点
-    float prev_pitch_ff_torque;                          // 上一帧pitch力矩前馈(经速率限制后), 用于平滑目标抖动
-    float yaw_small_ff_dc_mean;                          // DC blocker 均值跟踪, 用于去除前馈目标角度的直流偏置
-    float yaw_small_ff_enc_lpf;                          // 前馈参考专用编码器角低通(仅用于前馈通道, 抑制13bit量化被B项微分放大)
-    float yaw_small_ff_delta_lpf;                        // 前馈参考专用"视觉跟踪误差"低通(抑制PC零阶保持台阶被B项微分放大)
+    // 原始输入目标值
+    gimbal_input_control_t input_val;
+     // 原始输入目标值滤波
+    gimbal_input_control_t input_fil_val;
 
-    float pitch_ff_ref_lpf;                              // pitch前馈参考专用低通(仅前馈通道, 抑制PC零阶保持台阶被B项微分放大) [数据平滑]
-    float prev_pitch_ff_omega;                           // 上一帧pitch角速度前馈(经拐点缓冲后), 用于平滑拐点 [拐点缓冲]
+    // 控制量目标值   
+    gimbal_observate_control_t target_val;  
+
+    // 前馈量     
+    gimbal_motor_feedforward_t ffd_val;  
+    // 前馈滤波量
+    gimbal_motor_feedforward_t ffd_fil_val;  
+
+/*------------------------------------控制低通滤波器---------------------------------------------*/
+    // 云台自瞄低通滤波器对象
+    gimbal_low_pass_filter_t pc_filter;  
+    // 云台自瞄轨迹规划器低通滤波器对象
+    gimbal_low_pass_filter_t plan_filter;
+    // 底盘角速度补偿前馈低通滤波器对象
+    low_pass_filter_class chassis_angular_filter;
+
+/*------------------------------------重力/摩擦力+系统辨识参数----------------------------------------*/
+    gimbal_identification_t ident_small_yaw;
+    gimbal_identification_config_t ident_small_yaw_config;
+    gimbal_identification_sample_t ident_small_yaw_sample;
+    gimbal_identification_output_t ident_small_yaw_output;
+
+    gimbal_identification_t ident_small_pitch;
+    gimbal_identification_config_t ident_small_pitch_config;
+    gimbal_identification_sample_t ident_small_pitch_sample;
+    gimbal_identification_output_t ident_small_pitch_output;
     
-    gimbal_motor_feedforward_t feedforward_value;       // 云台电机前馈量
+/*--------------------------------------轨迹规划器---------------------------------------------*/
+    reference_config_t small_yaw_plan_config; // 小yaw轨迹规划器配置
+    reference_track_plan_t small_yaw_plan; // 小yaw轨迹规划器
+    reference_value_t small_yaw_plan_output; // 小yaw轨迹规划器输出
 
-    float pitch_limit_angle;
-/*------------------------------------底盘角速度补偿前馈---------------------------------------------*/
-    // 底盘角速度低通滤波器, 用于抑制底盘角速度的高频噪声对云台控制的影响
-    low_pass_filter_class chassis_angular_lpf; 
-/*------------------------------------自瞄低通滤波器---------------------------------------------*/
-    low_pass_filter_class filter_yaw;
-    low_pass_filter_class filter_pitch;
-/*------------------------------------重力/摩擦力补偿量---------------------------------------------*/
-    pitch_gravity_compensation_t pitch_gravity_comp; // pitch轴重力补偿量
-    low_pass_filter_class pitch_gravity_comp_filter; // pitch轴重力补偿量低通滤波器
-    /* 旁路辨识器只读取反馈，不修改云台控制输出。 */
-    // gimbal_identification_t identification_pitch;
-    gimbal_identification_t identification_small_yaw;
-    // gimbal_identification_t identification_big_yaw;
-    // gimbal_identification_output_t identification_pitch_output;
-    gimbal_identification_output_t identification_small_yaw_output;
-    gimbal_identification_sample_t sample;
-    float feedforward_small_yaw_torque;
-    /* ---- 小yaw轨迹规划/前馈降噪状态 ---- */
-    float yaw_small_plan_target_lpf;                     // 规划器输入目标低通(抑制target量化台阶,使规划器可用更高增益)
-    float yaw_small_ff_acc_lpf;                          // 前馈加速度项低通(抑制二阶微分噪声)
-    float yaw_small_ff_torque_lpf;                       // 前馈力矩输出低通(最终兜底)
-    uint32_t yaw_small_plan_dt_cnt;                      // 规划器更新周期DWT计数缓存(用实测dt替代写死0.001)
-    // gimbal_identification_output_t identification_big_yaw_output;
-    /* 最近一次电机反馈帧到达本机的 DWT 时间戳，用于计算反馈年龄。 */
-    uint32_t pitch_feedback_timestamp_us;
-    uint32_t small_yaw_feedback_timestamp_us;
-    uint32_t big_yaw_feedback_timestamp_us;
-    // Core::Control::Math::RLS<4> rls{1e-5f, 0.99999f};
-    // Matrixf<4, 1> samples;
-    // Matrixf<4, 1> params;
+    reference_config_t small_pitch_plan_config; // 小pitch轨迹规划器配置
+    reference_track_plan_t small_pitch_plan; // 小pitch轨迹规划器
+    reference_value_t small_pitch_plan_output; // 小pitch轨迹规划器输出
+
 /*----------------------------------遥控器控制PID---------------------------------------------*/
-    pid_class rc_yaw_big_angle_pid;            // 大yaw电机角度PID控制器
-    gimbal_pid_t rc_yaw_small_pid;             // 小yaw电机PID控制器
-    gimbal_pid_t rc_pitch_pid;                 // pitch电机PID控制器
-/*------------------------------------自瞄控制PID---------------------------------------------*/
-    gimbal_pid_t pc_yaw_big_pid;                // 大yaw电机角度PID控制器
-    gimbal_pid_t pc_yaw_small_pid;             // 小yaw电机PID控制器
-    gimbal_pid_t pc_pitch_pid;                 // pitch电机PID控制器
-/*------------------------------------自瞄前馈补偿量---------------------------------------------*/
-    Feedforward_t pc_pitch_ffc;                // pitch电机前馈补偿量
-    Feedforward_t pc_yaw_small_ffc;            // 小yaw电机前馈补偿量
+    gimbal_pid_t rc_small_yaw_pid;
+    gimbal_pid_t rc_small_pitch_pid;
+
+    gimbal_pid_t rc_big_yaw_pid;
+    gimbal_pid_t rc_big_pitch_pid;
+
+/*-----------------------------------自瞄控制PID----------------------------------------------*/
+    gimbal_pid_t pc_small_yaw_pid;
+    gimbal_pid_t pc_small_pitch_pid;
+
+    gimbal_pid_t pc_big_yaw_pid;
+    gimbal_pid_t pc_big_pitch_pid;
+
 /*------------------------------------电机对象创建---------------------------------------------*/
-    lk_motor_normal_class yaw_big_motor;           // 大yaw电机对象
-    dji_gm6020_motor_class yaw_small_motor;        // 小yaw电机对象
-    dm_motor_normal_class pitch_motor;             // pitch电机对象
+    dm_motor_normal_class small_yaw_motor;    // 小yaw电机对象
+    dm_motor_normal_class small_pitch_motor;  // 小pitch电机对象
+
+    dm_motor_normal_class big_yaw_motor;      // 大yaw电机对象
+    dm_motor_normal_class big_pitch_motor;    // 大pitch电机对象
+
+    gimbal_feedback_timestamp_t feedback_timestamp; // 云台电机反馈时间(s)
+    gimbal_timestamp_us_t timestamp; // 云台电机反馈时间戳(us)
 /*------------------------------------云台控制方式---------------------------------------------*/
     gimbal_method_e now_method; // 云台控制方式
     gimbal_method_e last_method; // 云台上一次控制方式, 用于检测模式切换
@@ -188,18 +241,6 @@ typedef struct
     gimbal_mode_e now_mode; // 云台当前控制模式
     gimbal_mode_e last_mode; // 云台上次控制模式
 
-    //等待IMU稳定状态
-    uint16_t imu_frame_cnt;     // 已接收的有效 HI91 帧计数
-    uint8_t  imu_attitude_ready; // 1 = IMU 姿态数据已稳定 (滤波器已收敛)
-
-    // 限位标定状态
-    uint8_t  limit_offset_ready; // 1 = 小yaw限位零点偏移已标定并冻结
-/*------------------------------------轨迹规划测试---------------------------------------------*/
-    reference_track_plan_t yaw_small_track_plan; // 小yaw云台参考轨迹规划器
-    reference_value_t yaw_small_plan_output; // 小yaw云台参考轨迹规划器输出
-
-    class_filter_kalman<> filter_yaw_omega; // 小yaw云台卡尔曼滤波器
-    float filter_angle;
-    float filter_omega;
+    bool control_ready; // 云台任务自检
 
 } gimbal_t;
