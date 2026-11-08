@@ -164,7 +164,6 @@ typedef struct
     robot_decision_class *decision;     // 机器人决策对象指针
 
 /*------------------------------当期值、目标值、滤波值获取-------------------------------------*/
-
     // 传感器当前值
     gimbal_observate_control_t now_val;
     // 传感器滤波值          
@@ -182,6 +181,11 @@ typedef struct
     gimbal_motor_feedforward_t ffd_val;  
     // 前馈滤波量
     gimbal_motor_feedforward_t ffd_fil_val;  
+
+    // 小pitch轴IMU限辐角度
+    float small_pitch_imu_limit_angle; 
+    // 大pitch电机限辐角度
+    bool big_pitch_ready; 
 
 /*------------------------------------控制低通滤波器---------------------------------------------*/
     // 云台自瞄低通滤波器对象

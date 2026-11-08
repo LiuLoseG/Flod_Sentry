@@ -13,6 +13,7 @@
 
 #include "robot_decision.h"
 #include "can_distribution.h"
+#include "robot_def.h"
 
 // 调用can板间通讯类的接收数据解析函数
 static void can_comm_board_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
@@ -313,7 +314,7 @@ void robot_data_transmission_update(void)
     
     else
     {
-        temp_yaw = basic_math_loop_constrain(gimbal_decision_source.big_yaw_angle + (gimbal_decision_source.small_yaw_angle - YAW_SMALL_MOTOR_MID_ANGLE), -PI, PI);
+        temp_yaw = basic_math_loop_constrain(gimbal_decision_source.big_yaw_angle + (gimbal_decision_source.small_yaw_angle - SMALL_YAW_MOTOR_MID_ANGLE), -PI, PI);
     }
 
 #if YAW_RAD_MIDDLE_THAN_ZERO == 0   // 云台初始化yaw轴中值位置 <= 0.0f

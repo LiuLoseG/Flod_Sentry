@@ -34,25 +34,31 @@
 // yaw电机中间位置角度 (单位: rad)
 #define YAW_MOTOR_MID_ANGLE 1.64509869f
 
-// pitch轴电机中间位置角度 (单位: rad)
-#define PITCH_MOTOR_MID_ANGLE 0.377454847f
+// 小pitch轴电机中间位置角度 (单位: rad)
+#define SMALL_PITCH_MOTOR_MID_ANGLE 0.0f
 // 小yaw电机中间位置角度 (单位: rad)          
-#define YAW_SMALL_MOTOR_MID_ANGLE 3.50284529f      
+#define SMALL_YAW_MOTOR_MID_ANGLE 0.0f      
+
+// 大pitch轴电机中间位置角度 (单位: rad)
+#define BIG_PITCH_MOTOR_TAG_ANGLE 0.0f
+#define BIG_PITCH_MOTOR_FIL_ANGLE 0.005f
+// 大yaw轴电机中间位置角度 (单位: rad)
+#define BIG_YAW_MOTOR_MID_ANGLE 0.0f
 
 // 云台PITCH轴限辐，0.780412078 - 1.320412078 = -0.599690202 留0.04f的余量
-#define PITCH_MIN_OFFSET -0.54f 
+#define SMALL_PITCH_MIN_OFFSET -0.54f 
 // 云台PITCH轴限辐，2.02034688 - 1.38010228 = 0.6402446 留0.08f的余量           
-#define PITCH_MAX_OFFSET 0.55f               
+#define SMALL_PITCH_MAX_OFFSET 0.55f               
 
 // 云台YAW轴限辐，2.88848591 - 3.49364138 = -0.60515547 留0.04f的余量
-#define YAW_SMALL_MIN_OFFSET -0.56515547f 
+#define SMALL_YAW_MIN_OFFSET -0.56515547f 
 // 云台YAW轴限辐，4.1033988 - 3.49364138 = 0.60899019 留0.06f的余量         
-#define YAW_SMALL_MAX_OFFSET 0.54899019f           
+#define SMALL_YAW_MAX_OFFSET 0.54899019f           
 
 // 小yaw电机单次角度增量系数 (单位: rad/单位输入)
-#define YAW_SMALL_ANGLE_INCREMENT_RATION    0.0035f 
+#define SMALL_YAW_ANGLE_INCREMENT_RATION    0.0035f 
 // pitch电机单次角度增量系数 (单位: rad/单位输入)       
-#define PITCH_ANGLE_INCREMENT_RATION        0.0020f        
+#define SMALL_PITCH_ANGLE_INCREMENT_RATION        0.0020f        
 
 /*--------------------------------------------------发射机构-------------------------------------------------------*/
 
