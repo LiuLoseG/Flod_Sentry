@@ -256,7 +256,7 @@ void shoot_frict_motor_spin_up(void)
 void shoot_control_decision(void)
 {
     // 摩擦轮电机失能切换提速
-    // shoot_frict_motor_spin_up();  
+    shoot_frict_motor_spin_up();  
 
     switch (shoot.now_mode)
     {

@@ -32,12 +32,12 @@
 #define YAW_RAD_MIDDLE_THAN_ZERO 1
 
 // yaw电机中间位置角度 (单位: rad)
-#define YAW_MOTOR_MID_ANGLE 2.47546154f
+#define YAW_MOTOR_MID_ANGLE 3.56803942f
 
 // pitch轴电机中间位置角度 (单位: rad)
 #define PITCH_MOTOR_MID_ANGLE -2.80162191f
 // 小yaw电机中间位置角度 (单位: rad)          
-#define YAW_SMALL_MOTOR_MID_ANGLE 2.47546154f      
+#define YAW_SMALL_MOTOR_MID_ANGLE 3.56803942f      
 
 // 云台PITCH轴限辐，0.780412078 - 1.320412078 = -0.599690202 留0.04f的余量
 #define PITCH_MIN_OFFSET -0.50f 
@@ -57,7 +57,7 @@
 /*--------------------------------------------------发射机构-------------------------------------------------------*/
 
 // 摩擦轮电机速度设定
-#define FRICT_MOTOR_SPEED_SET 650.0f
+#define FRICT_MOTOR_SPEED_SET 400.0f
 
 // 摩擦轮电机加速完成的速度差阈值, 超过被认为加速完成
 #define FRICT_MOTOR_SPEED_DELTA_THRESHOLD 5.0f
