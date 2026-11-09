@@ -412,7 +412,7 @@ void gimbal_init(void)
     gimbal.rc_pitch_pid.pid_omega.init(0.62f, 0.0f, 0.0f, 0.0f, 1.0f, 3.2f);
 
     gimbal.pc_pitch_pid.pid_angle.init(12.85f, 0.0f, 0.25f, 0.0f, 2.0f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.1f, PID_D_First_ENABLE);
-    gimbal.pc_pitch_pid.pid_omega.init(0.62f, 0.0f, 0.0f, 0.0f, 1.0f, 3.2f, 0.001f, 0.0f, 0.32f, 0.65f, 0.8f, PID_D_First_ENABLE);
+    gimbal.pc_pitch_pid.pid_omega.init(0.62f, 0.45f, 0.0f, 0.0f, 1.0f, 3.2f, 0.001f, 0.0f, 0.32f, 0.65f, 0.8f, PID_D_First_ENABLE);
 
     // 6.初始化上一帧目标角度
     gimbal.prev_target_small_yaw_angle = gimbal.target_value.small_yaw_angle;
@@ -476,6 +476,9 @@ void gimbal_init(void)
     gimbal.pitch_gravity_comp.factor[2] = 0.081351f;
     gimbal.pitch_gravity_comp.factor[3] = -0.0417713f;
 
+
+    gimbal.now_value.pitch_angle = -0.5f;  // [数据平滑] 直接播种到当前目标, 避免上电爬升
+
     // gimbal.rls.setParamVector(Matrixf<4, 1>(gimbal.pitch_gravity_comp.factor));
 
     // 初始化IMU稳定状态
@@ -505,7 +508,7 @@ void gimbal_init(void)
     SAFE_DAEMON_PROCESS_REGISTER("gimbal_yaw_small_motor", gimbal.yaw_small_motor, SAFE_DAEMON_PROCESS_PERIOD_MOTOR_MS);
     // 12. 初始化云台参考轨迹规划器
     reference_track_plan_init(&gimbal.yaw_small_track_plan, &yaw_small_track_plan_config, 0.0f);
-    reference_track_plan_init(&gimbal.pitch_track_plan, &pitch_track_plan_config, 0.0f);
+    reference_track_plan_init(&gimbal.pitch_track_plan, &pitch_track_plan_config, -0.5f);
     // 卡尔曼滤波器
     // A[0][0] = 1.0f;
     // A[0][1] = 0.001f;
