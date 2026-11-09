@@ -341,7 +341,7 @@ void shoot_control_decision(void)
             // 热量控制机制
             if ((shoot.decision->heat_fsm.get_now_heat() + 30.0f) <= shoot.decision->get_heat_maximum())
             {
-                shoot.target_value.trigger_angle = shoot.now_value.trigger_angle + TRIGGER_PILL_TURN_RAD;  // 拨盘电机转动一个弹丸的角度
+                shoot.target_value.trigger_angle = shoot.now_value.trigger_angle - TRIGGER_PILL_TURN_RAD;  // 拨盘电机转动一个弹丸的角度
                 shoot.trigger_motor.set_target_angle(shoot.target_value.trigger_angle);
             }
 
@@ -364,17 +364,17 @@ void shoot_control_decision(void)
             // 拨盘电机默认旋转速度18HZ(单位: rad/s)
             shoot.Heat_Balance_Omega = ((shoot.decision->get_heat_cd() / 10.0f) / TRIGGER_PILL_NUM) * (TRTGGER_TOOTHED_REDUCTION * 2.0f * PI);
 
-            if(TRIGGER_DRIVER_OMEGA_DEFAULT <= shoot.Heat_Balance_Omega)
-            {
-                shoot.target_value.trigger_omega = TRIGGER_DRIVER_OMEGA_DEFAULT;
-            }
+            // if(TRIGGER_DRIVER_OMEGA_DEFAULT <= shoot.Heat_Balance_Omega)
+            // {
+                shoot.target_value.trigger_omega = -TRIGGER_DRIVER_OMEGA_DEFAULT;
+            // }
 
-            else
-            {
-                // 热量平衡，拨盘电机按照热量比例调整旋转速度
-                shoot.target_value.trigger_omega = (shoot.Heat_Balance_Omega - TRIGGER_DRIVER_OMEGA_DEFAULT) / shoot.decision->get_heat_maximum()
-                * (shoot.decision->heat_fsm.get_now_heat() + 30.0f) + TRIGGER_DRIVER_OMEGA_DEFAULT;
-            }
+            // else
+            // {
+            //     // 热量平衡，拨盘电机按照热量比例调整旋转速度
+            //     shoot.target_value.trigger_omega = (shoot.Heat_Balance_Omega - TRIGGER_DRIVER_OMEGA_DEFAULT) / shoot.decision->get_heat_maximum()
+            //     * (shoot.decision->heat_fsm.get_now_heat() + 30.0f) + TRIGGER_DRIVER_OMEGA_DEFAULT;
+            // }
 
             // 摩擦轮电机控制函数
             shoot.fric_r_motor.set_target_omega(shoot.fric_r_slope.get_out());
