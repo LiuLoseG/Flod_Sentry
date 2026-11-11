@@ -718,7 +718,7 @@ void gimbal_control_decision(void)
                         // 小yaw
                         gimbal.target_val.small_yaw_angle = 0.0f;
                         // 大yaw
-                        gimbal.target_val.big_yaw_angle = basic_math_loop_constrain(gimbal.target_val.big_yaw_angle - gimbal.now_val.big_yaw_angle + delta, -PI, PI) + gimbal.now_val.big_yaw_angle;
+                        gimbal.target_val.big_yaw_angle = gimbal.now_val.big_yaw_angle + delta;
                         // 小pitch
                         gimbal.target_val.small_pitch_angle = 0.0f;
                     }
@@ -764,6 +764,18 @@ void gimbal_update_feedforward(void)
  */
 void gimbal_motor_calculate(void)
 {
+    if (gimbal.big_pitch_ready != gimbal.last_big_pitch_ready)
+    {
+        gimbal.last_big_pitch_ready = gimbal.big_pitch_ready;
+
+        gimbal.target_val.big_yaw_angle = gimbal.now_val.big_yaw_angle;
+
+        gimbal.rc_big_yaw_pid.angle.pid_clear();
+        gimbal.rc_big_yaw_pid.speed.pid_clear();
+        gimbal.pc_big_yaw_pid.angle.pid_clear();
+        gimbal.pc_big_yaw_pid.speed.pid_clear();
+    }
+
     if(gimbal.now_method == Gimbal_Method_Zero_Force)
     {
         gimbal.small_yaw_motor.set_control_torque(0.0f);
@@ -865,7 +877,7 @@ void gimbal_motor_calculate(void)
 
         // 大yaw速度指令斜坡
         {
-            gimbal.big_yaw_omega_slope.set_now_real(gimbal.now_val.big_pitch_omega);
+            gimbal.big_yaw_omega_slope.set_now_real(gimbal.now_val.big_yaw_omega);
             gimbal.big_yaw_omega_slope.set_target(gimbal.target_val.big_yaw_omega);
             gimbal.big_yaw_omega_slope.slope_calculate_callback();
             gimbal.target_val.big_yaw_omega = gimbal.big_yaw_omega_slope.get_out();
@@ -884,6 +896,8 @@ void gimbal_motor_calculate(void)
 
     gimbal.last_method = gimbal.now_method;
     gimbal.last_mode = gimbal.now_mode;
+
+    gimbal.last_big_pitch_ready = gimbal.big_pitch_ready;
 }
 
 extern "C" void gimbal_task(void *argument)

@@ -199,6 +199,8 @@ typedef struct
     float small_pitch_imu_limit_angle; 
     // 大pitch电机限辐角度
     bool big_pitch_ready; 
+    // 上一周期大pitch到位标志, 用于检测翻转时重建大yaw目标
+    bool last_big_pitch_ready;
 
     // 小yaw,小pitch角度扫描方向标志
     bool small_pit_towards_flag;
