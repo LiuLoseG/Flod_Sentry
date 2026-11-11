@@ -459,15 +459,15 @@ BSP 接口签名 / 设备类公共接口语义与单位 / CAN ID 与协议 / 任
 | `gimbal` | Normal | 1kHz | 云台决策与控制 |
 | `decision_center` | Normal | 1kHz | 整车决策、PC 数据解析 |
 | `test` | Low | — | 调试实验 |
-| `safe_daemon_process` | Low | 1ms 轮询 | 统一调用各电机 `alive_check()` 做离线检测（只检测/上报状态），绝不抢占控制链路 |
+| `safe_daemon` | Normal（现状） | 按到期时刻休眠 | 统一调用各设备 `alive_check()` 做离线检测（电机 + IMU + PC 视觉，只检测/上报状态），绝不抢占控制链路；规范建议监控类用 Low，待 CubeMX 调整 |
 
 - `configTICK_RATE_HZ = 1000` ⇒ `osDelay(1)` = 1ms。
 - 🔴 任务创建优先由 **CubeMX(`.ioc`) 管理线程**：在 `infantry.ioc` 的 `FREERTOS.Tasks01` 里加条目，
   再在 CubeMX 点“生成代码”，由生成的 `MX_FREERTOS_Init()` 创建；**不要手工改 `freertos.c`**（与 `.ioc`
   不一致，重生成会产生重复定义或丢失）。仅当任务确实不适合放进 `.ioc` 时，才用 `USER CODE BEGIN RTOS_THREADS` 区。
-  `.ioc` 条目格式：`名称,优先级(8=osPriorityLow/24=osPriorityNormal),栈(字),入口函数,As weak,NULL,Dynamic,NULL,NULL`
+  `.ioc` 条目格式：`名称,优先级(8=osPriorityLow/24=osPriorityNormal),栈(字),入口函数,As weak,NULL,Static,栈缓冲名,控制块名`
   （入口函数名必须与 `.cpp` 里的强定义一致，靠 `extern "C"` 匹配）
-  🟢 参考：`safe_daemon_process,8,256,safe_daemon_process_task,As weak,NULL,Dynamic,NULL,NULL`
+  🟢 参考：`safe_daemon,24,256,safe_daemon_task,As weak,NULL,Static,safe_daemonBuffer,safe_daemonControlBlock`
 - 🔴 控制任务 `osPriorityNormal`；调试/监控类 `osPriorityLow`，且不得在控制链路里做长耗时操作（`LOG_*`、字符串格式化、大数组 `memcpy`）。
 
 ### 6.2 中断（ISR）规则
@@ -518,8 +518,8 @@ void xxx_class::can_rx_callback()
 |---|---|---|---|
 | 1 | 遥控器离线怎么办 | `crsf_class::crsf_alive_check()` → `connection_status` | 🟡 需明确上层动作（当前未见使用） |
 | 2 | 电机离线怎么办 | **`safe_daemon_process`** 统一调用 `alive_check()`，提供 `is_online()` / `all_online()` / 注册表统计 | 🟡 检测已落地；**安全动作（进安全态/锁存）尚未接入**，见 §12.D |
-| 3 | IMU 离线怎么办 | `hi12_imu` 帧计数 / `gimbal.imu_attitude_ready` | ✅ 已用 |
-| 4 | 视觉丢失怎么办 | `pc_to_mcu_vision_class` 数据新鲜度判断 | 🔴 待实测确认 |
+| 3 | IMU 离线怎么办 | **`safe_daemon_process`**（`hi12_imu` 已注册，`is_online(&hi12_data)`）；另有 `gimbal.imu_attitude_ready` | ✅ 检测已落地 |
+| 4 | 视觉丢失怎么办 | **`safe_daemon_process`**（`pc_vision` 已注册）；掉线时驱动自动清 `control_mode` ⇒ 发射落 Ceasefire | ✅ 检测已落地 |
 | 5 | 裁判系统数据异常怎么办 | `robot_decision` 热量状态机 + `can_board_communication` | ✅ 已用 |
 | 6 | 卡弹怎么办 | `shoot.jamming_fsm`（卡弹状态机） | ✅ 已用 |
 | 7 | 输出限幅在哪里 | 见 7.2 三层限幅 | ✅ 已用 |
@@ -541,7 +541,9 @@ void xxx_class::can_rx_callback()
 - `alive_check()` 必须是"滑动窗口"语义：本次窗口内 `flag` 未变化 ⇒ `status = Disable`。
 - 掉线动作至少：状态置位 + **积分清零**（`pid.set_integral_error(0.0f)`）；可选重发使能（需节流）。
 - 🟢 集中检测（已落地）：`User/APP/safe_daemon_process/`——“一个任务 + 一个调用点”统一调用各设备 `alive_check()`，
-  并向上层暴露 `is_online()` / `all_online()` / 注册表统计；各模块在 `init()` 里 `SAFE_DAEMON_PROCESS_REGISTER(...)` 注册。
+  并向上层暴露 `is_online()` / `all_online()` / 注册表统计；电机在各模块 `init()` 里用 `SAFE_DAEMON_PROCESS_REGISTER(...)` 注册，
+  非电机设备（IMU / PC 视觉 / 编码器）用 `SAFE_DAEMON_PROCESS_REGISTER_AS(name, obj, 在线枚举值, period)` 注册，
+  后者不必改 `safe_daemon_process.h`，也支持 `volatile` 全局对象。
 - 🔴 掉线后的**安全动作由上层决定**（检测层不做动作）：可直接轮询 `is_online()` 进安全态，或后续给注册表加"边沿回调"。
 - 🔴 一旦接入安全动作，必须满足：掉线**锁存**（恢复在线不自动恢复控制，需操作手按回安全档解锁）；
   安全态分支**只能清目标，不允许跳过下发环节**（DJI 电机失联后会保持最后一次控制量，必须继续发送零指令）。

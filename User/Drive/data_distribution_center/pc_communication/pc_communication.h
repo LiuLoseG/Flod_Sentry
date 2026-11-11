@@ -13,6 +13,14 @@
 #include <string.h>
 #include "bsp_usb.h"
 
+/**
+ * @brief PC与MCU通信连接状态
+ */
+typedef enum
+{
+    PC_Connection_Status_Disable = 0,
+    PC_Connection_Status_Enable = 1,
+} PC_Connection_Status_t;
 
 typedef struct __attribute__((__packed__))
 {
@@ -89,6 +97,8 @@ class pc_to_mcu_vision_class
 {
 public:
 
+    inline PC_Connection_Status_t get_status() const;
+
     // 解包后的数据读取
     inline uint8_t get_control_mode() const;
     inline float get_yaw_angle() const;
@@ -107,9 +117,18 @@ public:
 
     inline void set_data_len(const uint8_t &__data_len);
 
+    void alive_check();
+
     void data_unpack(const uint8_t *sof_address);
 
 protected:
+
+    PC_Connection_Status_t pc_status = PC_Connection_Status_Disable;
+
+    // 当前时刻接收flag
+    uint32_t flag = 0;
+    // 前一时刻接收flag
+    uint32_t pre_flag = 0;
 
     // 帧头
     const uint8_t Sof_Header = 0x5A; 
@@ -172,6 +191,14 @@ inline void mcu_to_pc_vision_class::set_transmit_frequency(const uint16_t &__tra
 inline void mcu_to_pc_vision_class::enemy_color_data_update(const uint8_t &__enemy_color)
 {
     enemy_color = __enemy_color;
+}
+
+/**
+ * @brief 获取PC到MCU的自瞄视觉数据传输类的连接状态(离线检查)
+ */
+inline PC_Connection_Status_t pc_to_mcu_vision_class::get_status() const
+{
+    return pc_status;
 }
 
 /**

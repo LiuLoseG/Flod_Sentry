@@ -136,12 +136,32 @@ void pc_to_mcu_vision_class::init(const uint8_t &__cmd_id, const uint8_t &__data
     memset(&rx_data, 0, sizeof(auto_aim_data_t));
 }
 
+void pc_to_mcu_vision_class::alive_check()
+{
+    // 检查接收数据的有效性
+    if (flag == pre_flag)
+    {
+        pc_status = PC_Connection_Status_Disable;
+        rx_data.control_mode = 0;  // 若PC掉线, 则MCU端自瞄控制模式置为0(无效)
+
+    }
+
+    else
+    {
+        pc_status = PC_Connection_Status_Enable;
+    }
+    pre_flag = flag;
+}
+
 /**
  * @brief 自瞄数据协议解包
  * @param sof_address 
  */
 void pc_to_mcu_vision_class::data_unpack(const uint8_t *sof_address)
 {
+
+    flag += 1;
+
     memcpy(&rx_data, sof_address, sizeof(auto_aim_data_t));
 
         // 更新当前解包数据

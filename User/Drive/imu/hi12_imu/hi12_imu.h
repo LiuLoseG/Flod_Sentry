@@ -31,6 +31,15 @@
  *===========================================================================*/
 
 /**
+ * @brief HI12与MCU通信连接状态
+ */
+typedef enum
+{
+    HI12_Connection_Status_Disable = 0,
+    HI12_Connection_Status_Enable = 1,
+} HI12_Connection_Status_t;
+
+/**
  * @brief 0x91 — IMU数据 (浮点, 76字节)
  */
 typedef struct __attribute__((__packed__))
@@ -136,7 +145,8 @@ typedef struct __attribute__((__packed__))
     float       rpy[3];
     float       quat[4];
     uint64_t    system_time_us;
-    struct __attribute__((__packed__)) {
+    struct __attribute__((__packed__)) 
+    {
         uint8_t  year, month, day, hour, min;
         uint16_t sec_ms;
         uint8_t  rev;
@@ -153,7 +163,8 @@ typedef struct __attribute__((__packed__))
     float       od_speed;
     float       undulation;
     float       diff_age;
-    struct __attribute__((__packed__)) {
+    struct __attribute__((__packed__)) 
+    {
         uint8_t node_id;
         uint8_t reserved[3];
     } node;
@@ -221,11 +232,25 @@ public:
     inline float vel_n() volatile { return hi81.vel_enu[1] * 0.01f; }
     inline float vel_u() volatile { return hi81.vel_enu[2] * 0.01f; }
 
+    // 离线检查, 若连续两次接收标志位未变化, 则认为连接断开
+    void alive_check() volatile;
+
+    // HI12与MCU通信连接状态
+    inline HI12_Connection_Status_t get_status() volatile { return hi12_status; }
+
 protected:
     /* ---- 状态机 ---- */
     int      nbyte;                            /* 已收字节数 */
     int      payload_len;                      /* 数据载荷长度 */
     uint8_t  raw_buf[HIPNUC_MAX_RAW_SIZE];     /* 帧缓冲区 */
+
+    // HI12与MCU通信连接状态
+    HI12_Connection_Status_t hi12_status = HI12_Connection_Status_Disable;
+
+    // 当前时刻接收flag
+    uint32_t flag = 0;
+    // 前一时刻接收flag
+    uint32_t pre_flag = 0;
 
     /* ---- 解码结果 ---- */
     hi91_t   hi91;
@@ -243,23 +268,38 @@ protected:
     static void crc16_ccitt(uint16_t *crc, const uint8_t *buf, uint32_t len);
 
     /* 字节序转换 (static inline, 在header实现) */
-    static uint16_t read_u16(const uint8_t *p) {
-        uint16_t v; memcpy(&v, p, 2); return v;
+    static uint16_t read_u16(const uint8_t *p) 
+    {
+        uint16_t v; memcpy(&v, p, 2); 
+        return v;
     }
-    static uint32_t read_u32(const uint8_t *p) {
-        uint32_t v; memcpy(&v, p, 4); return v;
+
+    static uint32_t read_u32(const uint8_t *p) 
+    {
+        uint32_t v; memcpy(&v, p, 4); 
+        return v;
     }
-    static uint64_t read_u64(const uint8_t *p) {
-        uint64_t v; memcpy(&v, p, 8); return v;
+
+    static uint64_t read_u64(const uint8_t *p) 
+    {
+        uint64_t v; memcpy(&v, p, 8); 
+        return v;
     }
-    static float read_f32(const uint8_t *p) {
-        float v; memcpy(&v, p, 4); return v;
+
+    static float read_f32(const uint8_t *p) 
+    {
+        float v; memcpy(&v, p, 4); 
+        return v;
     }
-    static double read_f64(const uint8_t *p) {
-        double v; memcpy(&v, p, 8); return v;
+
+    static double read_f64(const uint8_t *p) 
+    {
+        double v; memcpy(&v, p, 8); 
+        return v;
     }
 };
 
 extern volatile hi12_gyro hi12_data;
 void hi12_gyro_uart_callback(uint8_t *buf, uint16_t len);
-void h12_imu_init(uart_manger_object *uart_manager);
+void hi12_imu_init(uart_manger_object *uart_manager);
+void hi12_alive_check();

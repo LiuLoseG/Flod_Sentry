@@ -14,6 +14,7 @@
 #include "robot_decision.h"
 #include "can_distribution.h"
 #include "robot_def.h"
+#include "safe_daemon_process.h"
 
 // 调用can板间通讯类的接收数据解析函数
 static void can_comm_board_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
@@ -54,6 +55,10 @@ void robot_decision_init(void)
     robot_decision.mcu_to_pc_aim.init();
     robot_decision.pc_to_mcu_aim.init();
     robot_decision.can_board_communication.init(&hfdcan3, 0x16, 0x6, 500);
+
+    // 注册非电机设备到安全守护进程: PC 视觉与 HI12 IMU
+    SAFE_DAEMON_PROCESS_REGISTER_AS("pc_vision", robot_decision.pc_to_mcu_aim, PC_Connection_Status_Enable, SAFE_DAEMON_PROCESS_PERIOD_SENSOR_MS);
+    SAFE_DAEMON_PROCESS_REGISTER_AS("hi12_imu", hi12_data, HI12_Connection_Status_Enable, SAFE_DAEMON_PROCESS_PERIOD_SENSOR_MS);
 
     // 注册can板间通讯接收回调函数
     can_distribution_register(3, 0x16, can_comm_board_rx_client);  
