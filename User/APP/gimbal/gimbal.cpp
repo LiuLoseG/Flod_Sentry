@@ -72,11 +72,11 @@ float dt_y = 0.001f;  // 1ms
  *      A/C 为旁路辨识器 identification_pitch 输出的重力 sin/cos 系数(Nm),
  *      其自变量是辨识样本里的 gravity_angle_rad, 即 IMU pitch 角(rad)。
  *      注意: A/C 与 J/B/Fc 同源, 都是"电机反馈力矩"那一侧的系数。 ----*/
-#define PITCH_FF_J                    0.00999190006f
-#define PITCH_FF_B                    0.0370137729f
-#define PITCH_FF_FC                   0.177762061f
-#define PITCH_FF_A                    0.052014865f      // 重力 sin 系数 Nm (辨识值)
-#define PITCH_FF_C                    -0.687797964f      // 重力 cos 系数 Nm (辨识值)
+#define PITCH_FF_J                    0.000272513076f
+#define PITCH_FF_B                    0.139460444f
+#define PITCH_FF_FC                   0.131768867f
+#define PITCH_FF_A                    0.0938733667f      // 重力 sin 系数 Nm (辨识值)
+#define PITCH_FF_C                    -0.683776855f      // 重力 cos 系数 Nm (辨识值)
 #define PITCH_FF_EPS                  0.08f          // 摩擦速度过渡尺度 rad/s (须与辨识器 friction_velocity_rad_s 一致)
 #define PITCH_FF_RATE_DEADBAND        0.05f          // 库仑项低速死区 rad/s
 #define PITCH_FF_ACC_LPF_ALPHA        0.05f          // 加速度项低通(≈8Hz@1kHz)
@@ -402,8 +402,8 @@ void gimbal_init(void)
     gimbal.rc_yaw_small_pid.pid_angle.init(11.8f, 0.0f, 0.12f, 0.0f, 1.0f, 3.0f, 0.001f, 0.0f, 0.10f, 0.24f, 0.32f, PID_D_First_ENABLE);
     gimbal.rc_yaw_small_pid.pid_omega.init(0.7f, 0.0f, 0.023f, 0.0f, 0.5f, 1.2f, 0.001f, 0.0f, 0.2f, 0.65f, 1.0f, PID_D_First_ENABLE);
 
-    gimbal.pc_yaw_small_pid.pid_angle.init(11.8f, 0.0f, 0.12f, 0.0f, 1.0f, 3.0f, 0.001f, 0.0f, 0.10f, 0.24f, 0.32f, PID_D_First_ENABLE);
-    gimbal.pc_yaw_small_pid.pid_omega.init(0.7f, 0.0f, 0.023f, 0.0f, 0.5f, 1.2f, 0.001f, 0.0f, 0.2f, 0.65f, 1.0f, PID_D_First_ENABLE);
+    gimbal.pc_yaw_small_pid.pid_angle.init(12.8f, 0.0f, 0.12f, 0.0f, 1.0f, 3.0f, 0.001f, 0.0f, 0.10f, 0.24f, 0.32f, PID_D_First_ENABLE);
+    gimbal.pc_yaw_small_pid.pid_omega.init(0.78f, 0.0f, 0.023f, 0.0f, 0.5f, 1.2f, 0.001f, 0.0f, 0.2f, 0.65f, 1.0f, PID_D_First_ENABLE);
 
     // 5.初始化pitch电机的角度环和角速度环的PID参数
     // 角度环Ki=0 (无积分), 前馈通过Feedforward_Calculate独立提供
@@ -412,7 +412,7 @@ void gimbal_init(void)
     gimbal.rc_pitch_pid.pid_omega.init(0.62f, 0.0f, 0.0f, 0.0f, 1.0f, 3.2f);
 
     gimbal.pc_pitch_pid.pid_angle.init(12.85f, 0.0f, 0.25f, 0.0f, 2.0f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.1f, PID_D_First_ENABLE);
-    gimbal.pc_pitch_pid.pid_omega.init(0.62f, 0.45f, 0.0f, 0.0f, 1.0f, 3.2f, 0.001f, 0.0f, 0.32f, 0.65f, 0.8f, PID_D_First_ENABLE);
+    gimbal.pc_pitch_pid.pid_omega.init(0.71f, 0.62f, 0.0f, 0.0f, 1.0f, 3.2f, 0.001f, 0.0f, 0.32f, 0.65f, 0.8f, PID_D_First_ENABLE);
 
     // 6.初始化上一帧目标角度
     gimbal.prev_target_small_yaw_angle = gimbal.target_value.small_yaw_angle;
@@ -491,8 +491,8 @@ void gimbal_init(void)
     // 8.初始化云台模式
     gimbal.now_method = Gimbal_Method_Zero_Force;
     gimbal.last_method = Gimbal_Method_Zero_Force;
-    gimbal.now_mode = Gimbal_Auto_Follow;
-    gimbal.last_mode = Gimbal_Auto_Follow;
+    gimbal.now_mode = Gimbal_Auto_Scan;
+    gimbal.last_mode = Gimbal_Auto_Scan;
 
     // 9. 电机波形跟踪调试
     wave_generator_init(&yaw_wave, WAVE_SINE, 0.1f, 0.4f, 0.0f);
@@ -776,7 +776,6 @@ void gimbal_control_decision(void)
             if(gimbal.now_mode == Gimbal_Auto_Scan)
             {
                 // 编码器进行当前角度的参考
-                gimbal.now_value.small_yaw_angle = gimbal.now_s_yaw_angle;
 
                 if(gimbal.last_mode != Gimbal_Auto_Scan)
                 {
@@ -1124,8 +1123,8 @@ void gimbal_motor_calculate(void)
         // gimbal.target_value.small_yaw_omega = gimbal.pc_yaw_small_pid.pid_angle.get_out() + gimbal.feedforward_value.small_yaw_omega;
         /* 规划角速度全额前馈(原为 0.5): 半额前馈留下的缺口必须由位置环用误差补,
          * 稳态误差 = 0.5*v/Kp, 与目标角速度成正比, 这也是跟踪滞后的主因之一。 */
-        gimbal.target_value.small_yaw_omega = gimbal.pc_yaw_small_pid.pid_angle.get_out() + gimbal.yaw_small_plan_rate_lpf;
-        // gimbal.target_value.small_yaw_omega = gimbal.pc_yaw_small_pid.pid_angle.get_out();
+        // gimbal.target_value.small_yaw_omega = gimbal.pc_yaw_small_pid.pid_angle.get_out() + gimbal.yaw_small_plan_rate_lpf;
+        gimbal.target_value.small_yaw_omega = gimbal.pc_yaw_small_pid.pid_angle.get_out();
 
         gimbal.pc_yaw_small_pid.pid_omega.set_target(gimbal.target_value.small_yaw_omega);
         gimbal.pc_yaw_small_pid.pid_omega.set_now(gimbal.now_value.small_yaw_omega);
@@ -1142,8 +1141,8 @@ void gimbal_motor_calculate(void)
         gimbal.pc_pitch_pid.pid_angle.pid_calculate_callback();
         /* 规划角速度全额前馈(原为 0.5), 理由同小yaw: 半额前馈的缺口要由位置环补,
          * 于是稳态误差与目标角速度成正比。 */
-        gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out() + gimbal.pitch_plan_rate_lpf;
-        // gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out();
+        // gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out() + gimbal.pitch_plan_rate_lpf;
+        gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out();
         // gimbal.target_value.pitch_omega = gimbal.pc_pitch_pid.pid_angle.get_out();
 
         gimbal.pc_pitch_pid.pid_omega.set_target(basic_math_constrain(gimbal.target_value.pitch_omega, -1.8f, 1.8f));
@@ -1232,9 +1231,9 @@ void gimbal_motor_parameter_test()
      *    - accel 是二阶微分, 在1kHz下对量化极敏感, 必须低通
      */
     {
-        const float J_ff  = 0.0118676918f;    // 等效惯量 Nm/(rad/s^2)
-        const float B_ff  = 0.00934354216f;    // 阻尼 Nm/(rad/s)
-        const float Fc_ff = 0.0246254914f;    // 库仑摩擦 Nm
+        const float J_ff  = 0.00330303679f;    // 等效惯量 Nm/(rad/s^2)
+        const float B_ff  = 0.107820645f;    // 阻尼 Nm/(rad/s)
+        const float Fc_ff = 0.001f;    // 库仑摩擦 Nm
         const float EPS   = 0.08f;      // 摩擦速度过渡尺度 rad/s
 
         const float rate = gimbal.yaw_small_plan_output.rate_rad_s;
