@@ -251,7 +251,12 @@ void gimbal_init(void)
     gimbal.chassis_angular_filter.init(5.0f, 0.001f);
 
     gimbal.pc_filter.yaw_angle.init(50.0f, 0.001f);
+    gimbal.pc_filter.yaw_omega.init(50.0f, 0.001f);
+    gimbal.pc_filter.yaw_torque.init(50.0f, 0.001f);
+    
     gimbal.pc_filter.pitch_angle.init(50.0f, 0.001f);
+    gimbal.pc_filter.pitch_omega.init(50.0f, 0.001f);
+    gimbal.pc_filter.pitch_torque.init(50.0f, 0.001f);
 
     // 初始化云台轨迹规划器
     small_yaw_track_plan_config_init(&gimbal.small_yaw_plan_config);
@@ -465,6 +470,7 @@ void gimbal_update_observate(void)
  */
 static void gimbal_switch_clear_condition(void)
 {
+    gimbal.target_val.gimbal_yaw_angle = gimbal.now_val.gimbal_yaw_angle;
     gimbal.target_val.small_yaw_angle = gimbal.now_val.small_yaw_angle;
     gimbal.target_val.small_pitch_angle = gimbal.now_val.small_pitch_angle;
     gimbal.target_val.big_yaw_angle = gimbal.now_val.big_yaw_angle;
@@ -746,6 +752,7 @@ void gimbal_control_decision(void)
                 gimbal.target_val.small_pitch_angle = gimbal.now_val.small_pitch_angle;
                 gimbal.target_val.big_yaw_angle = gimbal.now_val.big_yaw_angle;
                 gimbal.target_val.big_pitch_angle = gimbal.now_val.big_pitch_angle;
+                gimbal.target_val.big_yaw_omega = 0.0f;
             }
         }
     }
