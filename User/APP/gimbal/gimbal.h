@@ -16,6 +16,7 @@
 
 #include "pid.h"
 #include "arm_math.h"
+#include "slope_math.h"
 #include "frequency_filter.h"
 
 #include "robot_def.h"
@@ -46,6 +47,16 @@ typedef enum
     Gimbal_Auto_Follow = 1,         // 自瞄跟随 
     Gimbal_Auto_Scan = 2,           // 自瞄扫描
 } gimbal_mode_e;
+
+/**
+ * @brief 大pitch电机状态
+ */
+typedef enum
+{
+    Gimbal_Big_Pitch_Down = 0,        // 大pitch电机位于下方
+    Gimbal_Big_Pitch_Progress = 1,    // 大pitch电机正在运动
+    Gimbal_Big_Pitch_Up = 2,          // 大pitch电机位于上方
+} gimbal_big_pitch_status_e;
 
 /**
  * @brief 云台原始控制数据输入和滤波值
@@ -79,6 +90,8 @@ typedef struct
     float small_pitch_omega;         // 小pitch角速度
     float big_yaw_omega;             // 大yaw角速度
     float big_pitch_omega;           // 大pitch角速度
+
+    gimbal_big_pitch_status_e big_pitch_status;           // 大pitch电机状态
 
 } gimbal_observate_control_t;
 
@@ -186,6 +199,13 @@ typedef struct
     float small_pitch_imu_limit_angle; 
     // 大pitch电机限辐角度
     bool big_pitch_ready; 
+
+    // 小yaw,小pitch角度扫描方向标志
+    bool small_pit_towards_flag;
+    bool small_yaw_towards_flag;
+
+    float big_yaw_rho; // 大yaw跟随小yaw的趋近率
+    slope_class big_yaw_omega_slope; // 大yaw角速度斜坡规划器
 
 /*------------------------------------控制低通滤波器---------------------------------------------*/
     // 云台自瞄低通滤波器对象

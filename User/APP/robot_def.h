@@ -24,8 +24,8 @@
 
 /*--------------------------------------------------云台-------------------------------------------------------*/
 
-#define YAW_SMALL_TORQUE_LIMIT 1.0f
-#define PITCH_TORQUE_LIMIT 1.8f
+#define SMALL_YAW_TORQUE_LIMIT 1.0f
+#define SMALL_PITCH_TORQUE_LIMIT 1.8f
 #define PITCH_GRAVITY_COMPENSATION -0.85f
 
 // 云台yaw轴对齐时是否大于0度, 若大于则设为1，否则设为0
@@ -41,9 +41,14 @@
 
 // 大pitch轴电机中间位置角度 (单位: rad)
 #define BIG_PITCH_MOTOR_TAG_ANGLE 0.0f
-#define BIG_PITCH_MOTOR_FIL_ANGLE 0.005f
+// 大pitch电机角度到位判断阈值 (单位: rad)
+#define BIG_PITCH_MOTOR_FIL_DIF_ANGLE 0.005f
+// 大pitch电机起始角度 (单位: rad)
+#define BIG_PITCH_START_ANGLE 0.0f
 // 大yaw轴电机中间位置角度 (单位: rad)
 #define BIG_YAW_MOTOR_MID_ANGLE 0.0f
+
+#define BIG_YAW_SCAN_OMEGA 1.0f
 
 // 云台PITCH轴限辐，0.780412078 - 1.320412078 = -0.599690202 留0.04f的余量
 #define SMALL_PITCH_MIN_OFFSET -0.54f 
