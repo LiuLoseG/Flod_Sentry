@@ -135,6 +135,9 @@ typedef struct
 /*------------------------------------自瞄低通滤波器---------------------------------------------*/
     low_pass_filter_class filter_yaw;
     low_pass_filter_class filter_pitch;
+
+    low_pass_filter_class now_fil_yaw;
+    low_pass_filter_class now_fil_pitch;
 /*------------------------------------重力/摩擦力补偿量---------------------------------------------*/
     pitch_gravity_compensation_t pitch_gravity_comp; // pitch轴重力补偿量
     low_pass_filter_class pitch_gravity_comp_filter; // pitch轴重力补偿量低通滤波器

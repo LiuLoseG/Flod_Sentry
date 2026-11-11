@@ -425,6 +425,8 @@ void gimbal_init(void)
     gimbal.chassis_angular_lpf.init(5.0f, 0.001f);  // 底盘角速度低通滤波器
     gimbal.filter_yaw.init(12.0f, 0.001f);
     gimbal.filter_pitch.init(6.0f, 0.001f);
+    gimbal.now_fil_yaw.init(20.0f, 0.001f);
+    gimbal.now_fil_pitch.init(20.0f, 0.001f);
     // gimbal.filter_imu_pitch_angle.init(8.0f, 0.001f);
     // gimbal.filter_pitch_pitch_omega.init(8.0f, 0.001f);
 
@@ -587,7 +589,12 @@ void gimbal_update_measure(void)
     // 旋转矩阵消除z轴偏置导致的角速度分量偏转
     gimbal.now_value.small_yaw_omega = gimbal.imu_data->gyro[2] * arm_cos_f32(gimbal.imu_data->euler_angle.pitch) - gimbal.imu_data->gyro[0] * arm_sin_f32(gimbal.imu_data->euler_angle.pitch);
 
-    gimbal.now_value.pitch_omega = gimbal.imu_data->gyro[1];        //  pitch电机角速度来自于IMU陀螺仪
+    /* imu_frame 整体声明为 volatile, gyro[] 是 volatile float, 不能直接绑定到
+     * low_pass_filter_class::set_now_input(const float &); 先做一次值拷贝。 */
+    const float imu_pitch_rate = gimbal.imu_data->gyro[1];
+    gimbal.now_fil_pitch.set_now_input(imu_pitch_rate);
+    gimbal.now_fil_pitch.low_calculate_callback();
+    gimbal.now_value.pitch_omega = gimbal.now_fil_pitch.get_out();        //  pitch电机角速度来自于IMU陀螺仪
 
     // 小yaw电机编码器角度反馈值
     gimbal.now_s_yaw_angle = gimbal.yaw_small_motor.get_now_angle() - YAW_SMALL_MOTOR_MID_ANGLE;
