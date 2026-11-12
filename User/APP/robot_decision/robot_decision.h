@@ -4,7 +4,7 @@
 #include "pc_communication.h"
 #include "can_board_communication.h"
 #include "hi12_imu.h"
-
+#include "imu_temp_ctrl.h"
 #include "basic_math.h"
 #include "fsm.h"
 
@@ -129,7 +129,8 @@ public:
     // 遥控器对象指针(观测)
     crsf_class *crsf; 
     // IMU对象指针(观测)
-    volatile hi12_gyro *hi12_imu;                   
+    // volatile hi12_gyro *hi12_imu;        
+    volatile imu_data_resolve_t *imu_data;  // IMU解算结果对象指针(观测)        
 
     robot_heat_fsm_class heat_fsm; // 机器人热量检测状态机对象
     friend class robot_heat_fsm_class; // 声明友元类, 允许访问私有成员

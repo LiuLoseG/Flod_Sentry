@@ -494,8 +494,8 @@ void gimbal_init(void)
     // 8.初始化云台模式
     gimbal.now_method = Gimbal_Method_Zero_Force;
     gimbal.last_method = Gimbal_Method_Zero_Force;
-    gimbal.now_mode = Gimbal_Auto_Scan;
-    gimbal.last_mode = Gimbal_Auto_Scan;
+    gimbal.now_mode = Gimbal_Auto_Follow;
+    gimbal.last_mode = Gimbal_Auto_Follow;
 
     // 9. 电机波形跟踪调试
     wave_generator_init(&yaw_wave, WAVE_SINE, 0.1f, 0.4f, 0.0f);

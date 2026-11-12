@@ -39,7 +39,8 @@ void robot_decision_init(void)
 {
     // 绑定遥控器对象指针
     robot_decision.crsf = &crsf;
-    robot_decision.hi12_imu = &hi12_data;
+    // robot_decision.hi12_imu = &hi12_data;
+    robot_decision.imu_data = &imu_frame;  // 绑定IMU解算结果对象指针
 
     // 绑定各状态机的决策对象指针
     robot_decision.heat_fsm.decision = &robot_decision;
@@ -234,9 +235,18 @@ void robot_data_transmission_update(void)
     //                                             robot_decision.hi12_imu->yaw() * BASIC_MATH_DEG_TO_RAD, robot_decision.hi12_imu->gyr_z() * BASIC_MATH_DEG_TO_RAD, 
     //                                             robot_decision.hi12_imu->roll()* BASIC_MATH_DEG_TO_RAD, robot_decision.hi12_imu->gyr_y() * BASIC_MATH_DEG_TO_RAD);
 
-    robot_decision.mcu_to_pc_aim.imu_data_update(robot_decision.hi12_imu->quat_w(), robot_decision.hi12_imu->quat_x(), robot_decision.hi12_imu->quat_y(), robot_decision.hi12_imu->quat_z(), 
-                                                robot_decision.hi12_imu->yaw() * BASIC_MATH_DEG_TO_RAD, gimbal_decision_source.vision_gyr_z, 
-                                                robot_decision.hi12_imu->roll()* BASIC_MATH_DEG_TO_RAD, robot_decision.hi12_imu->gyr_y() * BASIC_MATH_DEG_TO_RAD);
+    // robot_decision.mcu_to_pc_aim.imu_data_update(robot_decision.hi12_imu->quat_w(), robot_decision.hi12_imu->quat_x(), robot_decision.hi12_imu->quat_y(), robot_decision.hi12_imu->quat_z(), 
+    //                                             robot_decision.hi12_imu->yaw() * BASIC_MATH_DEG_TO_RAD, gimbal_decision_source.vision_gyr_z, 
+    //                                             robot_decision.hi12_imu->roll()* BASIC_MATH_DEG_TO_RAD, robot_decision.hi12_imu->gyr_y() * BASIC_MATH_DEG_TO_RAD);
+    /* imu_frame 整体声明为 volatile, 其字段不能直接绑定到 imu_data_update 的
+     * const float& 形参(会丢弃 volatile 限定符), 先做一次值拷贝。 */
+    const float imu_yaw_angle     = robot_decision.imu_data->euler_angle.yaw;
+    const float imu_pitch_angle   = robot_decision.imu_data->euler_angle.pitch;
+    const float imu_pitch_omega   = robot_decision.imu_data->gyro[1];
+
+    robot_decision.mcu_to_pc_aim.imu_data_update(0.0f, 0.0f, 0.0f, 0.0f, 
+                                                imu_yaw_angle, gimbal_decision_source.vision_gyr_z, 
+                                                imu_pitch_angle, imu_pitch_omega);
 
     // 板间通讯数据更新
     switch(robot_decision.crsf->get_left_toggle())

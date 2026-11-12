@@ -1,18 +1,18 @@
 
 
-GraphedExpression="((gimbal).now_value).pitch_omega", Color=#e56a6f
-GraphedExpression="((gimbal).target_value).pitch_angle", Color=#35792b
-GraphedExpression="((gimbal).now_value).pitch_angle", Color=#769dda
+GraphedExpression="((gimbal).now_value).pitch_omega", Color=#000000
+GraphedExpression="((gimbal).target_value).pitch_angle", Color=#35792b, Show=0
+GraphedExpression="((gimbal).now_value).pitch_angle", Color=#769dda, Show=0
 OpenDocument="main.c", FilePath="C:/Users/35928/Desktop/Flod_Sentry/Core/Src/main.c", Line=65
 OpenDocument="shoot.cpp", FilePath="C:/Users/35928/Desktop/Flod_Sentry/User/APP/shoot/shoot.cpp", Line=6
 OpenDocument="gimbal.cpp", FilePath="C:/Users/35928/Desktop/Flod_Sentry/User/APP/gimbal/gimbal.cpp", Line=7
 OpenDocument="startup_stm32h723xx.s", FilePath="C:/Users/35928/Desktop/Flod_Sentry/startup_stm32h723xx.s", Line=50
 OpenToolbar="Debug", Floating=0, x=0, y=0
-OpenWindow="Disassembly", DockArea=RIGHT, x=0, y=0, w=1301, h=1050, TabPos=1, TopOfStack=0, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
-OpenWindow="Watched Data 1", DockArea=LEFT, x=0, y=0, w=852, h=1097, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
-OpenWindow="Code Profile", DockArea=LEFT, x=0, y=1, w=852, h=477, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, GroupByFiles=0, SortRespectsFilters=0, ParentRelativeLoad=0
-OpenWindow="Data Sampling", DockArea=RIGHT, x=0, y=1, w=1301, h=487, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VisibleTab=0, UniformSampleSpacing=0
-OpenWindow="Timeline", DockArea=RIGHT, x=0, y=0, w=1301, h=1050, TabPos=0, TopOfStack=1, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=1, DataPaneShown=1, PowerPaneShown=0, CodePaneShown=0, PinCursor="Cursor Movable", TimePerDiv="1 s / Div", TimeStampFormat="Time", DataGraphDrawAsPoints=0, DataGraphLegendShown=1, DataGraphUniformSampleSpacing=0, DataGraphLegendPosition="605;654", DataGraphShowNamesAtCursor=0, PowerGraphDrawAsPoints=0, PowerGraphLegendShown=0, PowerGraphAvgFilterTime=Off, PowerGraphAvgFilterLen=Off, PowerGraphUniformSampleSpacing=0, PowerGraphLegendPosition="948;-133", CodeGraphLegendShown=0, CodeGraphLegendPosition="980;0"
+OpenWindow="Disassembly", DockArea=RIGHT, x=0, y=0, w=1301, h=1023, TabPos=1, TopOfStack=0, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Watched Data 1", DockArea=LEFT, x=0, y=0, w=852, h=1069, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Code Profile", DockArea=LEFT, x=0, y=1, w=852, h=505, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, GroupByFiles=0, SortRespectsFilters=0, ParentRelativeLoad=0
+OpenWindow="Data Sampling", DockArea=RIGHT, x=0, y=1, w=1301, h=514, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VisibleTab=0, UniformSampleSpacing=0
+OpenWindow="Timeline", DockArea=RIGHT, x=0, y=0, w=1301, h=1023, TabPos=0, TopOfStack=1, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=1, DataPaneShown=1, PowerPaneShown=0, CodePaneShown=0, PinCursor="Cursor Movable", TimePerDiv="1 s / Div", TimeStampFormat="Time", DataGraphDrawAsPoints=0, DataGraphLegendShown=1, DataGraphUniformSampleSpacing=0, DataGraphLegendPosition="571;627", DataGraphShowNamesAtCursor=0, PowerGraphDrawAsPoints=0, PowerGraphLegendShown=0, PowerGraphAvgFilterTime=Off, PowerGraphAvgFilterLen=Off, PowerGraphUniformSampleSpacing=0, PowerGraphLegendPosition="948;-133", CodeGraphLegendShown=0, CodeGraphLegendPosition="980;0"
 SmartViewPlugin="", Page="", Toolbar="Hidden", Window="SmartView 1"
 TableHeader="Code Profile", SortCol="File / Function", SortOrder="ASCENDING", VisibleCols=["File / Function";"Source Coverage";"Inst. Coverage";"Run Count";"Fetch Count";"Load"], ColWidths=[2344;219;230;148;172;152]
 TableHeader="Data Sampling Table", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";" ((gimbal).now_value).pitch_omega";" ((gimbal).target_value).pitch_angle";" ((gimbal).now_value).pitch_angle"], ColWidths=[100;100;100;100;100]
