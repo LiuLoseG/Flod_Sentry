@@ -102,8 +102,6 @@ static inline float imu_time_base_take(imu_time_base_t *tb)
 
 /*------------------------------ 1.2 采样与调度 ------------------------------*/
 
-// ===== IMU_DT_LIMIT_BEGIN (主机侧测试按此标记抽取, 勿改名) =====
-
 // 无法取得有效 DRDY 周期时使用的初始化/恢复周期, s
 #define IMU_DEFAULT_DT_S                0.001f
 // 单帧 DRDY 周期(1kHz)的合理区间, s
@@ -136,8 +134,6 @@ static inline float imu_limit_dt(float dt)
 
     return dt;
 }
-
-// ===== IMU_DT_LIMIT_END =====
 
 // DRDY 超时保护. 连续超时后进入 Init_Fail, 由任务周期性重试 BMI088
 #define IMU_DRDY_TIMEOUT_MS             10U             // 单次等待上限, ms(configTICK_RATE_HZ = 1000)
@@ -187,8 +183,6 @@ static inline float imu_limit_dt(float dt)
 #define IMU_TRIM_SEED_RATE_MAX          0.15f           // rad/s, 单帧角速度模长上限
 
 /*------------------------------ 1.6 陀螺野值抑制 ------------------------------*/
-
-// ===== IMU_GYRO_GLITCH_BEGIN (主机侧测试按此标记抽取, 勿改名) =====
 
 #define IMU_GYRO_SLEW_LIMIT_RAD_S2      10000.0f        // rad/s^2, 单帧允许的最大角速度变化
 #define IMU_GYRO_ABS_LIMIT_RAD_S        36.0f           // rad/s, 超出 BMI088 ±2000dps 量程即判野值
@@ -272,8 +266,6 @@ static inline void imu_gyro_glitch_filter(imu_gyro_glitch_t *st, float *gyro, fl
 
 /*------------------------------ 1.7 陀螺标定(零偏 + 刻度) ------------------------------*/
 
-// ===== IMU_GYRO_CALIB_BEGIN (主机侧测试按此标记抽取, 勿改名) =====
-
 /**
  * @brief 原始角速度换算成物理角速度: (raw - bias) * scale
  * @param gyro  原始角速度, rad/s, 就地换算
@@ -296,12 +288,10 @@ static inline void imu_gyro_calibrate(float *gyro, const float *bias, const floa
 //     a_meas = a_ref + α × r + ω × (ω × r)
 
 // 角加速度估计: 陀螺先一阶低通再差分, 避免 1kHz 差分把噪声放大 1/dt 倍
-// (0.004 rad/s 的陀螺噪声直接差分就是 4 rad/s², 乘 0.1 m 偏心等于 0.4 m/s² 假加速度)
 #define IMU_LEVER_GYRO_LPF_S            0.004f          // s, 供差分用的角速度低通时间常数
 #define IMU_LEVER_ALPHA_LPF_S           0.008f          // s, 角加速度低通时间常数
 // 角加速度限幅, rad/s². 200 rad/s² 相当于 0.17s 从静止拉到 ±2000dps 满量程
 #define IMU_LEVER_ALPHA_MAX_RAD_S2      200.0f
-// 补偿量限幅, m/s². 0.1 m 偏心 @ 6 rad/s 向心项 3.6 m/s², 留足余量;
 // 只为拦住异常数据把重力方向带飞, 正常工况远达不到
 #define IMU_LEVER_CORR_MAX_M_S2         30.0f
 // 距上一拍超过这么多帧, 上一拍样本已过期, 不能再拿它差分
@@ -425,8 +415,6 @@ static inline void imu_accel_lever_compensate(imu_accel_lever_t *st, float *acce
     }
 }
 
-// ===== IMU_ACCEL_LEVER_END =====
-
 /*------------------------------ 1.9 温度控制 ------------------------------*/
 
 #define IMU_TEMP_REF_C                  50.0f           // 目标温度, ℃
@@ -436,36 +424,8 @@ static inline void imu_accel_lever_compensate(imu_accel_lever_t *st, float *acce
 #define IMU_TEMP_STABLE_BAND_C          0.8f            // 判定温度稳定的带宽, ℃
 #define IMU_TEMP_STABLE_SPAN_S          3.0f            // s, 温度稳定持续时长
 
-// 自标定等待温度的超时: 加热能力不足/目标偏高时不能在 Wait_Temp 无限期卡住,
-// 超时后直接进入解算, 沿用默认零偏(姿态可用优先于零偏精度)
+// 温度PID参数
 #define IMU_TEMP_WAIT_TIMEOUT_S         15.0f           // s
-
-/* 温度 PID 参数
- *
- * ⚠ pid_calc() 的 PID_POSITION 分支是: error_sum += error; output = Kp*error + Ki*error_sum + ...
- *   即 error_sum 累加的是"误差本身"，输出里再乘 Ki。因此:
- *     - 积分项的最大贡献 = Ki × integral_limit  （不是 integral_limit 本身）
- *     - 积分时间 Ti = Kp / (Ki × fs)，fs = 100 Hz（温控节拍）
- *
- * 一次事故记录: 曾按 `error_sum += Ki*error` 的常见写法整定成 Ki=0.0045 / limit=500，
- * 结果积分权限只有 0.0045×500 = 2.25 counts(0.02% 占空比)，积分实际被禁用，
- * 实测温度长期停在 49.63 ℃ 补不上 50 ℃ 的稳态误差。
- *
- * 被控对象: 单容热系统, 热时间常数约 257 s(断电 54 s 内从 50.6 ℃ 降到 45.75 ℃)。
- * 温度读数与加热占空比之间存在约 0.005 ℃/count 的瞬时(<50 ms)电气耦合
- * (加热电流经公共地/电源干扰温度传感; 真实热时间常数 257 s, 故它不是热效应)。
- * 该耦合构成正反馈, 静态环路增益 = Kp×0.005:
- * Kp=180 时为 0.86, 已逼近 1(实测旧 Ki=1.2 时在 50 ℃ 附近产生 ±2.2 ℃ 极限环);
- * 现取 Kp=75, 环路增益降至 0.375, 留足稳定裕度。
- * 注意: 该耦合无法用软件消除(系数跨板不一致, 不做补偿), 根治要硬件上给加热回路
- * 独立回流地与就近储能电容。
- *
- * Ti = 75/(100×0.008) ≈ 94 s, 与对象极点(257 s)同量级, 靠积分吃掉比例项稳态误差。
- * 积分权限 Ki×limit = 0.008×400000 = 3200 counts(32% 占空比), 覆盖环境温度大幅变化
- * 所需的稳态功率; 上限只作安全钳位, 实际收敛速度由 Ti 决定。
- *
- * Kd 置 0: 温度是 0.125 ℃ 量化值, 一阶微分只会把量化台阶放大成占空比抖动;
- * 单容对象也没有需要微分先行补偿的相位滞后。 */
 #define IMU_TEMP_PID_KP                 75.0f
 #define IMU_TEMP_PID_KI                 0.008f
 #define IMU_TEMP_PID_KD                 0.0f
@@ -473,8 +433,6 @@ static inline void imu_accel_lever_compensate(imu_accel_lever_t *st, float *acce
 // 积分累加上限(注意: error_sum 累加的是误差本身, 积分权限 = Ki × 本值 = 3200 counts)
 #define IMU_TEMP_PID_INTEGRAL_LIMIT     400000.0f
 #define IMU_HEATER_PWM_PERIOD_COUNTS    10000.0f        // TIM3 ARR + 1, 用于把输出换算成占空比
-
-// ===== IMU_HEATER_POLICY_BEGIN (主机侧测试按此标记抽取, 勿改名) =====
 
 /**
  * @brief 输出是否已越出执行器可行域
@@ -1378,7 +1336,6 @@ uint8_t imu_is_ready(void)
     return ((imu_frame.status == Imu_Status_Running) && (imu_frame.data_valid != 0U) &&
             (attitude_valid_flag != 0U)) ? 1U : 0U;
 }
-
 
 /**
  * @brief BMI088 陀螺数据就绪中断回调
