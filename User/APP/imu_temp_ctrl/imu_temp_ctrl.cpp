@@ -440,11 +440,42 @@ static inline void imu_accel_lever_compensate(imu_accel_lever_t *st, float *acce
 #define IMU_TEMP_STABLE_BAND_C          0.8f           // 判定温度稳定的带宽, ℃
 #define IMU_TEMP_STABLE_S               3.0f           // s, 温度稳定持续时长
 
-#define IMU_TEMP_PID_KP                 180.0f
-#define IMU_TEMP_PID_KI                 1.2f
-#define IMU_TEMP_PID_KD                 150.0f
+// 自标定等待温度的超时: 加热能力不足/目标偏高时不能在 Wait_Temp 无限期卡住,
+// 超时后直接进入解算, 沿用默认零偏(姿态可用优先于零偏精度)
+#define IMU_TEMP_WAIT_TIMEOUT_S         15.0f          // s
+
+/* 温度 PID 参数
+ *
+ * ⚠ pid_calc() 的 PID_POSITION 分支是: error_sum += error; output = Kp*error + Ki*error_sum + ...
+ *   即 error_sum 累加的是"误差本身"，输出里再乘 Ki。因此:
+ *     - 积分项的最大贡献 = Ki × integral_limit  （不是 integral_limit 本身）
+ *     - 积分时间 Ti = Kp / (Ki × fs)，fs = 100 Hz（温控节拍）
+ *
+ * 一次事故记录: 曾按 `error_sum += Ki*error` 的常见写法整定成 Ki=0.0045 / limit=500，
+ * 结果积分权限只有 0.0045×500 = 2.25 counts(0.02% 占空比)，积分实际被禁用，
+ * 实测温度长期停在 49.63 ℃ 补不上 50 ℃ 的稳态误差。
+ *
+ * 被控对象: 单容热系统, 热时间常数约 257 s(断电 54 s 内从 50.6 ℃ 降到 45.75 ℃)。
+ * 增益取 Kp = 60: 温度读数与加热占空比之间存在约 0.005 ℃/count 的瞬时(<50 ms)电气耦合
+ * (加热电流经公共地/电源干扰温度传感; 真实热时间常数 257 s, 故它不是热效应)。
+ * 该耦合构成正反馈, 静态环路增益 = Kp×0.005:
+ * Kp=180 时为 0.86, 已逼近 1(实测旧 Ki=1.2 时在 50 ℃ 附近产生 ±2.2 ℃ 极限环);
+ * Kp=60 时降至 0.29, 留足稳定裕度。
+ * 注意: 该耦合无法用软件消除(系数跨板不一致, 不做补偿), 根治要硬件上给加热回路
+ * 独立回流地与就近储能电容。
+ *
+ * Ti = 60/(100×0.003) = 200 s, 与对象极点(257 s)同量级, 靠积分吃掉比例项稳态误差。
+ * 积分权限 Ki×limit = 0.003×400000 = 1200 counts(12% 占空比), 覆盖环境温度大幅变化
+ * 所需的稳态功率; 上限只作安全钳位, 实际收敛速度由 Ti 决定。
+ *
+ * Kd 置 0: 温度是 0.125 ℃ 量化值, 一阶微分只会把量化台阶放大成占空比抖动;
+ * 单容对象也没有需要微分先行补偿的相位滞后。 */
+#define IMU_TEMP_PID_KP                 75.0f
+#define IMU_TEMP_PID_KI                 0.008f
+#define IMU_TEMP_PID_KD                 0.0f
 #define IMU_TEMP_PID_OUT_MAX            1500.0f        // 加热输出上限(与 TIM3 ARR 同量纲)
-#define IMU_TEMP_PID_INTEGRAL_LIMIT     500.0f         // 积分限幅, 防止积分饱和(windup)
+// 积分累加上限(注意: error_sum 累加的是误差本身, 积分权限 = Ki × 本值 = 1200 counts)
+#define IMU_TEMP_PID_INTEGRAL_LIMIT     400000.0f
 #define IMU_HEATER_PWM_PERIOD_COUNTS    10000.0f       // TIM3 ARR + 1, 用于把输出换算成占空比
 
 // ===== IMU_HEATER_POLICY_BEGIN (主机侧测试按此标记抽取, 勿改名) =====
@@ -542,6 +573,7 @@ static uint8_t imu_elapsed_dwt_started = 0U;
 
 #if IMU_GYRO_AUTO_CALIB_ENABLE
 static float temp_stable_s = 0.0f;
+static float temp_wait_s = 0.0f;                   // 等待温度稳定的累计时长, s
 static float calib_sum[3] = {0.0f, 0.0f, 0.0f};   // Σ raw*dt
 static float calib_span_s = 0.0f;                  // Σ dt (有效)
 static float calib_elapsed_s = 0.0f;               // Σ dt (全部)
@@ -724,6 +756,7 @@ static void imu_sensor_init(void)
             imu_frame.data_valid = 1U;
 #if IMU_GYRO_AUTO_CALIB_ENABLE
             temp_stable_s = 0.0f;
+            temp_wait_s = 0.0f;
             imu_set_status(Imu_Status_Wait_Temp);
 #else
             imu_set_status(Imu_Status_Running);
@@ -753,6 +786,9 @@ static void imu_temperature_ctrl_step(void)
         return;
     }
 
+    // 条件积分: 只有"越限方向与误差同向"时才撤销本拍积分, 误差反向时保留,
+    // 让积分能自然回退。若一律冻结, 积分一旦攒到较大权限(可达 1200 counts),
+    // 输出就永远回不到 0, 降目标/环境升温时会造成长期过冲。
     const float error_sum_before = temperature_pid.error_sum;
     float out = pid_calc(&temperature_pid, imu_frame.ref_temperature, temperature);
 
@@ -764,7 +800,11 @@ static void imu_temperature_ctrl_step(void)
     }
 
     // 条件积分: 输出冲出可行域时撤销本拍积分累加, 避免 Windup
-    if (imu_heater_keep_integral(out, IMU_TEMP_PID_OUT_MAX) == 0U)
+    const float error_now = temperature_pid.error[0];
+    const uint8_t saturated = (imu_heater_keep_integral(out, IMU_TEMP_PID_OUT_MAX) == 0U) ? 1U : 0U;
+    const uint8_t pushing_out = (uint8_t)((((out > IMU_TEMP_PID_OUT_MAX) && (error_now > 0.0f)) ||
+                                           ((out <= 0.0f) && (error_now < 0.0f))) ? 1U : 0U);
+    if ((saturated != 0U) && (pushing_out != 0U))
     {
         temperature_pid.error_sum = error_sum_before;
     }
@@ -934,6 +974,10 @@ static uint8_t imu_attitude_step(const float *gyro, const float *accel, float dt
 static void INS_Init(void)
 {
     // 加热 PWM 先以 0 占空比起动, 保证上电不会满功率加热
+    // 载波 = TIM3 内核时钟 / (PSC+1) / (ARR+1) = 275 MHz / 1 / 10000 = 27.5 kHz
+    // (旧值 PSC+1=24 → 1145.8 Hz: 该载波在陀螺上激发出 41 Hz 结构共振, 加热一开
+    //  gy 的 20~60 Hz 分量就达 1.2 °/s rms; 提高到 27.5 kHz 后加热电流纹波降为
+    //  1/24, 且远高于 BMI088 的 116 Hz 模拟带宽, 详见 gimbal.cpp 的陷波注释)
     heater_pwm.set_tim_handle(&htim3);
     heater_pwm.set_pwm_channel(TIM_CHANNEL_4);
     // 通用 PWM 类默认 100%, 只对加热实例限到 15%, 且配置后无法放宽
@@ -1064,12 +1108,14 @@ static void INS_Task(float drdy_dt, float elapsed_dt)
 #if IMU_GYRO_AUTO_CALIB_ENABLE
         case Imu_Status_Wait_Temp:
             // 温度进入目标带宽并持续 IMU_TEMP_STABLE_S 后才开始标定(按真实时间)
+            temp_wait_s += elapsed_dt;
             if (fabsf(imu_frame.temperature - imu_frame.ref_temperature) < IMU_TEMP_STABLE_BAND_C)
             {
                 temp_stable_s += elapsed_dt;
                 if (temp_stable_s >= IMU_TEMP_STABLE_S)
                 {
                     temp_stable_s = 0.0f;
+                    temp_wait_s = 0.0f;
                     imu_gyro_calib_start();
                     imu_set_status(Imu_Status_Calibrating);
                 }
@@ -1077,6 +1123,14 @@ static void INS_Task(float drdy_dt, float elapsed_dt)
             else
             {
                 temp_stable_s = 0.0f;
+
+                // 加热能力不足(目标高于热平衡点)或环境突变时不能无限期等下去:
+                // 超时直接进入解算, 沿用 gyro_bias[] 里的实测值
+                if (temp_wait_s >= IMU_TEMP_WAIT_TIMEOUT_S)
+                {
+                    temp_wait_s = 0.0f;
+                    imu_set_status(Imu_Status_Running);
+                }
             }
             break;
 

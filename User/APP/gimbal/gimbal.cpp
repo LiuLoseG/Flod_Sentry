@@ -102,6 +102,7 @@ reference_config_t yaw_small_track_plan_config = {
     .sat_release_per_s = 2.0f,        // 饱和解除后增益恢复速率, 单位 1/s 
 };
 
+
 // 轨迹规划器参数配置
 reference_config_t pitch_track_plan_config = {
     .max_rate_rad_s = 5.0f,           // 最大角速度，单位：rad/s

@@ -354,7 +354,7 @@
     "terminal.integrated.cursorStyle": "line",
     "terminal.integrated.cursorBlinking": true,
     "terminal.integrated.background": "#040610",
-    "emberprobe.sampleFrequencyHz": 10,
+    "emberprobe.sampleFrequencyHz": 100,
 
     // --- Blockman ---
     // Blockman 的标签分析会把 C/C++ 里的 `<xxx>`（如 include、注释中的 0<scale<1）
