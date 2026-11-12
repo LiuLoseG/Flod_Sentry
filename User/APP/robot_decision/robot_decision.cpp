@@ -244,7 +244,12 @@ void robot_data_transmission_update(void)
     const float imu_pitch_angle   = robot_decision.imu_data->euler_angle.pitch;
     const float imu_pitch_omega   = robot_decision.imu_data->gyro[1];
 
-    robot_decision.mcu_to_pc_aim.imu_data_update(0.0f, 0.0f, 0.0f, 0.0f, 
+    const float imu_quat_w = robot_decision.imu_data->quaternion[0];
+    const float imu_quat_x = robot_decision.imu_data->quaternion[1];
+    const float imu_quat_y = robot_decision.imu_data->quaternion[2];
+    const float imu_quat_z = robot_decision.imu_data->quaternion[3];
+
+    robot_decision.mcu_to_pc_aim.imu_data_update(imu_quat_w, imu_quat_x, imu_quat_y, imu_quat_z, 
                                                 imu_yaw_angle, gimbal_decision_source.vision_gyr_z, 
                                                 imu_pitch_angle, imu_pitch_omega);
 

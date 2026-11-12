@@ -6,8 +6,8 @@
  *        2) 坐标系: 机体 X=前 Y=左 Z=上(右手系), yaw 绕 Z 逆时针为正, 角度自 +X 起算
  *        3) imu_frame 由 IMU 任务写、其余任务读, 单个 float 字段的读写是原子的(32 位对齐);
  *           需要多字段严格一致时应自行关中断拷贝
- * @date 2026-11-03
- * @version 2.0
+ * @date 2026-11-12
+ * @version 2.1
  * @copyright HNAU-Robot (c) 2026
  */
 #ifndef IMU_TEMP_CTRL_H
@@ -60,6 +60,7 @@ typedef struct
     float gyro[3];              // 已扣除零漂的角速度, rad/s
     float accel[3];             // 加速度, m/s^2; 解算状态下已做偏心补偿(折算到旋转中心)
     float temperature;          // 当前温度, ℃
+    float quaternion[4];        // 姿态四元数 w,x,y,z, 模长 1, 符号连续(与 euler_angle 表示同一姿态)
     euler_angle_t euler_angle;  // 欧拉角, rad
     float yaw_total;            // yaw 连续多圈角(不折叠到 ±pi), rad
     float dt;                   // 本拍姿态积分步长, s(累计排空后的实际积分时间)
@@ -82,6 +83,13 @@ float imu_get_roll_rad(void);
 float imu_get_pitch_rad(void);
 float imu_get_yaw_rad(void);
 float imu_get_yaw_total_rad(void);
+
+/**
+ * @brief 拷贝姿态四元数(w,x,y,z)
+ * @param quaternion 输出数组, 长度 4, 由调用者保证非空
+ * @note  四个分量在同一临界区内拷贝, 不会读到 IMU 任务写到一半的数据
+ */
+void imu_get_quaternion(float quaternion[4]);
 
 /**
  * @brief 姿态是否可用(传感器在线且已进入解算状态)

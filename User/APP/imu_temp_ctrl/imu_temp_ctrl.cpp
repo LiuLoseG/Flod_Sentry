@@ -2,8 +2,8 @@
  * @file imu_temp_ctrl.cpp
  * @author Robin Liu (19038200162@163.com)
  * @brief 板载 BMI088 IMU: SPI 采样 → 恒温控制 → 零漂/刻度/杆臂补偿 → 时间账本 → 四元数 EKF 姿态解算
- * @date 2026-11-03
- * @version 2.0
+ * @date 2026-11-12
+ * @version 2.1
  * @copyright HNAU-Robot (c) 2026
  */
 
@@ -545,6 +545,9 @@ static uint8_t ekf_ready = 0U;
 // 姿态输出是否可用(与传感器数据有效性解耦: EKF 异常不应连带关闭温控)
 static uint8_t attitude_valid = 0U;
 
+// 上一拍已发布的四元数(w,x,y,z), 用于 q 与 -q 之间的符号连续
+static float published_quaternion[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+
 // 运行时静止残差零漂修正
 static float yaw_bias_trim = 0.0f;
 // 连续静止时长, s
@@ -819,6 +822,53 @@ static void imu_temperature_ctrl_step(void)
 }
 
 /**
+ * @brief 把 EKF 四元数归一化后发布到 imu_frame
+ * @note  1) EKF 只在模长越界时归一化, 收敛过程中模长会缓慢偏离 1, 发布前统一归一化;
+ *        2) q 与 -q 表示同一姿态, 与上一拍点积为负时取反, 避免下游看到符号跳变
+ */
+static void imu_publish_quaternion(void)
+{
+    float q[4] = {QEKF_INS.q[0], QEKF_INS.q[1], QEKF_INS.q[2], QEKF_INS.q[3]};
+    const float norm_sq = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+
+    // 调用前已保证 q 全部有限; norm_sq 极小时方向不可信, 保持原值交给上层判无效
+    if (norm_sq > 1e-6f)
+    {
+        const float inv_norm = 1.0f / sqrtf(norm_sq);
+        for (uint8_t i = 0U; i < 4U; i++)
+        {
+            q[i] *= inv_norm;
+        }
+    }
+
+    const float dot = q[0] * published_quaternion[0] + q[1] * published_quaternion[1] +
+                      q[2] * published_quaternion[2] + q[3] * published_quaternion[3];
+    const float sign = (dot < 0.0f) ? -1.0f : 1.0f;
+
+    for (uint8_t i = 0U; i < 4U; i++)
+    {
+        published_quaternion[i] = sign * q[i];
+        imu_frame.quaternion[i] = published_quaternion[i];
+    }
+}
+
+/**
+ * @brief 发布单位四元数, 作为上电基准姿态(此时还没有任何 EKF 输出)
+ */
+static void imu_publish_unit_quaternion(void)
+{
+    published_quaternion[0] = 1.0f;
+    published_quaternion[1] = 0.0f;
+    published_quaternion[2] = 0.0f;
+    published_quaternion[3] = 0.0f;
+
+    for (uint8_t i = 0U; i < 4U; i++)
+    {
+        imu_frame.quaternion[i] = published_quaternion[i];
+    }
+}
+
+/**
  * @brief 姿态解算单步: 静止残差修正 → 四元数 EKF → 发布欧拉角
  * @param gyro  已换算的角速度, rad/s
  * @param accel 加速度, m/s^2
@@ -956,13 +1006,17 @@ static uint8_t imu_attitude_step(const float *gyro, const float *accel, float dt
     imu_frame.yaw_total = QEKF_INS.YawTotalAngle * BASIC_MATH_DEG_TO_RAD;
 
     if (!isfinite(imu_frame.euler_angle.roll) || !isfinite(imu_frame.euler_angle.pitch) ||
-        !isfinite(imu_frame.euler_angle.yaw) || !isfinite(imu_frame.yaw_total))
+        !isfinite(imu_frame.euler_angle.yaw) || !isfinite(imu_frame.yaw_total) ||
+        (imu_array_is_finite(QEKF_INS.q, 4U) == 0U))
     {
         IMU_QuaternionEKF_Reset();
         still_confirm_s = 0.0f;
         attitude_valid = 0U;
         return 0U;
     }
+
+    // 四元数与欧拉角同源, 校验通过后一并发布
+    imu_publish_quaternion();
 
     attitude_valid = 1U;
     return 1U;
@@ -990,6 +1044,9 @@ static void INS_Init(void)
     // Kalman 矩阵用 pvPortMalloc 分配, 堆不足时返回 NULL(后续运算会写到地址 0),
     // 必须显式标记不可用并禁止输出姿态
     ekf_ready = IMU_QuaternionEKF_IsReady();
+
+    // 上电基准: EKF 产出第一帧之前, imu_frame.quaternion 保持单位四元数
+    imu_publish_unit_quaternion();
 
     pid_set_config_pos(&temperature_ctrl_config, IMU_TEMP_PID_KP, IMU_TEMP_PID_KI, IMU_TEMP_PID_KD,
                        IMU_TEMP_PID_INTEGRAL_LIMIT, IMU_TEMP_PID_OUT_MAX);
@@ -1269,6 +1326,23 @@ float imu_get_yaw_rad(void)
 float imu_get_yaw_total_rad(void)
 {
     return imu_frame.yaw_total;
+}
+
+void imu_get_quaternion(float quaternion[4])
+{
+    if (quaternion == nullptr)
+    {
+        return;
+    }
+
+    // 四元数四个分量必须来自同一拍, 关中断拷贝防止 IMU 任务写到一半
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    for (uint8_t i = 0U; i < 4U; i++)
+    {
+        quaternion[i] = imu_frame.quaternion[i];
+    }
+    __set_PRIMASK(primask);
 }
 
 uint8_t imu_is_ready(void)

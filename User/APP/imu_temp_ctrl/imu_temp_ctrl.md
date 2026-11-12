@@ -52,6 +52,7 @@ typedef struct
     float gyro[3];              // 已扣零漂角速度, rad/s
     float accel[3];             // 加速度, m/s^2
     float temperature;          // 芯片温度, ℃
+    float quaternion[4];        // 姿态四元数 w,x,y,z, 模长 1, 符号连续
     euler_angle_t euler_angle;  // 欧拉角, rad
     float yaw_total;            // yaw 连续多圈角, rad
     float dt;                   // 实测采样周期, s
@@ -73,6 +74,7 @@ typedef struct
 | `void imu_task(void *argument)`                                                  | 任务入口；名称必须与 CubeMX Entry Function 完全一致（区分大小写） |
 | `float imu_get_roll_rad(void)` / `imu_get_pitch_rad()` / `imu_get_yaw_rad()` | 欧拉角，rad                                                       |
 | `float imu_get_yaw_total_rad(void)`                                              | 连续多圈 yaw，rad（小陀螺/大 yaw 用）                             |
+| `void imu_get_quaternion(float quaternion[4])`                                   | 姿态四元数 w,x,y,z（关中断整拍拷贝，避免读到写到一半的数据）      |
 | `uint8_t imu_is_ready(void)`                                                     | 1 = 传感器在线且已进入解算状态                                    |
 | `extern volatile imu_data_resolve_t imu_frame`                                   | 解算结果结构体（含姿态、角速度、温度、加热输出）                  |
 
@@ -234,9 +236,17 @@ v0.8 起 trim 的积分再叠加一层瞬时角速度门控（§5.2），这几�
 - 加速度低通由 `accLPFcoef` 控制（旧版漏赋值导致 `lpf` 形参失效，滤波退化为直通，已修复）。
 - **Mahony 已不在周期内调用**：其输出在本模块无消费者，原来每拍白跑一遍姿态解算（CPU 占用约翻倍），现仅保留 EKF 一路。
 
-### 5.4 欧拉角发布
+### 5.4 姿态发布
 
 `Get_Roll/Pitch/Yaw()` 返回**度**，发布前统一乘 `BASIC_MATH_DEG_TO_RAD` 转 rad；`QEKF_INS.YawTotalAngle`（连续多圈）同样转 rad 后发布到 `yaw_total`。
+
+`QEKF_INS.q`（w,x,y,z，标量在前）在欧拉角同一拍校验通过后同源发布到 `imu_frame.quaternion`：
+
+1. **发布前归一化**：EKF 只在模长越出 [0.5, 2] 时归一化，收敛过程中模长会缓慢偏离 1；
+2. **符号连续**：与上一拍发布值点积为负时整体取反——`q` 与 `-q` 是同一姿态，不处理会让下游看到符号跳变；
+3. **上电基准**：`INS_Init()` 先发布单位四元数 `(1,0,0,0)`，EKF 出第一帧之前该字段也是合法四元数。
+
+四元数与欧拉角表示同一姿态，有效性统一由 `imu_is_ready()` 判定；单拍校验失败时两者都保持上一拍的值。
 
 ## 6. 温度控制
 
@@ -288,6 +298,7 @@ v0.8 起 trim 的积分再叠加一层瞬时角速度门控（§5.2），这几�
 | `heater_out`                  | 0 ~ 1500                   | 加热输出（与 TIM3 ARR 同量纲） |
 | `dt`                          | ≈ 0.001 s                 | 实测采样周期                   |
 | `gyro[3]` / `accel[3]`      | —                         | 已扣零漂角速度 / 加速度        |
+| `quaternion[4]`             | 模长 1                    | 姿态四元数 w,x,y,z             |
 | `euler_angle` / `yaw_total` | —                         | 欧拉角 / 连续多圈 yaw，rad     |
 
 实测（2026-10-26，静止台上，40 ℃ 恒温）：
@@ -442,6 +453,9 @@ if (imu_is_ready())
 {
     float yaw = imu_get_yaw_total_rad();       // rad, 连续多圈
     float wz  = imu_frame.gyro[2];             // rad/s, 已扣零漂
+
+    float q[4];                                // 姿态四元数 w,x,y,z, 模长 1
+    imu_get_quaternion(q);                     // 关中断整拍拷贝
 }
 ```
 
@@ -501,6 +515,7 @@ typedef struct
     float gyro[3];              // 已扣零漂角速度, rad/s
     float accel[3];             // 加速度, m/s^2
     float temperature;          // 芯片温度, ℃
+    float quaternion[4];        // 姿态四元数 w,x,y,z, 模长 1, 符号连续
     euler_angle_t euler_angle;  // 欧拉角, rad
     float yaw_total;            // yaw 连续多圈角, rad
     float dt;                   // 实测采样周期, s
@@ -522,6 +537,7 @@ typedef struct
 | `void imu_task(void *argument)`                                                  | 任务入口；名称必须与 CubeMX Entry Function 完全一致（区分大小写） |
 | `float imu_get_roll_rad(void)` / `imu_get_pitch_rad()` / `imu_get_yaw_rad()` | 欧拉角，rad                                                       |
 | `float imu_get_yaw_total_rad(void)`                                              | 连续多圈 yaw，rad（小陀螺/大 yaw 用）                             |
+| `void imu_get_quaternion(float quaternion[4])`                                   | 姿态四元数 w,x,y,z（关中断整拍拷贝，避免读到写到一半的数据）      |
 | `uint8_t imu_is_ready(void)`                                                     | 1 = 传感器在线且已进入解算状态                                    |
 | `extern volatile imu_data_resolve_t imu_frame`                                   | 解算结果结构体（含姿态、角速度、温度、加热输出）                  |
 
@@ -683,9 +699,17 @@ v0.8 起 trim 的积分再叠加一层瞬时角速度门控（§5.2），这几�
 - 加速度低通由 `accLPFcoef` 控制（旧版漏赋值导致 `lpf` 形参失效，滤波退化为直通，已修复）。
 - **Mahony 已不在周期内调用**：其输出在本模块无消费者，原来每拍白跑一遍姿态解算（CPU 占用约翻倍），现仅保留 EKF 一路。
 
-### 5.4 欧拉角发布
+### 5.4 姿态发布
 
 `Get_Roll/Pitch/Yaw()` 返回**度**，发布前统一乘 `BASIC_MATH_DEG_TO_RAD` 转 rad；`QEKF_INS.YawTotalAngle`（连续多圈）同样转 rad 后发布到 `yaw_total`。
+
+`QEKF_INS.q`（w,x,y,z，标量在前）在欧拉角同一拍校验通过后同源发布到 `imu_frame.quaternion`：
+
+1. **发布前归一化**：EKF 只在模长越出 [0.5, 2] 时归一化，收敛过程中模长会缓慢偏离 1；
+2. **符号连续**：与上一拍发布值点积为负时整体取反——`q` 与 `-q` 是同一姿态，不处理会让下游看到符号跳变；
+3. **上电基准**：`INS_Init()` 先发布单位四元数 `(1,0,0,0)`，EKF 出第一帧之前该字段也是合法四元数。
+
+四元数与欧拉角表示同一姿态，有效性统一由 `imu_is_ready()` 判定；单拍校验失败时两者都保持上一拍的值。
 
 ## 6. 温度控制
 
@@ -737,6 +761,7 @@ v0.8 起 trim 的积分再叠加一层瞬时角速度门控（§5.2），这几�
 | `heater_out`                  | 0 ~ 1500                   | 加热输出（与 TIM3 ARR 同量纲） |
 | `dt`                          | ≈ 0.001 s                 | 实测采样周期                   |
 | `gyro[3]` / `accel[3]`      | —                         | 已扣零漂角速度 / 加速度        |
+| `quaternion[4]`             | 模长 1                    | 姿态四元数 w,x,y,z             |
 | `euler_angle` / `yaw_total` | —                         | 欧拉角 / 连续多圈 yaw，rad     |
 
 实测（2026-10-26，静止台上，40 ℃ 恒温）：
@@ -889,6 +914,9 @@ if (imu_is_ready())
 {
     float yaw = imu_get_yaw_total_rad();       // rad, 连续多圈
     float wz  = imu_frame.gyro[2];             // rad/s, 已扣零漂
+
+    float q[4];                                // 姿态四元数 w,x,y,z, 模长 1
+    imu_get_quaternion(q);                     // 关中断整拍拷贝
 }
 ```
 
@@ -906,3 +934,4 @@ if (imu_is_ready())
 | 0.8  | 2026-10-26 | ① **静止残差积分加逐帧瞬时角速度门控**（`\|ω\| > 0.15 rad/s` 的帧不计入 trim）；② 文档补 §5.2.2「yaw 零漂传递路径」与实测对照表                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | 归档数据里 trim 的阶跃与机动帧一一对应（120.22 s：z 轴角速度 −0.163 rad/s 仍判静止 → Δtrim = −1.9e-4；140.34 s：−0.315 rad/s → −2.1e-4），单次机动留下 0.0115 °/s 固定偏置需 20 s 才衰减；同时确认 EKF 输出的漂移与 1 kHz 陀螺积分仅差 2%，漂移源 100% 在 z 轴零偏而不在 EKF                                                |
 | 0.9  | 2026-10-26 | **移除全部诊断观测变量，只用实现必需的字段**：`imu_frame` 精简为姿态/角速度/温度/温控/状态共 12 项；删除 `gyro_raw`、`gyro_bias`、`error_count`、`dt_clamp_count/last`、`temp_read_count`、`still_*`（6 个）、`yaw_bias_trim`、`trim_gate_reject_count`、`gyro_glitch_*`/`gyro_peak_abs`、`yaw_int_raw/filt`、`yaw_drift_*`、`spi_time_us`、`sample_rate_hz`、`task_time_us/_max`；`QEKF_INS` 删除 `UpdateOkCount`/`ResetCount`/`RescaleCount`/`ResetReason`/`DbgQNormSq`；删除 `imu_run_task_step()` 的 DWT 计时包装；`ws2812` 删除 `last/max/slow/corrupt_write_*`、`write_count`、`error_count_` 与其 DWT 计时 | 观测字段在上车后会持续占用 RAM 并增加每帧计算（浮点乘除、DWT 读），而它们对控制与解算没有任何贡献；结论与实测数据已归档到本文档，需要现场排查时用调试器直接看内部静态变量即可。移除后 FLASH 242908 → 241208 B（−1.7 KB），DTCMRAM 81840 → 81624 B                                                                                |
 | 1.0  | 2026-11-12 | ① **加热 PWM 载波 1145.8 Hz → 27.5 kHz**（TIM3 PSC 24-1 → 1-1）：实测旧载波在陀螺上激发出 41 Hz 结构共振，加热一开 gy 的 20~60 Hz 分量就达 1.219 °/s rms（占 gy 总方差 91%），关断加热后仅 0.115 °/s；② **温度 PID 重新整定**：Kp 180 → 60、Ki 1.2 → 0.003、Kd 150 → 0，并修正积分权限（`pid_calc` 的积分真实权限是 `Ki×integral_limit`，旧写法等效于禁用积分），积分时间由 1.5 s 改为 200 s（旧值比热时间常数 257 s 快 170 倍，实测在 50 ℃ 产生 ±2.2 ℃/7.5 s 极限环）；③ 新增 `IMU_TEMP_WAIT_TIMEOUT_S`：`Wait_Temp` 等温度超过 15 s 直接进解算，避免加热能力不足时状态机永久卡死；④ 云台速度环新增 41.5 Hz/Q=4 二阶陷波（`gimbal.notch_yaw_rate` / `notch_pitch_rate`），作为载波调整无效时的软件兜底 | 实测：gy 36~46 Hz 分量 0.955 → 0.058 °/s rms（等占空比对照，17 倍），gy 总量 1.093 → 0.253 °/s；温度峰峰值 4.38 → 0.625 ℃（σ 1.203 → 0.146），heater_out 由 0~828 剧烈摆动收敛到 42~73；yaw 漂移 −0.0102 → +0.0018 °/min。**同时定位到一处硬件问题**：温度读数与加热占空比存在瞬时（<50 ms）强耦合（约 −0.005 ℃/count，corr −0.90），而真实热时间常数 257 s，属加热电流经公共地/电源干扰温度传感，非热效应；本次未做软件补偿（系数跨板不确定），建议硬件上给加热回路独立回流地与就近储能电容 |
+| 2.1  | 2026-11-12 | ① `imu_data_resolve_t` 新增 `quaternion[4]`（w,x,y,z）；② 每拍与欧拉角同源发布 EKF 四元数，发布前归一化并保持符号连续；③ 新增 `imu_get_quaternion()`，关中断整拍拷贝；④ 上电先发布单位四元数 | 上层（视觉通信等）需要四元数姿态；直接读 `QEKF_INS.q` 既不原子，又会遇到模长漂移与 q/-q 符号跳变 |
