@@ -6,8 +6,11 @@
  *        2) 坐标系: 机体 X=前 Y=左 Z=上(右手系), yaw 绕 Z 逆时针为正, 角度自 +X 起算
  *        3) imu_frame 由 IMU 任务写、其余任务读, 单个 float 字段的读写是原子的(32 位对齐);
  *           需要多字段严格一致时应自行关中断拷贝
- * @date 2026-11-03
- * @version 2.0
+ *        4) imu_frame.status 是工作状态的唯一真源, 模块内不再另存副本
+ *        5) 姿态可用性与传感器数据有效性解耦: imu_is_ready() = 已进入解算 且 数据有效 且 EKF 正常产出
+ *        6) 命名与设计约定对照表见 imu_temp_ctrl.md §1.4
+ * @date 2026-11-12
+ * @version 2.2
  * @copyright HNAU-Robot (c) 2026
  */
 #ifndef IMU_TEMP_CTRL_H
@@ -19,12 +22,7 @@
 extern "C" {
 #endif
 
-/**
- * @brief 上电陀螺零漂自标定开关
- *        1 = 恒温稳定后采样求均值作为零漂(需上车验证后启用)
- *        0 = 直接使用 gyro_bias[] 中的实测补偿值(默认)
- * @note  可用 target_compile_definitions 覆盖, 便于分板/分车配置
- */
+// IMU 零漂标定宏
 #ifndef IMU_GYRO_AUTO_CALIB_ENABLE
 #define IMU_GYRO_AUTO_CALIB_ENABLE 0
 #endif
@@ -75,8 +73,6 @@ typedef struct
 } imu_data_resolve_t;
 
 extern volatile imu_data_resolve_t imu_frame;
-
-void imu_task(void *argument);
 
 float imu_get_roll_rad(void);
 float imu_get_pitch_rad(void);

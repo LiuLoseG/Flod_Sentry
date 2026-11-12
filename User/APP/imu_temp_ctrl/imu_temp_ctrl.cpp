@@ -2,8 +2,13 @@
  * @file imu_temp_ctrl.cpp
  * @author Robin Liu (19038200162@163.com)
  * @brief 板载 BMI088 IMU: SPI 采样 → 恒温控制 → 零漂/刻度/杆臂补偿 → 时间账本 → 四元数 EKF 姿态解算
- * @date 2026-11-03
- * @version 2.0
+ * @note  1) 单帧处理顺序固定为: 读传感器 → 野值抑制 → 温控节拍 → 状态机(积分/姿态)
+ *        2) 温控与姿态解耦: 温度故障只关加热, 姿态故障只关姿态输出, 互不牵连
+ *        3) 任务入口 imu_task 与 CubeMX .ioc 的 Entry Function 强绑定, 不得改名
+ *        4) 组织方式见下方"参数/状态"分区说明; 算法块(IMU_*_BEGIN/END)保持自包含,
+ *           供主机侧测试整段抽取, 因此其中所需的宏与结构体不允许移出该块
+ * @date 2026-11-12
+ * @version 2.2
  * @copyright HNAU-Robot (c) 2026
  */
 
@@ -20,12 +25,10 @@
 
 #include <math.h>
 
-/*------------------------------ 陀螺积分时间基准 ------------------------------*/
+/*------------------------------ 1.1 陀螺积分时间基准 ------------------------------*/
 
 // yaw 在 EKF 中无绝对观测, 只能靠 z 轴角速度积分, 丢时间即丢转角.
 // 账本累计"已到达但未积分"的时间, 每拍只取受限步长, 余量留到后续拍排空.
-
-// ===== IMU_TIME_BASE_BEGIN (主机侧测试按此标记抽取, 勿改名) =====
 
 // 单次积分的最大步长, s. 必须小于 QuaternionEKF 内部 0.01s 的 dt 复位阈值
 #define IMU_TIME_BASE_STEP_MAX_S        0.009f
@@ -97,7 +100,7 @@ static inline float imu_time_base_take(imu_time_base_t *tb)
 
 // ===== IMU_TIME_BASE_END =====
 
-/*------------------------------ 采样与调度 ------------------------------*/
+/*------------------------------ 1.2 采样与调度 ------------------------------*/
 
 // ===== IMU_DT_LIMIT_BEGIN (主机侧测试按此标记抽取, 勿改名) =====
 
@@ -137,74 +140,74 @@ static inline float imu_limit_dt(float dt)
 // ===== IMU_DT_LIMIT_END =====
 
 // DRDY 超时保护. 连续超时后进入 Init_Fail, 由任务周期性重试 BMI088
-#define IMU_DRDY_TIMEOUT_TICKS          10U
-#define IMU_DRDY_TIMEOUT_LIMIT          3U
-#define IMU_DRDY_EVENT_FLAG             (1U << 0)
+#define IMU_DRDY_TIMEOUT_MS             10U             // 单次等待上限, ms(configTICK_RATE_HZ = 1000)
+#define IMU_DRDY_TIMEOUT_LIMIT          3U              // 连续超时次数上限
+#define IMU_DRDY_EVENT_FLAG             (1U << 0)       // DRDY 线程标志位
 
 // 温度读取与温控周期 = 采样周期 x 分频 = 10ms/100Hz
-#define IMU_TEMP_CTRL_DIVIDER           10U
+#define IMU_TEMP_CTRL_DIVIDER           10U             // 温控分频(1kHz / 10 = 100Hz)
 
-/*------------------------------ 姿态解算(EKF) ------------------------------*/
+/*------------------------------ 1.3 姿态解算(EKF) ------------------------------*/
 
-#define IMU_EKF_PROCESS_NOISE_Q1        10.0f          // 四元数过程噪声
-#define IMU_EKF_PROCESS_NOISE_Q2        0.001f         // 陀螺零偏过程噪声
-#define IMU_EKF_MEASURE_NOISE_R         10000000.0f    // 加速度计量测噪声
-#define IMU_EKF_FADING_LAMBDA           1.0f           // 渐消因子, 1 表示不渐消
-#define IMU_EKF_ACCEL_LPF_S             0.001f         // 加速度低通时间常数, 单位 s
+#define IMU_EKF_PROCESS_NOISE_Q1        10.0f           // 四元数过程噪声
+#define IMU_EKF_PROCESS_NOISE_Q2        0.001f          // 陀螺零偏过程噪声
+#define IMU_EKF_MEASURE_NOISE_R         10000000.0f     // 加速度计量测噪声
+#define IMU_EKF_FADING_LAMBDA           1.0f            // 渐消因子, 1 表示不渐消
+#define IMU_EKF_ACCEL_LPF_S             0.001f          // 加速度低通时间常数, 单位 s
 
-/*------------------------------ 传感器初始化 ------------------------------*/
+/*------------------------------ 1.4 传感器初始化 ------------------------------*/
 
-#define IMU_INIT_RETRY_TIMES            3U             // 单次初始化重试次数
-#define IMU_INIT_RETRY_DELAY_MS         20U            // 重试间隔, 单位 ms
-#define IMU_INIT_RETRY_PERIOD_TICKS     500U           // 初始化失败后的重试周期(=500ms)
-#define IMU_READ_FAIL_LIMIT             100U           // 连续读取失败上限(100ms), 超过判定传感器离线
+#define IMU_INIT_RETRY_TIMES            3U              // 单次初始化重试次数
+#define IMU_INIT_RETRY_DELAY_MS         20U             // 重试间隔, ms
+#define IMU_INIT_RETRY_PERIOD_MS        500U            // 初始化失败后的重试周期, ms
+#define IMU_READ_FAIL_LIMIT             100U            // 连续无效帧上限(1kHz 下 = 100ms), 超过判定传感器离线
 
-/*------------------------------ 陀螺零漂 ------------------------------*/
+/*------------------------------ 1.5 陀螺零漂 ------------------------------*/
 
 // 自标定按真实时间计, 不按调用次数(IMU_GYRO_AUTO_CALIB_ENABLE = 0 时本段不参与编译)
-#define IMU_GYRO_CALIB_S                1.0f           // s, 有效采样时长(1kHz 下 = 1000 帧)
-#define IMU_GYRO_CALIB_MAX_RATE         0.15f          // rad/s, 超过认为车体在动, 该帧丢弃
-#define IMU_GYRO_CALIB_TIMEOUT_S        5.0f           // s, 标定超时, 超时后按已采样本结算
-#define IMU_GYRO_CALIB_MIN_S            0.1f           // s, 超时结算所需的最少有效时长
-#define IMU_GYRO_CALIB_REJECT_S         2.0f           // s, 累计被丢弃时长上限, 超过则放弃标定
+#define IMU_GYRO_CALIB_SPAN_S           1.0f            // s, 有效采样时长(1kHz 下 = 1000 帧)
+#define IMU_GYRO_CALIB_MAX_RATE         0.15f           // rad/s, 超过认为车体在动, 该帧丢弃
+#define IMU_GYRO_CALIB_TIMEOUT_S        5.0f            // s, 标定超时, 超时后按已采样本结算
+#define IMU_GYRO_CALIB_MIN_S            0.1f            // s, 超时结算所需的最少有效时长
+#define IMU_GYRO_CALIB_REJECT_S         2.0f            // s, 累计被丢弃时长上限, 超过则放弃标定
 
-#define IMU_GRAVITY_ACCEL               9.80665f       // 重力加速度, m/s^2
+#define IMU_GRAVITY_ACCEL_M_S2          9.80665f        // 重力加速度, m/s^2
 
 // 静止判定与残差修正参数
-#define IMU_STILL_GYRO_THRESHOLD        0.020f         // rad/s, 静止判定的角速度阈值
-#define IMU_STILL_GYRO_LPF_S            0.20f          // s, 静止判定用角速度低通时间常数(滤除高频噪声)
-#define IMU_STILL_ACCEL_TOL             0.5f           // m/s^2, 静止判定加速度模长偏差
+#define IMU_STILL_GYRO_THRESHOLD        0.020f          // rad/s, 静止判定的角速度阈值
+#define IMU_STILL_GYRO_LPF_S            0.20f           // s, 静止判定用角速度低通时间常数(滤除高频噪声)
+#define IMU_STILL_ACCEL_TOL             0.5f            // m/s^2, 静止判定加速度模长偏差
 
-#define IMU_STILL_ACCEL_LPF_S           0.20f          // s, 静止判定用加速度模长低通时间常数
-#define IMU_STILL_CONFIRM_S             0.5f           // s, 连续静止时长(去抖)
-#define IMU_STILL_TRIM_RATE             0.05f          // 1/s, 残差积分速率(时间常数 ~20s)
-#define IMU_YAW_TRIM_LIMIT              0.02f          // rad/s, 残差修正上限
+#define IMU_STILL_ACCEL_LPF_S           0.20f           // s, 静止判定用加速度模长低通时间常数
+#define IMU_STILL_CONFIRM_SPAN_S        0.5f            // s, 连续静止时长(去抖)
+#define IMU_STILL_TRIM_RATE             0.05f           // 1/s, 残差积分速率(时间常数 ~20s)
+#define IMU_YAW_TRIM_LIMIT              0.02f           // rad/s, 残差修正上限
 
-#define IMU_TRIM_SEED_S                 0.5f           // s, 静止确认后再平均这么久定标
-#define IMU_TRIM_SEED_RATE_MAX          0.15f          // rad/s, 单帧角速度模长上限
+#define IMU_TRIM_SEED_SPAN_S            0.5f            // s, 静止确认后再平均这么久定标
+#define IMU_TRIM_SEED_RATE_MAX          0.15f           // rad/s, 单帧角速度模长上限
 
-/*------------------------------ 陀螺野值抑制 ------------------------------*/
+/*------------------------------ 1.6 陀螺野值抑制 ------------------------------*/
 
 // ===== IMU_GYRO_GLITCH_BEGIN (主机侧测试按此标记抽取, 勿改名) =====
 
-#define IMU_GYRO_SLEW_LIMIT_RAD_S2      10000.0f       // rad/s^2, 单帧允许的最大角速度变化
-#define IMU_GYRO_ABS_LIMIT_RAD_S        36.0f          // rad/s, 超出 BMI088 ±2000dps 量程即判野值
+#define IMU_GYRO_SLEW_LIMIT_RAD_S2      10000.0f        // rad/s^2, 单帧允许的最大角速度变化
+#define IMU_GYRO_ABS_LIMIT_RAD_S        36.0f           // rad/s, 超出 BMI088 ±2000dps 量程即判野值
 // 距上一拍超过这么多帧, 上一拍样本已过期, 不能作为参考
 #define IMU_GYRO_GLITCH_GAP_FRAMES      4.0f
 
 typedef struct
 {
-    float prev[3];          // 上一拍(修正后)的原始角速度, rad/s
-    uint8_t prev_valid;     // prev 是否可用
+    float pre[3];           // 上一拍(修正后)的原始角速度, rad/s
+    uint8_t pre_valid_flag; // pre 是否可用
     uint8_t suspect[3];     // 逐轴"已因变化率越限而保持上一拍"标志
 } imu_gyro_glitch_t;
 
 static inline void imu_gyro_glitch_reset(imu_gyro_glitch_t *st)
 {
-    st->prev[0] = 0.0f;
-    st->prev[1] = 0.0f;
-    st->prev[2] = 0.0f;
-    st->prev_valid = 0U;
+    st->pre[0] = 0.0f;
+    st->pre[1] = 0.0f;
+    st->pre[2] = 0.0f;
+    st->pre_valid_flag = 0U;
     st->suspect[0] = 0U;
     st->suspect[1] = 0U;
     st->suspect[2] = 0U;
@@ -219,8 +222,8 @@ static inline void imu_gyro_glitch_reset(imu_gyro_glitch_t *st)
  * @note  1) 单帧 SPI 位错会给出几百~上千 °/s 的假角速度, 而 EKF 对 z 轴无绝对观测,
  *           一次野值就把 yaw 永久推偏, 必须在此拦截
  *        2) 变化率判据针对相邻 1kHz 采样点, frame_dt 必须是单帧周期, 不能用累计积分步长
- *            (后者合并时可达 9ms, 阈值会被放宽 9 倍)
- *        3) 超量程读数一律挡住; elapsed_dt 远大于 frame_dt 时 prev 已过期, 只保留量程判据
+ *           (后者合并时可达 9ms, 阈值会被放宽 9 倍)
+ *        3) 超量程读数一律挡住; elapsed_dt 远大于 frame_dt 时 pre 已过期, 只保留量程判据
  */
 static inline void imu_gyro_glitch_filter(imu_gyro_glitch_t *st, float *gyro, float frame_dt, float elapsed_dt)
 {
@@ -228,7 +231,7 @@ static inline void imu_gyro_glitch_filter(imu_gyro_glitch_t *st, float *gyro, fl
 
     if (elapsed_dt > (IMU_GYRO_GLITCH_GAP_FRAMES * frame_dt))
     {
-        st->prev_valid = 0U;
+        st->pre_valid_flag = 0U;
         st->suspect[0] = 0U;
         st->suspect[1] = 0U;
         st->suspect[2] = 0U;
@@ -238,21 +241,21 @@ static inline void imu_gyro_glitch_filter(imu_gyro_glitch_t *st, float *gyro, fl
     {
         if (fabsf(gyro[i]) > IMU_GYRO_ABS_LIMIT_RAD_S)
         {
-            gyro[i] = (st->prev_valid != 0U) ? st->prev[i] : 0.0f;
+            gyro[i] = (st->pre_valid_flag != 0U) ? st->pre[i] : 0.0f;
             st->suspect[i] = 1U;
             continue;
         }
 
-        if (st->prev_valid == 0U)
+        if (st->pre_valid_flag == 0U)
         {
             st->suspect[i] = 0U;
             continue;
         }
 
         // 变化率越限: 先保持上一拍; 下一帧仍偏离才认定为真实机动并放行
-        if ((fabsf(gyro[i] - st->prev[i]) > slew_limit) && (st->suspect[i] == 0U))
+        if ((fabsf(gyro[i] - st->pre[i]) > slew_limit) && (st->suspect[i] == 0U))
         {
-            gyro[i] = st->prev[i];
+            gyro[i] = st->pre[i];
             st->suspect[i] = 1U;
             continue;
         }
@@ -260,15 +263,14 @@ static inline void imu_gyro_glitch_filter(imu_gyro_glitch_t *st, float *gyro, fl
         st->suspect[i] = 0U;
     }
 
-    st->prev[0] = gyro[0];
-    st->prev[1] = gyro[1];
-    st->prev[2] = gyro[2];
-    st->prev_valid = 1U;
+    st->pre[0] = gyro[0];
+    st->pre[1] = gyro[1];
+    st->pre[2] = gyro[2];
+    st->pre_valid_flag = 1U;
 }
 
-// ===== IMU_GYRO_GLITCH_END =====
 
-/*------------------------------ 陀螺标定(零偏 + 刻度) ------------------------------*/
+/*------------------------------ 1.7 陀螺标定(零偏 + 刻度) ------------------------------*/
 
 // ===== IMU_GYRO_CALIB_BEGIN (主机侧测试按此标记抽取, 勿改名) =====
 
@@ -287,32 +289,31 @@ static inline void imu_gyro_calibrate(float *gyro, const float *bias, const floa
     gyro[2] = (gyro[2] - bias[2]) * scale[2];
 }
 
-// ===== IMU_GYRO_CALIB_END =====
 
-/*------------------------------ 加速度计偏心补偿(杆臂补偿) ------------------------------*/
+/*------------------------------ 1.8 加速度计偏心补偿(杆臂补偿) ------------------------------*/
 
 // IMU 不在刚体旋转中心时, 加速度计除重力外还会读到旋转带来的两项附加加速度:
 //     a_meas = a_ref + α × r + ω × (ω × r)
 
 // 角加速度估计: 陀螺先一阶低通再差分, 避免 1kHz 差分把噪声放大 1/dt 倍
 // (0.004 rad/s 的陀螺噪声直接差分就是 4 rad/s², 乘 0.1 m 偏心等于 0.4 m/s² 假加速度)
-#define IMU_LEVER_GYRO_LPF_S        0.004f        // s, 供差分用的角速度低通时间常数
-#define IMU_LEVER_ALPHA_LPF_S       0.008f        // s, 角加速度低通时间常数
+#define IMU_LEVER_GYRO_LPF_S            0.004f          // s, 供差分用的角速度低通时间常数
+#define IMU_LEVER_ALPHA_LPF_S           0.008f          // s, 角加速度低通时间常数
 // 角加速度限幅, rad/s². 200 rad/s² 相当于 0.17s 从静止拉到 ±2000dps 满量程
-#define IMU_LEVER_ALPHA_MAX_RAD_S2  200.0f
+#define IMU_LEVER_ALPHA_MAX_RAD_S2      200.0f
 // 补偿量限幅, m/s². 0.1 m 偏心 @ 6 rad/s 向心项 3.6 m/s², 留足余量;
 // 只为拦住异常数据把重力方向带飞, 正常工况远达不到
-#define IMU_LEVER_CORR_MAX_M_S2     30.0f
+#define IMU_LEVER_CORR_MAX_M_S2         30.0f
 // 距上一拍超过这么多帧, 上一拍样本已过期, 不能再拿它差分
 // (与野值抑制同口径: 差分的语义是"相邻两个 1kHz 采样点")
-#define IMU_LEVER_GAP_FRAMES        4.0f
+#define IMU_LEVER_GAP_FRAMES            4.0f
 
 typedef struct
 {
-    float gyro_lpf[3];      // 供角加速度差分用的角速度低通值, rad/s
-    float alpha_lpf[3];     // 角加速度低通值, rad/s^2
-    float prev[3];          // 上一拍的陀螺低通值, rad/s
-    uint8_t started;        // 滤波器是否已初始化
+    float gyro_lpf[3];       // 供角加速度差分用的角速度低通值, rad/s
+    float alpha_lpf[3];      // 角加速度低通值, rad/s^2
+    float pre[3];            // 上一拍的陀螺低通值, rad/s
+    uint8_t started_flag;    // 滤波器是否已初始化
 } imu_accel_lever_t;
 
 static inline void imu_accel_lever_reset(imu_accel_lever_t *st)
@@ -323,33 +324,28 @@ static inline void imu_accel_lever_reset(imu_accel_lever_t *st)
     st->alpha_lpf[0] = 0.0f;
     st->alpha_lpf[1] = 0.0f;
     st->alpha_lpf[2] = 0.0f;
-    st->prev[0] = 0.0f;
-    st->prev[1] = 0.0f;
-    st->prev[2] = 0.0f;
-    st->started = 0U;
+    st->pre[0] = 0.0f;
+    st->pre[1] = 0.0f;
+    st->pre[2] = 0.0f;
+    st->started_flag = 0U;
 }
 
 /**
- * @brief 对称限幅, 非有限值(除零/溢出产生的 NaN/Inf)一律归 0
+ * @brief 对称限幅(复用 basic_math_constrain), 非有限值一律归 0
+ * @param value 原始值
+ * @param limit 对称限幅幅值, 正值
+ * @return 落在 [-limit, limit] 的值
+ * @note  除零/溢出产生的 NaN/Inf 必须先归 0: basic_math_constrain 的比较对 NaN 恒为假,
+ *        会把 NaN 原样放行
  */
 static inline float imu_lever_clamp(float value, float limit)
 {
-    if (!isfinite(value))
+    if (basic_math_is_invalid_float(value))
     {
         return 0.0f;
     }
 
-    if (value > limit)
-    {
-        return limit;
-    }
-
-    if (value < -limit)
-    {
-        return -limit;
-    }
-
-    return value;
+    return basic_math_constrain(value, -limit, limit);
 }
 
 /**
@@ -384,16 +380,16 @@ static inline void imu_accel_lever_compensate(imu_accel_lever_t *st, float *acce
     const uint8_t gap = (isfinite(elapsed_dt) &&
                          (elapsed_dt > (IMU_LEVER_GAP_FRAMES * frame_dt))) ? 1U : 0U;
 
-    if ((st->started == 0U) || (gap != 0U))
+    if ((st->started_flag == 0U) || (gap != 0U))
     {
         // 没有可用的上一拍(首拍/重连/长间隔): 角加速度按 0 处理, 本拍只做向心项
         for (uint8_t i = 0U; i < 3U; i++)
         {
             st->gyro_lpf[i] = gyro[i];
             st->alpha_lpf[i] = 0.0f;
-            st->prev[i] = gyro[i];
+            st->pre[i] = gyro[i];
         }
-        st->started = 1U;
+        st->started_flag = 1U;
     }
     else
     {
@@ -404,9 +400,9 @@ static inline void imu_accel_lever_compensate(imu_accel_lever_t *st, float *acce
         {
             st->gyro_lpf[i] += gyro_coef * (gyro[i] - st->gyro_lpf[i]);
 
-            const float alpha = imu_lever_clamp((st->gyro_lpf[i] - st->prev[i]) / frame_dt,
+            const float alpha = imu_lever_clamp((st->gyro_lpf[i] - st->pre[i]) / frame_dt,
                                                 IMU_LEVER_ALPHA_MAX_RAD_S2);
-            st->prev[i] = st->gyro_lpf[i];
+            st->pre[i] = st->gyro_lpf[i];
             st->alpha_lpf[i] += alpha_coef * (alpha - st->alpha_lpf[i]);
         }
     }
@@ -431,26 +427,57 @@ static inline void imu_accel_lever_compensate(imu_accel_lever_t *st, float *acce
 
 // ===== IMU_ACCEL_LEVER_END =====
 
-/*------------------------------ 温度控制 ------------------------------*/
+/*------------------------------ 1.9 温度控制 ------------------------------*/
 
-#define IMU_TEMP_REF_C                  50.0f          // 目标温度, ℃
-#define IMU_TEMP_VALID_MIN_C            (-20.0f)       // 温度有效下限, ℃
-#define IMU_TEMP_VALID_MAX_C            100.0f         // 温度有效上限, ℃
-#define IMU_TEMP_OVERHEAT_C             60.0f          // 过温保护, ℃
-#define IMU_TEMP_STABLE_BAND_C          0.8f           // 判定温度稳定的带宽, ℃
-#define IMU_TEMP_STABLE_S               3.0f           // s, 温度稳定持续时长
+#define IMU_TEMP_REF_C                  50.0f           // 目标温度, ℃
+#define IMU_TEMP_VALID_MIN_C            (-20.0f)        // 温度有效下限, ℃
+#define IMU_TEMP_VALID_MAX_C            100.0f          // 温度有效上限, ℃
+#define IMU_TEMP_OVERHEAT_C             60.0f           // 过温保护, ℃
+#define IMU_TEMP_STABLE_BAND_C          0.8f            // 判定温度稳定的带宽, ℃
+#define IMU_TEMP_STABLE_SPAN_S          3.0f            // s, 温度稳定持续时长
 
-#define IMU_TEMP_PID_KP                 180.0f
-#define IMU_TEMP_PID_KI                 1.2f
-#define IMU_TEMP_PID_KD                 150.0f
-#define IMU_TEMP_PID_OUT_MAX            1500.0f        // 加热输出上限(与 TIM3 ARR 同量纲)
-#define IMU_TEMP_PID_INTEGRAL_LIMIT     500.0f         // 积分限幅, 防止积分饱和(windup)
-#define IMU_HEATER_PWM_PERIOD_COUNTS    10000.0f       // TIM3 ARR + 1, 用于把输出换算成占空比
+// 自标定等待温度的超时: 加热能力不足/目标偏高时不能在 Wait_Temp 无限期卡住,
+// 超时后直接进入解算, 沿用默认零偏(姿态可用优先于零偏精度)
+#define IMU_TEMP_WAIT_TIMEOUT_S         15.0f           // s
+
+/* 温度 PID 参数
+ *
+ * ⚠ pid_calc() 的 PID_POSITION 分支是: error_sum += error; output = Kp*error + Ki*error_sum + ...
+ *   即 error_sum 累加的是"误差本身"，输出里再乘 Ki。因此:
+ *     - 积分项的最大贡献 = Ki × integral_limit  （不是 integral_limit 本身）
+ *     - 积分时间 Ti = Kp / (Ki × fs)，fs = 100 Hz（温控节拍）
+ *
+ * 一次事故记录: 曾按 `error_sum += Ki*error` 的常见写法整定成 Ki=0.0045 / limit=500，
+ * 结果积分权限只有 0.0045×500 = 2.25 counts(0.02% 占空比)，积分实际被禁用，
+ * 实测温度长期停在 49.63 ℃ 补不上 50 ℃ 的稳态误差。
+ *
+ * 被控对象: 单容热系统, 热时间常数约 257 s(断电 54 s 内从 50.6 ℃ 降到 45.75 ℃)。
+ * 温度读数与加热占空比之间存在约 0.005 ℃/count 的瞬时(<50 ms)电气耦合
+ * (加热电流经公共地/电源干扰温度传感; 真实热时间常数 257 s, 故它不是热效应)。
+ * 该耦合构成正反馈, 静态环路增益 = Kp×0.005:
+ * Kp=180 时为 0.86, 已逼近 1(实测旧 Ki=1.2 时在 50 ℃ 附近产生 ±2.2 ℃ 极限环);
+ * 现取 Kp=75, 环路增益降至 0.375, 留足稳定裕度。
+ * 注意: 该耦合无法用软件消除(系数跨板不一致, 不做补偿), 根治要硬件上给加热回路
+ * 独立回流地与就近储能电容。
+ *
+ * Ti = 75/(100×0.008) ≈ 94 s, 与对象极点(257 s)同量级, 靠积分吃掉比例项稳态误差。
+ * 积分权限 Ki×limit = 0.008×400000 = 3200 counts(32% 占空比), 覆盖环境温度大幅变化
+ * 所需的稳态功率; 上限只作安全钳位, 实际收敛速度由 Ti 决定。
+ *
+ * Kd 置 0: 温度是 0.125 ℃ 量化值, 一阶微分只会把量化台阶放大成占空比抖动;
+ * 单容对象也没有需要微分先行补偿的相位滞后。 */
+#define IMU_TEMP_PID_KP                 75.0f
+#define IMU_TEMP_PID_KI                 0.008f
+#define IMU_TEMP_PID_KD                 0.0f
+#define IMU_TEMP_PID_OUT_MAX            1500.0f         // 加热输出上限(与 TIM3 ARR 同量纲)
+// 积分累加上限(注意: error_sum 累加的是误差本身, 积分权限 = Ki × 本值 = 3200 counts)
+#define IMU_TEMP_PID_INTEGRAL_LIMIT     400000.0f
+#define IMU_HEATER_PWM_PERIOD_COUNTS    10000.0f        // TIM3 ARR + 1, 用于把输出换算成占空比
 
 // ===== IMU_HEATER_POLICY_BEGIN (主机侧测试按此标记抽取, 勿改名) =====
 
 /**
- * @brief 单向执行器的条件积分判决
+ * @brief 输出是否已越出执行器可行域
  * @return 1 = 保留本拍积分累加; 0 = 撤销本拍积分累加
  * @note  加热器只能加热: 输出顶到上限时冻结积分防大超调; 输出被压到 0 时撤销积分,
  *        避免降温后先消化负积分造成"过冲却长时间不加热"的迟滞.
@@ -462,73 +489,78 @@ static inline uint8_t imu_heater_keep_integral(float out, float out_max)
 }
 
 /**
+ * @brief 单向执行器的条件积分判决(按误差方向决定是否保留本拍积分)
+ * @param out     本拍 PID 输出
+ * @param error   本拍温度误差(ref - now), 正 = 偏冷
+ * @param out_max 输出上限
+ * @return 1 = 保留本拍积分累加; 0 = 撤销本拍积分累加
+ * @note  越限时只有"误差仍把输出往外推"才撤销积分; 误差反向时保留, 让积分能自然回退.
+ *        若越限就一律冻结, 积分一旦攒到较大权限, 输出就永远回不到 0,
+ *        降目标/环境升温时会造成长期过冲.
+ */
+static inline uint8_t imu_heater_keep_integral_step(float out, float error, float out_max)
+{
+    if (imu_heater_keep_integral(out, out_max) != 0U)
+    {
+        return 1U;
+    }
+
+    if (out > out_max)
+    {
+        // 顶到上限: 仍偏冷(还要更强) → 撤销; 已偏热 → 保留(让积分回退)
+        return (error > 0.0f) ? 0U : 1U;
+    }
+
+    // 被压到 0: 仍偏热(还要更弱) → 撤销; 已偏冷 → 保留
+    return (error < 0.0f) ? 0U : 1U;
+}
+
+/**
  * @brief 把 PID 输出夹进执行器可行域 [0, out_max]
+ * @param out     本拍 PID 输出
+ * @param out_max 输出上限
+ * @return 落在 [0, out_max] 的值, 非有限值归 0
+ * @note  复用 basic_math_constrain; 非有限值先归 0, 原因见 imu_lever_clamp()
  */
 static inline float imu_heater_clamp_out(float out, float out_max)
 {
-    if (out > out_max)
+    if (basic_math_is_invalid_float(out))
     {
-        return out_max;
+        return 0.0f;
     }
 
-    return (out > 0.0f) ? out : 0.0f;
+    return basic_math_constrain(out, 0.0f, out_max);
 }
 
-// ===== IMU_HEATER_POLICY_END =====
 
+// 解算结果(写者: IMU 任务; 读者: 其余任务).
+// 这是本模块唯一对外发布的状态结构体, 内部状态用下列 static 变量,
+// 全部是文件作用域符号, Ozone 可直接按名字搜索(规范 §9.4)
 volatile imu_data_resolve_t imu_frame = {0};
 
-// 温度PID控制器
+// 温度 PID(位置式, 100Hz)
 static pid_t temperature_pid = {0};
 static pid_config temperature_ctrl_config = {0};
 
 // 加热电阻 PWM(TIM3_CH4), 上电占空比为 0
 static pwm_class heater_pwm;
 // 最近一次下发给 TIM3_CH4 的占空比, 用于避免每帧重复写 CCR
-static float heater_duty_cmd = 0.0f;
+static float last_heater_duty = 0.0f;
 
-// 陀螺零漂补偿值(参数校准), rad/s
-static float gyro_bias[3] = {0.00317657646f, -0.00223845663f, 0.00285839941f};
+// 陀螺零偏补偿值(原始域标定量), rad/s
+// 来源: 恒温静止实测均值(条件与数据见 imu_temp_ctrl.md §13.1), 2026-11-12 随温控重新整定一并更新
+static float gyro_bias[3] = {0.0016286131f, -0.00465911673f, 0.00251661893f};
 
-// 陀螺刻度因子(标度因数修正), 无量纲, 1.0 = 不修正(参数校准)
+// 陀螺刻度因子(标度因数修正), 无量纲, 1.0 = 不修正(原始域标定量)
+// 来源: 历史标定值, 仅 z 轴有实测偏差, x/y 轴尚未标定
 static float gyro_scale[3] = {1.0f, 1.0f, 0.9936f};
 
-// IMU 安装位置相对刚体旋转中心的位置矢量(参数校准), m.
-static float imu_lever_arm_m[3] = {0.08f, 0.015f, 0.0f};
+// IMU 安装位置相对刚体旋转中心的位置矢量(参数校准), m, BMI088 芯片自身坐标系.
+// 来源: 待实测(全 0 时杆臂补偿退化为直通, 当前实车偏心未标定)
+static float imu_lever_arm_m[3] = {0.00f, 0.00f, 0.0f};
 
-// 陀螺积分的时间账本(定义见本文件 IMU_TIME_BASE 段)
+// 陀螺积分的时间账本(定义见 1.1)
 static imu_time_base_t gyro_time_base = {0.0f};
-
-static imu_status_e imu_status = Imu_Status_Uninit;
-static uint32_t init_retry_ticks = 0;
-static uint32_t read_fail_count = 0;
-static uint32_t drdy_timeout_count = 0;
-static osThreadId_t imu_task_handle = 0;
-static volatile uint32_t gyro_drdy_sequence = 0;
-static volatile float gyro_drdy_dt = 0.0f;
-static uint32_t gyro_drdy_dwt_last = 0;
-static uint8_t gyro_drdy_dwt_started = 0;
-
-// EKF 矩阵缓冲区是否分配成功(FreeRTOS 堆不足时为 0)
-static uint8_t ekf_ready = 0U;
-// 姿态输出是否可用(与传感器数据有效性解耦: EKF 异常不应连带关闭温控)
-static uint8_t attitude_valid = 0U;
-
-// 运行时静止残差零漂修正
-static float yaw_bias_trim = 0.0f;
-// 连续静止时长, s
-static float still_confirm_s = 0.0f;
-// 静止判定用低通角速度(抑制采样噪声打断判定)
-static float still_gyro_lpf[3] = {0.0f, 0.0f, 0.0f};
-static uint8_t still_gyro_lpf_started = 0U;
-// 静止判定用低通加速度模长
-static float still_accel_lpf = 0.0f;
-static uint8_t still_accel_lpf_started = 0U;
-
-// 上电/重连后的静止残差快速定标(时间加权平均)
-static float trim_seed_sum = 0.0f;      // Σ gz*dt
-static float trim_seed_span = 0.0f;     // Σ dt
-static uint8_t trim_seeded = 0U;
 
 // 陀螺野值抑制状态
 static imu_gyro_glitch_t gyro_glitch = {{0.0f, 0.0f, 0.0f}, 0U, {0U, 0U, 0U}};
@@ -536,47 +568,71 @@ static imu_gyro_glitch_t gyro_glitch = {{0.0f, 0.0f, 0.0f}, 0U, {0U, 0U, 0U}};
 // 加速度计偏心补偿状态(角加速度估计)
 static imu_accel_lever_t accel_lever = {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0U};
 
-// 积分时基: 上一次进入 INS_Task 时刻的 DWT 计数
-static uint32_t imu_elapsed_dwt_last = 0U;
-static uint8_t imu_elapsed_dwt_started = 0U;
+// 运行时静止残差零漂修正, rad/s
+static float yaw_bias_trim = 0.0f;
+
+// 连续静止时长, s
+static float still_confirm_s = 0.0f;
+
+// 静止判定用低通角速度(抑制采样噪声打断判定), rad/s
+static float still_gyro_lpf[3] = {0.0f, 0.0f, 0.0f};
+static uint8_t still_gyro_lpf_started_flag = 0U;
+
+// 静止判定用低通加速度模长, m/s^2
+static float still_accel_lpf = 0.0f;
+static uint8_t still_accel_lpf_started_flag = 0U;
+
+// 上电/重连后的静止残差快速定标(时间加权平均)
+static float trim_seed_sum = 0.0f;             // Σ gz·dt, rad
+static float trim_seed_span = 0.0f;            // Σ dt, s
+static uint8_t trim_seeded_flag = 0U;
+
+// 在线判据计数
+static uint32_t init_retry_ticks = 0U;         // 初始化重试计时, ms
+static uint32_t read_fail_count = 0U;          // 连续无效帧数
+static uint32_t drdy_timeout_count = 0U;       // 连续 DRDY 超时次数
+
+// EKF 矩阵缓冲区是否分配成功(FreeRTOS 堆不足时为 0)
+static uint8_t ekf_ready_flag = 0U;
+
+// 姿态输出是否可用(与传感器数据有效性解耦: EKF 异常不应连带关闭温控)
+static uint8_t attitude_valid_flag = 0U;
+
+// 任务句柄与 DRDY 时间戳(ISR 侧写入)
+static osThreadId_t imu_task_handle = 0;
+static volatile uint32_t gyro_drdy_sequence = 0;
+static volatile float gyro_drdy_dt = 0.0f;
+static uint32_t pre_drdy_dwt = 0U;             // 上一拍 DRDY 的 DWT 计数
+static uint8_t drdy_dwt_started_flag = 0U;
+
+// 积分时基: 上一次进入 imu_update_measure 时刻的 DWT 计数
+static uint32_t pre_elapsed_dwt = 0U;
+static uint8_t elapsed_dwt_started_flag = 0U;
 
 #if IMU_GYRO_AUTO_CALIB_ENABLE
-static float temp_stable_s = 0.0f;
-static float calib_sum[3] = {0.0f, 0.0f, 0.0f};   // Σ raw*dt
-static float calib_span_s = 0.0f;                  // Σ dt (有效)
-static float calib_elapsed_s = 0.0f;               // Σ dt (全部)
-static float calib_reject_s = 0.0f;                // Σ dt (被丢弃)
+static float temp_stable_s = 0.0f;             // 温度在稳定带宽内的累计时长, s
+static float temp_wait_s = 0.0f;               // 等待温度稳定的累计时长, s
+static float calib_sum[3] = {0.0f, 0.0f, 0.0f};// Σ raw·dt, rad
+static float calib_span_s = 0.0f;              // Σ dt (有效), s
+static float calib_elapsed_s = 0.0f;           // Σ dt (全部), s
+static float calib_reject_s = 0.0f;            // Σ dt (被丢弃), s
 #endif
 
-static void imu_set_status(imu_status_e status);
-static void imu_heater_output_off(void);
-static void imu_heater_safe_off(void);
-static void imu_sensor_init(void);
-static void imu_temperature_ctrl_step(void);
-static uint8_t imu_attitude_step(const float *gyro, const float *accel, float dt);
-static void INS_Init(void);
-static void INS_Task(float drdy_dt, float elapsed_dt);
-
-#if IMU_GYRO_AUTO_CALIB_ENABLE
-static void imu_gyro_calib_start(void);
-static void imu_gyro_calib_step(const float *gyro, float dt);
-#endif
 
 /**
- * @brief 更新工作状态并同步到观测结构体
+ * @brief 更新工作状态(唯一真源: imu_frame.status)
  */
 static void imu_set_status(imu_status_e status)
 {
-    imu_status = status;
     imu_frame.status = status;
 }
 
 /**
  * @brief 读取当前工作状态
  */
-static imu_status_e imu_get_status(void)
+static imu_status_e imu_status_get(void)
 {
-    return imu_status;
+    return imu_frame.status;
 }
 
 static uint8_t imu_array_is_finite(const float *values, uint8_t count)
@@ -592,20 +648,52 @@ static uint8_t imu_array_is_finite(const float *values, uint8_t count)
 }
 
 /**
- * @brief 量取距上一次进入 INS_Task 真实经过的时间
+ * @brief 量取距上一次进入 imu_update_measure 真实经过的时间
  * @return 间隔, s; 首次调用返回名义周期
  * @note  用 DWT 硬件计数直接量, 与帧数、DRDY 抖动、通知延迟无关
  */
 static float imu_measure_elapsed_dt(void)
 {
-    if (imu_elapsed_dwt_started == 0U)
+    if (elapsed_dwt_started_flag == 0U)
     {
-        (void)bsp_dwt_get_deltat32(&imu_elapsed_dwt_last);
-        imu_elapsed_dwt_started = 1U;
+        (void)bsp_dwt_get_deltat32(&pre_elapsed_dwt);
+        elapsed_dwt_started_flag = 1U;
         return IMU_DEFAULT_DT_S;
     }
 
-    return bsp_dwt_get_deltat32(&imu_elapsed_dwt_last);
+    return bsp_dwt_get_deltat32(&pre_elapsed_dwt);
+}
+
+/**
+ * @brief 传感器重连后复位全部运行时状态
+ * @note  传感器已重新软复位: 旧四元数/圈数/低通历史/差分基准全部不再连续,
+ *        重连期间经历的时间也不能算进账本, 否则会拿一帧新数据去"补"整段离线时间
+ */
+static void imu_runtime_reset(void)
+{
+    // EKF 矩阵分配失败时 Reset 会访问空指针, 必须先判 ekf_ready_flag
+    if (ekf_ready_flag != 0U)
+    {
+        IMU_QuaternionEKF_Reset();
+    }
+
+    imu_time_base_reset(&gyro_time_base);
+    imu_gyro_glitch_reset(&gyro_glitch);
+    imu_accel_lever_reset(&accel_lever);
+
+    still_confirm_s = 0.0f;
+    still_gyro_lpf_started_flag = 0U;
+    still_accel_lpf_started_flag = 0U;
+
+    // 软复位后零偏会变, 需要重新做静止残差定标
+    trim_seeded_flag = 0U;
+    trim_seed_sum = 0.0f;
+    trim_seed_span = 0.0f;
+
+    elapsed_dwt_started_flag = 0U;
+
+    // 姿态输出作废, 直到第一帧 EKF 产出为止
+    attitude_valid_flag = 0U;
 }
 
 /**
@@ -617,13 +705,13 @@ static void imu_heater_output_off(void)
 {
     temperature_pid.output = 0.0f;
 
-    if ((imu_frame.heater_out == 0.0f) && (heater_duty_cmd == 0.0f))
+    if ((imu_frame.heater_out == 0.0f) && (last_heater_duty == 0.0f))
     {
         return;
     }
 
     imu_frame.heater_out = 0.0f;
-    heater_duty_cmd = 0.0f;
+    last_heater_duty = 0.0f;
     heater_pwm.set_duty_ration(0.0f);
 }
 
@@ -639,9 +727,40 @@ static void imu_heater_safe_off(void)
 }
 
 /**
+ * @brief BMI088 初始化(带重试); 失败时置 Init_Fail, 由任务周期重试
+ */
+static void imu_sensor_init(void)
+{
+    imu_heater_safe_off();
+
+    for (uint8_t retry = 0U; retry < IMU_INIT_RETRY_TIMES; retry++)
+    {
+        if (BMI088_init() == BMI088_NO_ERROR)
+        {
+            // 掉线恢复后必须丢弃旧的姿态状态: 传感器已重新软复位, 旧四元数/圈数不再连续
+            imu_runtime_reset();
+            imu_frame.data_valid = 1U;
+#if IMU_GYRO_AUTO_CALIB_ENABLE
+            temp_stable_s = 0.0f;
+            temp_wait_s = 0.0f;
+            imu_set_status(Imu_Status_Wait_Temp);
+#else
+            imu_set_status(Imu_Status_Running);
+#endif
+            return;
+        }
+        osDelay(IMU_INIT_RETRY_DELAY_MS);
+    }
+
+    imu_frame.data_valid = 0U;
+    imu_set_status(Imu_Status_Init_Fail);
+}
+
+#if IMU_GYRO_AUTO_CALIB_ENABLE
+
+/**
  * @brief 陀螺零漂标定开始, 清空累加器
  */
-#if IMU_GYRO_AUTO_CALIB_ENABLE
 static void imu_gyro_calib_start(void)
 {
     calib_sum[0] = 0.0f;
@@ -651,7 +770,6 @@ static void imu_gyro_calib_start(void)
     calib_elapsed_s = 0.0f;
     calib_reject_s = 0.0f;
 }
-#endif
 
 /**
  * @brief 陀螺零漂标定单步
@@ -659,8 +777,7 @@ static void imu_gyro_calib_start(void)
  * @param dt   本拍代表的时间, s
  * @note  丢弃运动帧; 累加按时间加权(Σraw·dt / Σdt), 不是逐帧算术平均; 超时按真实时间
  */
-#if IMU_GYRO_AUTO_CALIB_ENABLE
-static void imu_gyro_calib_step(const float *gyro, float dt)
+static void imu_update_gyro_calib(const float *gyro, float dt)
 {
     const float norm = sqrtf(gyro[0] * gyro[0] + gyro[1] * gyro[1] + gyro[2] * gyro[2]);
 
@@ -682,7 +799,7 @@ static void imu_gyro_calib_step(const float *gyro, float dt)
     calib_sum[2] += gyro[2] * dt;
     calib_span_s += dt;
 
-    if ((calib_span_s >= IMU_GYRO_CALIB_S) ||
+    if ((calib_span_s >= IMU_GYRO_CALIB_SPAN_S) ||
         ((calib_elapsed_s >= IMU_GYRO_CALIB_TIMEOUT_S) && (calib_span_s >= IMU_GYRO_CALIB_MIN_S)))
     {
         const float inv_span = 1.0f / calib_span_s;
@@ -693,53 +810,50 @@ static void imu_gyro_calib_step(const float *gyro, float dt)
         imu_set_status(Imu_Status_Running);
     }
 }
-#endif
 
 /**
- * @brief BMI088 初始化(带重试); 失败时置 Init_Fail, 由任务周期重试
+ * @brief 等待温度进入目标带宽的单步
+ * @param elapsed_dt 距上一拍真实经过的时间, s
+ * @note  超时直接进入解算: 加热能力不足/目标偏高时不能在 Wait_Temp 无限期卡住,
+ *        姿态可用优先于零偏精度
  */
-static void imu_sensor_init(void)
+static void imu_update_wait_temp(float elapsed_dt)
 {
-    imu_heater_safe_off();
+    temp_wait_s += elapsed_dt;
 
-    for (uint8_t retry = 0U; retry < IMU_INIT_RETRY_TIMES; retry++)
+    if (fabsf(imu_frame.temperature - imu_frame.ref_temperature) < IMU_TEMP_STABLE_BAND_C)
     {
-        if (BMI088_init() == BMI088_NO_ERROR)
+        temp_stable_s += elapsed_dt;
+
+        if (temp_stable_s >= IMU_TEMP_STABLE_SPAN_S)
         {
-            // 掉线恢复后必须丢弃旧的姿态状态: 传感器已重新软复位, 旧四元数/圈数不再连续
-            IMU_QuaternionEKF_Reset();
-            imu_time_base_reset(&gyro_time_base);
-            still_confirm_s = 0.0f;
-            still_gyro_lpf_started = 0U;
-            still_accel_lpf_started = 0U;
-            // 软复位后零偏会变, 需要重新做静止残差定标; 野值抑制的上一拍基准同样作废
-            trim_seeded = 0U;
-            trim_seed_sum = 0.0f;
-            trim_seed_span = 0.0f;
-            imu_gyro_glitch_reset(&gyro_glitch);
-            // 离线前后的角速度不连续, 角加速度差分基准同样作废
-            imu_accel_lever_reset(&accel_lever);
-            // 重连期间经历的时间不能算进账本, 否则会拿一帧新数据去"补"整段离线时间
-            imu_elapsed_dwt_started = 0U;
-            imu_frame.data_valid = 1U;
-#if IMU_GYRO_AUTO_CALIB_ENABLE
             temp_stable_s = 0.0f;
-            imu_set_status(Imu_Status_Wait_Temp);
-#else
-            imu_set_status(Imu_Status_Running);
-#endif
-            return;
+            temp_wait_s = 0.0f;
+            imu_gyro_calib_start();
+            imu_set_status(Imu_Status_Calibrating);
         }
-        osDelay(IMU_INIT_RETRY_DELAY_MS);
+
+        return;
     }
 
-    imu_frame.data_valid = 0U;
-    imu_set_status(Imu_Status_Init_Fail);
+    temp_stable_s = 0.0f;
+
+    if (temp_wait_s >= IMU_TEMP_WAIT_TIMEOUT_S)
+    {
+        temp_wait_s = 0.0f;
+        imu_set_status(Imu_Status_Running);
+    }
 }
+
+#endif // IMU_GYRO_AUTO_CALIB_ENABLE
+
 
 /**
  * @brief 温度 PID 控制(100Hz), 输出换算为加热 PWM 占空比
- * @note  单向执行器条件积分抗饱和; 传感器无效/过温时立即断加热并清积分
+ * @note  1) 单向执行器条件积分抗饱和, 判决见 imu_heater_keep_integral_step()
+ *        2) 读数不可信/过温时立即断加热并清积分
+ *        3) pid_calc() 的 PID_POSITION 分支不做输出限幅, 且 basic_math_constrain 拦不住 NaN,
+ *           输出必须在本函数内判 NaN + 限幅
  */
 static void imu_temperature_ctrl_step(void)
 {
@@ -753,6 +867,7 @@ static void imu_temperature_ctrl_step(void)
         return;
     }
 
+    // 条件积分需要知道本拍积分前的累加值, 越限时直接回滚
     const float error_sum_before = temperature_pid.error_sum;
     float out = pid_calc(&temperature_pid, imu_frame.ref_temperature, temperature);
 
@@ -763,19 +878,171 @@ static void imu_temperature_ctrl_step(void)
         return;
     }
 
-    // 条件积分: 输出冲出可行域时撤销本拍积分累加, 避免 Windup
-    if (imu_heater_keep_integral(out, IMU_TEMP_PID_OUT_MAX) == 0U)
+    if (imu_heater_keep_integral_step(out, temperature_pid.error[0], IMU_TEMP_PID_OUT_MAX) == 0U)
     {
         temperature_pid.error_sum = error_sum_before;
     }
 
-    // pid_calc 的 PID_POSITION 分支不做输出限幅, 这里必须自己限幅
     out = imu_heater_clamp_out(out, IMU_TEMP_PID_OUT_MAX);
     temperature_pid.output = out;
 
     imu_frame.heater_out = out;
-    heater_duty_cmd = out / IMU_HEATER_PWM_PERIOD_COUNTS;
-    heater_pwm.set_duty_ration(heater_duty_cmd);
+    last_heater_duty = out / IMU_HEATER_PWM_PERIOD_COUNTS;
+    heater_pwm.set_duty_ration(last_heater_duty);
+}
+
+/**
+ * @brief 温控节拍: 每 IMU_TEMP_CTRL_DIVIDER 帧读一次温度, 并跑一次温度 PID
+ * @note  温度与姿态解耦: 温度读失败只断加热, 本拍陀螺/加速度照常送入 EKF
+ */
+static void imu_update_temperature(void)
+{
+    const uint8_t temp_due = ((imu_frame.sample_count % IMU_TEMP_CTRL_DIVIDER) == 0U) ? 1U : 0U;
+    uint8_t temp_ok = 0U;
+
+    if (temp_due != 0U)
+    {
+        float temperature = imu_frame.temperature;
+
+        if ((BMI088_read_temperature(&temperature) == BMI088_NO_ERROR) && isfinite(temperature) &&
+            (temperature >= IMU_TEMP_VALID_MIN_C) && (temperature <= IMU_TEMP_VALID_MAX_C))
+        {
+            imu_frame.temperature = temperature;
+            temp_ok = 1U;
+        }
+        else
+        {
+            // 温度不可信: 立即断加热; 不计入 read_fail_count(那是整片掉线判据)
+            imu_heater_safe_off();
+        }
+    }
+
+    imu_frame.sample_count++;
+
+    if (temp_ok != 0U)
+    {
+        imu_temperature_ctrl_step();
+    }
+}
+
+/**
+ * @brief 作废当前姿态: 复位 EKF 与全部静止/定标状态
+ * @note  复位后低通历史与差分基准都已失效, 必须一并清掉, 否则首帧会拿旧状态续算.
+ *        EKF 内存分配失败时不能调用本函数(Reset 会访问未分配的矩阵)
+ */
+static void imu_attitude_invalidate(void)
+{
+    IMU_QuaternionEKF_Reset();
+    still_confirm_s = 0.0f;
+    still_gyro_lpf_started_flag = 0U;
+    still_accel_lpf_started_flag = 0U;
+    attitude_valid_flag = 0U;
+}
+
+/**
+ * @brief 静止判定与 z 轴残余零漂修正单步
+ * @param gyro       已换算角速度, rad/s
+ * @param accel_norm 加速度模长, m/s^2
+ * @param dt         本拍积分步长, s
+ * @return 已扣除 yaw_bias_trim 的 z 轴角速度, rad/s; NAN 表示滤波量发散, 调用方必须作废姿态
+ * @note  1) 静止判定的两路输入都必须低通: 瞬时角速度噪声峰值可达阈值本身,
+ *           瞬时加速度模长也会偶发跳变, 都会持续打断静止确认
+ *        2) trim 再叠一层瞬时角速度门控: 低通判定比真实运动滞后 3~4 拍,
+ *           机动起始的几帧会被误判为静止而污染 trim
+ */
+static float imu_calculate_yaw_trim(const float *gyro, float accel_norm, float dt)
+{
+    float gz = gyro[2] - yaw_bias_trim;
+
+    if (still_gyro_lpf_started_flag == 0U)
+    {
+        still_gyro_lpf[0] = gyro[0];
+        still_gyro_lpf[1] = gyro[1];
+        still_gyro_lpf[2] = gz;
+        still_gyro_lpf_started_flag = 1U;
+    }
+    else
+    {
+        const float alpha = dt / (IMU_STILL_GYRO_LPF_S + dt);
+        still_gyro_lpf[0] += alpha * (gyro[0] - still_gyro_lpf[0]);
+        still_gyro_lpf[1] += alpha * (gyro[1] - still_gyro_lpf[1]);
+        still_gyro_lpf[2] += alpha * (gz - still_gyro_lpf[2]);
+    }
+
+    const float gyro_norm = sqrtf(still_gyro_lpf[0] * still_gyro_lpf[0] +
+                                  still_gyro_lpf[1] * still_gyro_lpf[1] +
+                                  still_gyro_lpf[2] * still_gyro_lpf[2]);
+
+    if (!isfinite(gyro_norm) || !isfinite(accel_norm))
+    {
+        return NAN;
+    }
+
+    if (still_accel_lpf_started_flag == 0U)
+    {
+        still_accel_lpf = accel_norm;
+        still_accel_lpf_started_flag = 1U;
+    }
+    else
+    {
+        const float accel_alpha = dt / (IMU_STILL_ACCEL_LPF_S + dt);
+        still_accel_lpf += accel_alpha * (accel_norm - still_accel_lpf);
+    }
+
+    if ((gyro_norm < IMU_STILL_GYRO_THRESHOLD) && (fabsf(still_accel_lpf - IMU_GRAVITY_ACCEL_M_S2) < IMU_STILL_ACCEL_TOL))
+    {
+        // 按真实时间累计, 不按调用次数
+        still_confirm_s += dt;
+        if (still_confirm_s > IMU_STILL_CONFIRM_SPAN_S)
+        {
+            still_confirm_s = IMU_STILL_CONFIRM_SPAN_S;
+        }
+    }
+    else
+    {
+        still_confirm_s = 0.0f;
+    }
+
+    if (still_confirm_s < IMU_STILL_CONFIRM_SPAN_S)
+    {
+        return gz;
+    }
+
+    const float gyro_norm_now = sqrtf(gyro[0] * gyro[0] + gyro[1] * gyro[1] + gz * gz);
+    const uint8_t gate_ok = (isfinite(gyro_norm_now) && (gyro_norm_now < IMU_TRIM_SEED_RATE_MAX)) ? 1U : 0U;
+
+    if (trim_seeded_flag == 0U)
+    {
+        // 首次确认静止: 直接对残差取时间加权平均定标, 避免从 0 慢积分导致
+        // yaw 上电后漂移数分钟才收敛
+        if (gate_ok == 0U)
+        {
+            trim_seed_sum = 0.0f;
+            trim_seed_span = 0.0f;
+            return gz;
+        }
+
+        trim_seed_sum += gz * dt;
+        trim_seed_span += dt;
+
+        if (trim_seed_span >= IMU_TRIM_SEED_SPAN_S)
+        {
+            yaw_bias_trim = basic_math_constrain(yaw_bias_trim + trim_seed_sum / trim_seed_span,
+                                                 -IMU_YAW_TRIM_LIMIT, IMU_YAW_TRIM_LIMIT);
+            trim_seeded_flag = 1U;
+        }
+
+        return gyro[2] - yaw_bias_trim;
+    }
+
+    if (gate_ok != 0U)
+    {
+        // 增益按 速率 × dt 归一, 收敛时间常数与通知合并率无关
+        yaw_bias_trim = basic_math_constrain(yaw_bias_trim + IMU_STILL_TRIM_RATE * gz * dt,
+                                             -IMU_YAW_TRIM_LIMIT, IMU_YAW_TRIM_LIMIT);
+    }
+
+    return gyro[2] - yaw_bias_trim;
 }
 
 /**
@@ -785,130 +1052,39 @@ static void imu_temperature_ctrl_step(void)
  * @param dt    本拍积分步长, s
  * @return 1 = 姿态有效, 0 = 已复位且姿态不可用
  */
-static uint8_t imu_attitude_step(const float *gyro, const float *accel, float dt)
+static uint8_t imu_calculate_attitude(const float *gyro, const float *accel, float dt)
 {
-    if (ekf_ready == 0U)
+    if (ekf_ready_flag == 0U)
     {
         // EKF 内存分配失败: 禁止解算与输出, 避免发布垃圾姿态
+        // (此处不能调用 IMU_QuaternionEKF_Reset: 矩阵指针为 NULL 会写到地址 0)
         still_confirm_s = 0.0f;
-        attitude_valid = 0U;
+        attitude_valid_flag = 0U;
         return 0U;
     }
 
     if ((gyro == 0) || (accel == 0) || !imu_array_is_finite(gyro, 3U) ||
         !imu_array_is_finite(accel, 3U) || !isfinite(dt))
     {
-        IMU_QuaternionEKF_Reset();
-        still_confirm_s = 0.0f;
-        attitude_valid = 0U;
+        imu_attitude_invalidate();
         return 0U;
     }
 
-    // 零偏与刻度已在 INS_Task 里换算完, 这里只再扣除标定域的静止残差
-    const float gx = gyro[0];
-    const float gy = gyro[1];
-    float gz = gyro[2] - yaw_bias_trim;
-
-    // 静止判定: 低通后的角速度足够小且加速度模长接近 1g
+    // 零偏与刻度已在 imu_calculate_running 里换算完, 这里只再扣除标定域的静止残差
     const float accel_norm = sqrtf(accel[0] * accel[0] + accel[1] * accel[1] + accel[2] * accel[2]);
+    const float gz = imu_calculate_yaw_trim(gyro, accel_norm, dt);
 
-    if (still_gyro_lpf_started == 0U)
+    if (!isfinite(gz))
     {
-        still_gyro_lpf[0] = gx;
-        still_gyro_lpf[1] = gy;
-        still_gyro_lpf[2] = gz;
-        still_gyro_lpf_started = 1U;
-    }
-    else
-    {
-        const float alpha = dt / (IMU_STILL_GYRO_LPF_S + dt);
-        still_gyro_lpf[0] += alpha * (gx - still_gyro_lpf[0]);
-        still_gyro_lpf[1] += alpha * (gy - still_gyro_lpf[1]);
-        still_gyro_lpf[2] += alpha * (gz - still_gyro_lpf[2]);
-    }
-
-    const float gyro_norm = sqrtf(still_gyro_lpf[0] * still_gyro_lpf[0] +
-                                 still_gyro_lpf[1] * still_gyro_lpf[1] +
-                                 still_gyro_lpf[2] * still_gyro_lpf[2]);
-
-    if (!isfinite(gyro_norm) || !isfinite(accel_norm))
-    {
-        IMU_QuaternionEKF_Reset();
-        still_confirm_s = 0.0f;
-        still_gyro_lpf_started = 0U;
-        still_accel_lpf_started = 0U;
-        attitude_valid = 0U;
+        imu_attitude_invalidate();
         return 0U;
-    }
-
-    if (still_accel_lpf_started == 0U)
-    {
-        still_accel_lpf = accel_norm;
-        still_accel_lpf_started = 1U;
-    }
-    else
-    {
-        const float accel_alpha = dt / (IMU_STILL_ACCEL_LPF_S + dt);
-        still_accel_lpf += accel_alpha * (accel_norm - still_accel_lpf);
-    }
-
-    if ((gyro_norm < IMU_STILL_GYRO_THRESHOLD) && (fabsf(still_accel_lpf - IMU_GRAVITY_ACCEL) < IMU_STILL_ACCEL_TOL))
-    {
-        // 按真实时间累计, 不按调用次数
-        still_confirm_s += dt;
-        if (still_confirm_s > IMU_STILL_CONFIRM_S)
-        {
-            still_confirm_s = IMU_STILL_CONFIRM_S;
-        }
-    }
-    else
-    {
-        still_confirm_s = 0.0f;
-    }
-
-    // 静止时修正 z 轴残余零漂: 静止判定用的 0.2s 低通比真实运动滞后 3~4 拍,
-    // 机动起始的几帧瞬时 |ω| 仍可能很大, 因此 trim 积分再叠一层瞬时角速度门控
-    const float gyro_norm_now = sqrtf(gx * gx + gy * gy + gz * gz);
-    const uint8_t trim_gate_ok =
-        (isfinite(gyro_norm_now) && (gyro_norm_now < IMU_TRIM_SEED_RATE_MAX)) ? 1U : 0U;
-
-    if (still_confirm_s >= IMU_STILL_CONFIRM_S)
-    {
-        if (trim_seeded == 0U)
-        {
-            // 首次确认静止: 直接对残差取时间加权平均定标, 避免从 0 慢积分导致
-            // yaw 上电后漂移数分钟才收敛
-            if (trim_gate_ok != 0U)
-            {
-                trim_seed_sum += gz * dt;
-                trim_seed_span += dt;
-                if (trim_seed_span >= IMU_TRIM_SEED_S)
-                {
-                    yaw_bias_trim = basic_math_constrain(yaw_bias_trim + trim_seed_sum / trim_seed_span,
-                                                         -IMU_YAW_TRIM_LIMIT, IMU_YAW_TRIM_LIMIT);
-                    trim_seeded = 1U;
-                }
-            }
-            else
-            {
-                trim_seed_sum = 0.0f;
-                trim_seed_span = 0.0f;
-            }
-        }
-        else if (trim_gate_ok != 0U)
-        {
-            // 增益按 速率 × dt 归一, 收敛时间常数与通知合并率无关
-            yaw_bias_trim = basic_math_constrain(yaw_bias_trim + IMU_STILL_TRIM_RATE * gz * dt,
-                                                 -IMU_YAW_TRIM_LIMIT, IMU_YAW_TRIM_LIMIT);
-        }
-        gz = gyro[2] - yaw_bias_trim;
     }
 
     QEKF_INS.dt = dt;
-    IMU_QuaternionEKF_Update(gx, gy, gz, accel[0], accel[1], accel[2]);
+    IMU_QuaternionEKF_Update(gyro[0], gyro[1], gz, accel[0], accel[1], accel[2]);
 
-    imu_frame.gyro[0] = gx;
-    imu_frame.gyro[1] = gy;
+    imu_frame.gyro[0] = gyro[0];
+    imu_frame.gyro[1] = gyro[1];
     imu_frame.gyro[2] = gz;
     imu_frame.euler_angle.roll = Get_Roll() * BASIC_MATH_DEG_TO_RAD;
     imu_frame.euler_angle.pitch = Get_Pitch() * BASIC_MATH_DEG_TO_RAD;
@@ -918,22 +1094,25 @@ static uint8_t imu_attitude_step(const float *gyro, const float *accel, float dt
     if (!isfinite(imu_frame.euler_angle.roll) || !isfinite(imu_frame.euler_angle.pitch) ||
         !isfinite(imu_frame.euler_angle.yaw) || !isfinite(imu_frame.yaw_total))
     {
-        IMU_QuaternionEKF_Reset();
-        still_confirm_s = 0.0f;
-        attitude_valid = 0U;
+        imu_attitude_invalidate();
         return 0U;
     }
 
-    attitude_valid = 1U;
+    attitude_valid_flag = 1U;
     return 1U;
 }
 
+
 /**
- * @brief 模块初始化: 加热 PWM 置安全态 → EKF/温控参数 → 传感器
+ * @brief 模块初始化: 加热 PWM 安全态 → EKF → 温度 PID → 传感器
  */
-static void INS_Init(void)
+static void imu_init(void)
 {
     // 加热 PWM 先以 0 占空比起动, 保证上电不会满功率加热
+    // 载波 = TIM3 内核时钟 / (PSC+1) / (ARR+1) = 275 MHz / 1 / 10000 = 27.5 kHz
+    // (旧值 PSC+1=24 → 1145.8 Hz: 该载波在陀螺上激发出 41 Hz 结构共振, 加热一开
+    //  gy 的 20~60 Hz 分量就达 1.2 °/s rms; 提高到 27.5 kHz 后加热电流纹波降为
+    //  1/24, 且远高于 BMI088 的 116 Hz 模拟带宽, 详见 gimbal.cpp 的陷波注释)
     heater_pwm.set_tim_handle(&htim3);
     heater_pwm.set_pwm_channel(TIM_CHANNEL_4);
     // 通用 PWM 类默认 100%, 只对加热实例限到 15%, 且配置后无法放宽
@@ -945,7 +1124,7 @@ static void INS_Init(void)
                            IMU_EKF_FADING_LAMBDA, IMU_DEFAULT_DT_S, IMU_EKF_ACCEL_LPF_S);
     // Kalman 矩阵用 pvPortMalloc 分配, 堆不足时返回 NULL(后续运算会写到地址 0),
     // 必须显式标记不可用并禁止输出姿态
-    ekf_ready = IMU_QuaternionEKF_IsReady();
+    ekf_ready_flag = IMU_QuaternionEKF_IsReady();
 
     pid_set_config_pos(&temperature_ctrl_config, IMU_TEMP_PID_KP, IMU_TEMP_PID_KI, IMU_TEMP_PID_KD,
                        IMU_TEMP_PID_INTEGRAL_LIMIT, IMU_TEMP_PID_OUT_MAX);
@@ -957,12 +1136,79 @@ static void INS_Init(void)
 }
 
 /**
+ * @brief 本帧无可用数据: 断加热(保留积分)、记账、累计离线判据
+ * @param elapsed_dt 距上一拍真实经过的时间, s
+ * @note  1) 通信毛刺只断输出, 不清积分器(否则偶发 SPI 错会把温控打回冷启动)
+ *        2) 时间照样过去了, 记账后由下一个有效帧补上, 否则永久丢失该帧转角
+ *        3) 读失败与 NaN/Inf 帧同样计入 read_fail_count: 传感器卡在非法值上时
+ *           必须能走到重连, 否则会永久停在 data_valid = 0
+ */
+static void imu_frame_invalid(float elapsed_dt)
+{
+    imu_frame.data_valid = 0U;
+    imu_heater_output_off();
+
+    if (imu_status_get() == Imu_Status_Running)
+    {
+        imu_time_base_accumulate(&gyro_time_base, elapsed_dt, 1U);
+    }
+
+    if (++read_fail_count >= IMU_READ_FAIL_LIMIT)
+    {
+        imu_set_status(Imu_Status_Init_Fail);
+    }
+}
+
+/**
+ * @brief 解算态单步: 时间账本 → 零偏/刻度换算 → 杆臂补偿 → 姿态
+ * @param gyro       原始角速度, rad/s, 就地换算
+ * @param accel      原始加速度, m/s^2, 就地补偿
+ * @param frame_dt   单帧 DRDY 周期, s
+ * @param elapsed_dt 距上一拍真实经过的时间, s
+ */
+static void imu_calculate_running(float *gyro, float *accel, float frame_dt, float elapsed_dt)
+{
+    // 先记账再取步长: 已到达的时间一帧都不丢, 余额留到后续几拍排空
+    imu_time_base_accumulate(&gyro_time_base, elapsed_dt, 1U);
+
+    const float integrate_dt = imu_time_base_take(&gyro_time_base);
+
+    if (integrate_dt <= 0.0f)
+    {
+        // 账本为空: 不推进 EKF, 也不凭空造时间
+        return;
+    }
+
+    imu_frame.dt = integrate_dt;
+
+    // 零偏/刻度换算(两者均为原始域标定量, 先扣零偏再乘刻度)
+    imu_gyro_calibrate(gyro, gyro_bias, gyro_scale);
+
+    // 偏心补偿: 用已标定的角速度把加速度折算到刚体旋转中心(杆臂全 0 时直通)
+    // 差分时间基用单帧周期, 真实间隔只用于长间隔判据(不能用积分步长, 见函数注释)
+    imu_accel_lever_compensate(&accel_lever, accel, gyro, imu_lever_arm_m, frame_dt, elapsed_dt);
+
+    for (uint8_t i = 0U; i < 3U; i++)
+    {
+        imu_frame.accel[i] = accel[i];
+    }
+
+    // 姿态失败只影响姿态输出: 温控只依赖 temperature, 不应被连带关闭
+    if (imu_calculate_attitude(gyro, accel, integrate_dt) == 0U)
+    {
+        // imu_calculate_attitude 内部已复位 EKF, 旧时间不再有意义
+        imu_time_base_reset(&gyro_time_base);
+        imu_frame.dt = frame_dt;
+    }
+}
+
+/**
  * @brief DRDY 同步的采样与解算单步
  * @param drdy_dt    单帧 DRDY 周期(名义值), s —— 只用于野值判据
  * @param elapsed_dt 距上一拍真实经过的时间, s —— 只用于时间账本
  * @note  两个时间量必须分开传: 合成一个数会同时放宽野值阈值并把真实时间截短
  */
-static void INS_Task(float drdy_dt, float elapsed_dt)
+static void imu_update_measure(float drdy_dt, float elapsed_dt)
 {
     float gyro[3] = {0.0f, 0.0f, 0.0f};
     float accel[3] = {0.0f, 0.0f, 0.0f};
@@ -972,13 +1218,14 @@ static void INS_Task(float drdy_dt, float elapsed_dt)
 
     imu_frame.dt = frame_dt;
 
-    const imu_status_e status = imu_get_status();
+    const imu_status_e status = imu_status_get();
     if ((status == Imu_Status_Uninit) || (status == Imu_Status_Init_Fail))
     {
         // 传感器不可用: 加热保持关闭 + 时间账本作废, 周期性重试初始化
         imu_time_base_reset(&gyro_time_base);
         imu_heater_safe_off();
-        if (++init_retry_ticks >= IMU_INIT_RETRY_PERIOD_TICKS)
+
+        if (++init_retry_ticks >= IMU_INIT_RETRY_PERIOD_MS)
         {
             init_retry_ticks = 0U;
             imu_sensor_init();
@@ -986,39 +1233,17 @@ static void INS_Task(float drdy_dt, float elapsed_dt)
         return;
     }
 
-    const uint8_t imu_status_code = BMI088_read_imu(gyro, accel);
-    if (imu_status_code != BMI088_NO_ERROR)
+    const uint8_t read_ok = (BMI088_read_imu(gyro, accel) == BMI088_NO_ERROR) ? 1U : 0U;
+
+    if ((read_ok == 0U) || (imu_array_is_finite(gyro, 3U) == 0U) || (imu_array_is_finite(accel, 3U) == 0U))
     {
-        imu_frame.data_valid = 0U;
-        // 通信失败立即断开加热, 但不清积分器(避免偶发 SPI 错把温控打回冷启动)
-        imu_heater_output_off();
-
-        if (imu_get_status() == Imu_Status_Running)
-        {
-            // 本拍无数据可积分, 但时间确实过去了: 记进账本, 由下一个有效帧补上
-            imu_time_base_accumulate(&gyro_time_base, elapsed_dt, 1U);
-        }
-
-        if (++read_fail_count >= IMU_READ_FAIL_LIMIT)
-        {
-            imu_set_status(Imu_Status_Init_Fail);
-        }
-        return;
-    }
-
-    if (!imu_array_is_finite(gyro, 3U) || !imu_array_is_finite(accel, 3U))
-    {
-        imu_frame.data_valid = 0U;
-        // 与读失败同处理: 时间照样过去了, 记账等下一个有效帧补上
-        imu_heater_output_off();
-        if (imu_get_status() == Imu_Status_Running)
-        {
-            imu_time_base_accumulate(&gyro_time_base, elapsed_dt, 1U);
-        }
+        imu_frame_invalid(elapsed_dt);
         return;
     }
 
     imu_frame.data_valid = 1U;
+    read_fail_count = 0U;
+
     for (uint8_t i = 0U; i < 3U; i++)
     {
         imu_frame.accel[i] = accel[i];
@@ -1027,100 +1252,25 @@ static void INS_Task(float drdy_dt, float elapsed_dt)
     // 野值抑制必须在本拍任何积分之前
     imu_gyro_glitch_filter(&gyro_glitch, gyro, frame_dt, elapsed_dt);
 
-    // 零偏/刻度换算放在 Running 分支内: 自标定需要使用原始域样本
+    imu_update_temperature();
 
-    // 温控节拍: 先读温度再跑 PID, 避免用到上一次(10ms 前)的旧值
-    const uint8_t temp_due = ((imu_frame.sample_count % IMU_TEMP_CTRL_DIVIDER) == 0U) ? 1U : 0U;
-    uint8_t temp_ok = 1U;
-
-    if (temp_due != 0U)
-    {
-        float temperature = imu_frame.temperature;
-
-        if ((BMI088_read_temperature(&temperature) != BMI088_NO_ERROR) || !isfinite(temperature) ||
-            (temperature < IMU_TEMP_VALID_MIN_C) || (temperature > IMU_TEMP_VALID_MAX_C))
-        {
-            // 温度不可信: 立即断加热, 姿态继续用本拍数据; 不计入 read_fail_count(那是整片掉线判据)
-            temp_ok = 0U;
-            imu_heater_safe_off();
-        }
-        else
-        {
-            imu_frame.temperature = temperature;
-        }
-    }
-
-    read_fail_count = 0U;
-
-    imu_frame.sample_count++;
-
-    if ((temp_due != 0U) && (temp_ok != 0U))
-    {
-        imu_temperature_ctrl_step();
-    }
-
-    switch (imu_get_status())
+    switch (imu_status_get())
     {
 #if IMU_GYRO_AUTO_CALIB_ENABLE
         case Imu_Status_Wait_Temp:
-            // 温度进入目标带宽并持续 IMU_TEMP_STABLE_S 后才开始标定(按真实时间)
-            if (fabsf(imu_frame.temperature - imu_frame.ref_temperature) < IMU_TEMP_STABLE_BAND_C)
-            {
-                temp_stable_s += elapsed_dt;
-                if (temp_stable_s >= IMU_TEMP_STABLE_S)
-                {
-                    temp_stable_s = 0.0f;
-                    imu_gyro_calib_start();
-                    imu_set_status(Imu_Status_Calibrating);
-                }
-            }
-            else
-            {
-                temp_stable_s = 0.0f;
-            }
+            imu_update_wait_temp(elapsed_dt);
             break;
 
         case Imu_Status_Calibrating:
             // 标定阶段不积分姿态, 账本保持空
             imu_time_base_reset(&gyro_time_base);
-            imu_gyro_calib_step(gyro, elapsed_dt);
+            imu_update_gyro_calib(gyro, elapsed_dt);
             break;
 #endif
 
         case Imu_Status_Running:
-        {
-            // 先记账再取步长: 已到达的时间一帧都不丢, 余额留到后续几拍排空
-            imu_time_base_accumulate(&gyro_time_base, elapsed_dt, 1U);
-            const float integrate_dt = imu_time_base_take(&gyro_time_base);
-
-            if (integrate_dt <= 0.0f)
-            {
-                // 账本为空: 不推进 EKF, 也不凭空造时间
-                break;
-            }
-
-            imu_frame.dt = integrate_dt;
-
-            // 零偏/刻度换算(两者均为原始域标定量, 先扣零偏再乘刻度)
-            imu_gyro_calibrate(gyro, gyro_bias, gyro_scale);
-
-            // 偏心补偿: 用已标定的角速度把加速度折算到刚体旋转中心(杆臂全 0 时直通)
-            // 差分时间基用单帧周期, 真实间隔只用于长间隔判据(不能用积分步长, 见函数注释)
-            imu_accel_lever_compensate(&accel_lever, accel, gyro, imu_lever_arm_m, frame_dt, elapsed_dt);
-            for (uint8_t i = 0U; i < 3U; i++)
-            {
-                imu_frame.accel[i] = accel[i];
-            }
-
-            // 姿态失败只影响姿态输出: 温控只依赖 temperature, 不应被连带关闭
-            if (imu_attitude_step(gyro, accel, integrate_dt) == 0U)
-            {
-                // imu_attitude_step 内部已复位 EKF, 旧时间不再有意义
-                imu_time_base_reset(&gyro_time_base);
-                imu_frame.dt = frame_dt;
-            }
+            imu_calculate_running(gyro, accel, frame_dt, elapsed_dt);
             break;
-        }
 
         default:
             break;
@@ -1137,27 +1287,27 @@ extern "C" void imu_task(void *argument)
     (void)argument;
 
     imu_task_handle = osThreadGetId();
-    INS_Init();
+    imu_init();
 
     uint32_t last_drdy_sequence = gyro_drdy_sequence;
     for (;;)
     {
-        const imu_status_e status = imu_get_status();
+        const imu_status_e status = imu_status_get();
         if ((status == Imu_Status_Uninit) || (status == Imu_Status_Init_Fail))
         {
             // 初始化失败时没有可靠的 DRDY, 用短周期维护重试计时器
-            INS_Task(IMU_DEFAULT_DT_S, IMU_DEFAULT_DT_S);
+            imu_update_measure(IMU_DEFAULT_DT_S, IMU_DEFAULT_DT_S);
             osDelay(1U);
 
             // 恢复时必须重新对齐序号与 DWT 基准, 否则离线期间累积的序号会被当成巨大的 dt
             last_drdy_sequence = gyro_drdy_sequence;
-            gyro_drdy_dwt_started = 0U;
-            imu_elapsed_dwt_started = 0U;
+            drdy_dwt_started_flag = 0U;
+            elapsed_dwt_started_flag = 0U;
             continue;
         }
 
         const uint32_t flags = osThreadFlagsWait(IMU_DRDY_EVENT_FLAG, osFlagsWaitAny,
-                                                   IMU_DRDY_TIMEOUT_TICKS);
+                                                   IMU_DRDY_TIMEOUT_MS);
 
         // 每次回到循环都量一次 DWT 间隔, 否则超时/假唤醒期间的时间会凭空消失
         const float elapsed_dt = imu_measure_elapsed_dt();
@@ -1168,8 +1318,9 @@ extern "C" void imu_task(void *argument)
 
         if ((flags & osFlagsError) != 0U)
         {
+            // 单次超时按通信毛刺处理: 只断加热输出, 保留积分器(硬故障由下面的升级动作兜底)
             imu_frame.data_valid = 0U;
-            imu_heater_safe_off();
+            imu_heater_output_off();
 
             if (++drdy_timeout_count >= IMU_DRDY_TIMEOUT_LIMIT)
             {
@@ -1178,22 +1329,26 @@ extern "C" void imu_task(void *argument)
                 continue;
             }
 
-            // DRDY 丢失不代表传感器停了, 照常读一次: 读成功则正常积分, 读失败由 INS_Task 记账
-            INS_Task(IMU_DEFAULT_DT_S, elapsed_dt);
+            // DRDY 丢失不代表传感器停了, 照常读一次: 读成功则正常积分, 读失败由单步内记账
+            imu_update_measure(IMU_DEFAULT_DT_S, elapsed_dt);
             continue;
         }
 
         if (pending == 0U)
         {
             // 假唤醒: 没有新帧可读, 但时间照样过去了, 记账等下一个有效帧
-            imu_time_base_accumulate(&gyro_time_base, elapsed_dt, 1U);
+            // 只在解算态记账: 等待温度/标定阶段的时间不属于姿态积分
+            if (imu_status_get() == Imu_Status_Running)
+            {
+                imu_time_base_accumulate(&gyro_time_base, elapsed_dt, 1U);
+            }
             continue;
         }
 
         drdy_timeout_count = 0U;
 
         // 多个中断合并成一个通知时, 用 DWT 实测的总间隔推进一次 EKF
-        INS_Task(gyro_drdy_dt, elapsed_dt);
+        imu_update_measure(gyro_drdy_dt, elapsed_dt);
     }
 }
 
@@ -1221,8 +1376,9 @@ uint8_t imu_is_ready(void)
 {
     // 姿态可用 = 进入解算状态 且 传感器数据有效 且 EKF 正常产出
     return ((imu_frame.status == Imu_Status_Running) && (imu_frame.data_valid != 0U) &&
-            (attitude_valid != 0U)) ? 1U : 0U;
+            (attitude_valid_flag != 0U)) ? 1U : 0U;
 }
+
 
 /**
  * @brief BMI088 陀螺数据就绪中断回调
@@ -1231,25 +1387,25 @@ uint8_t imu_is_ready(void)
  */
 extern "C" void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-   if (GPIO_Pin != GYRO_INT_Pin)
-   {
-       return;
-   }
+    if (GPIO_Pin != GYRO_INT_Pin)
+    {
+        return;
+    }
 
-   if (gyro_drdy_dwt_started == 0U)
-   {
-       (void)bsp_dwt_get_deltat32(&gyro_drdy_dwt_last);
-       gyro_drdy_dwt_started = 1U;
-       gyro_drdy_dt = IMU_DEFAULT_DT_S;
-   }
-   else
-   {
-       gyro_drdy_dt = bsp_dwt_get_deltat32(&gyro_drdy_dwt_last);
-   }
+    if (drdy_dwt_started_flag == 0U)
+    {
+        (void)bsp_dwt_get_deltat32(&pre_drdy_dwt);
+        drdy_dwt_started_flag = 1U;
+        gyro_drdy_dt = IMU_DEFAULT_DT_S;
+    }
+    else
+    {
+        gyro_drdy_dt = bsp_dwt_get_deltat32(&pre_drdy_dwt);
+    }
 
-   gyro_drdy_sequence++;
-   if (imu_task_handle != 0)
-   {
-       (void)osThreadFlagsSet(imu_task_handle, IMU_DRDY_EVENT_FLAG);
-   }
+    gyro_drdy_sequence++;
+    if (imu_task_handle != 0)
+    {
+        (void)osThreadFlagsSet(imu_task_handle, IMU_DRDY_EVENT_FLAG);
+    }
 }
