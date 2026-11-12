@@ -19,12 +19,7 @@
 extern "C" {
 #endif
 
-/**
- * @brief 上电陀螺零漂自标定开关
- *        1 = 恒温稳定后采样求均值作为零漂(需上车验证后启用)
- *        0 = 直接使用 gyro_bias[] 中的实测补偿值(默认)
- * @note  可用 target_compile_definitions 覆盖, 便于分板/分车配置
- */
+// IMU 零漂标定宏
 #ifndef IMU_GYRO_AUTO_CALIB_ENABLE
 #define IMU_GYRO_AUTO_CALIB_ENABLE 0
 #endif
@@ -75,8 +70,6 @@ typedef struct
 } imu_data_resolve_t;
 
 extern volatile imu_data_resolve_t imu_frame;
-
-void imu_task(void *argument);
 
 float imu_get_roll_rad(void);
 float imu_get_pitch_rad(void);

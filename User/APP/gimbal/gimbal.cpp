@@ -257,6 +257,14 @@ void gimbal_init(void)
     gimbal.pc_filter.pitch_angle.init(50.0f, 0.001f);
     gimbal.pc_filter.pitch_omega.init(50.0f, 0.001f);
     gimbal.pc_filter.pitch_torque.init(50.0f, 0.001f);
+    // 规划器滤波器
+    gimbal.plan_filter.yaw_angle.init(100, 0.001f);
+    gimbal.plan_filter.yaw_omega.init(100, 0.001f);
+    gimbal.plan_filter.yaw_torque.init(100, 0.001f);
+
+    gimbal.plan_filter.pitch_angle.init(100, 0.001f);
+    gimbal.plan_filter.pitch_omega.init(100, 0.001f);
+    gimbal.plan_filter.pitch_torque.init(100, 0.001f);
 
     // 初始化云台轨迹规划器
     small_yaw_track_plan_config_init(&gimbal.small_yaw_plan_config);
@@ -762,8 +770,67 @@ void gimbal_control_decision(void)
  * @brief 更新云台前馈控制量
  */
 void gimbal_update_feedforward(void)
-{
+{   
+    // 两次规划的时间间隔
+    float small_yaw_s = 0.0f;
+    float small_pitch_s = 0.0f;
 
+    // 首次调用规划标记
+    const bool yaw_first_call = (gimbal.plan_time.small_yaw_us == 0u);
+    const bool pitch_first_call = (gimbal.plan_time.small_pitch_us == 0u);
+
+    small_yaw_s = bsp_dwt_get_deltat32(&gimbal.plan_time.small_yaw_us);
+    small_pitch_s = bsp_dwt_get_deltat32(&gimbal.plan_time.small_pitch_us);
+
+    // 检查时间间隔是否在有效范围内
+    if((small_yaw_s <= gimbal.small_yaw_plan_config.dt_min_s) || (small_yaw_s >= gimbal.small_yaw_plan_config.dt_max_s))
+    {
+        small_yaw_s = 0.001f;
+    }
+    if((small_pitch_s <= gimbal.small_pitch_plan_config.dt_min_s) || (small_pitch_s >= gimbal.small_pitch_plan_config.dt_max_s))
+    {
+        small_pitch_s = 0.001f;
+    }
+
+    // 首次调用规划时，重置轨迹规划器
+    if(yaw_first_call)
+    {
+        reference_track_plan_reset(&gimbal.small_yaw_plan, gimbal.now_val.small_yaw_angle);
+    }
+    if(pitch_first_call)
+    {
+        reference_track_plan_reset(&gimbal.small_pitch_plan, gimbal.now_val.small_pitch_angle);
+    }
+
+    // 添加滤波处理算法
+    gimbal.plan_filter.yaw_angle.set_now_input(gimbal.target_val.small_yaw_angle);
+    gimbal.plan_filter.yaw_angle.low_calculate_callback();
+    gimbal.plan_filter.pitch_angle.set_now_input(gimbal.target_val.small_pitch_angle);
+    gimbal.plan_filter.pitch_angle.low_calculate_callback();
+
+    gimbal.plan_fil_val.yaw_angle = gimbal.plan_filter.yaw_angle.get_out();
+    gimbal.plan_fil_val.pitch_angle = gimbal.plan_filter.pitch_angle.get_out();
+
+    // 更新数据
+    reference_track_plan_update(&gimbal.small_yaw_plan, gimbal.target_val.small_yaw_angle, 0.0f, 0.0f, small_yaw_s, &gimbal.small_yaw_plan_output);
+    reference_track_plan_update(&gimbal.small_pitch_plan, gimbal.target_val.small_pitch_angle, 0.0f, 0.0f, small_pitch_s, &gimbal.small_pitch_plan_output);
+
+    // 更新前馈控制量
+    gimbal.plan_filter.yaw_omega.set_now_input(gimbal.small_yaw_plan_output.rate_rad_s);
+    gimbal.plan_filter.yaw_omega.low_calculate_callback();
+    gimbal.plan_filter.yaw_torque.set_now_input(gimbal.small_yaw_plan_output.accel_rad_s2);
+    gimbal.plan_filter.yaw_torque.low_calculate_callback();
+    gimbal.plan_filter.pitch_omega.set_now_input(gimbal.small_pitch_plan_output.rate_rad_s);
+    gimbal.plan_filter.pitch_omega.low_calculate_callback();
+    gimbal.plan_filter.pitch_torque.set_now_input(gimbal.small_pitch_plan_output.accel_rad_s2);
+    gimbal.plan_filter.pitch_torque.low_calculate_callback();
+
+    gimbal.plan_fil_val.yaw_omega = gimbal.plan_filter.yaw_omega.get_out();
+    gimbal.plan_fil_val.yaw_torque = gimbal.plan_filter.yaw_torque.get_out();
+    gimbal.plan_fil_val.pitch_omega = gimbal.plan_filter.pitch_omega.get_out();
+    gimbal.plan_fil_val.pitch_torque = gimbal.plan_filter.pitch_torque.get_out();
+
+    
 }
 
 /**
@@ -973,7 +1040,7 @@ void gimbal_motor_control_test(void)
     // 单电机调试
 
     // 目标值设置
-    const float target_val = basic_math_abs(wave_generator_get_value(&test_wave));
+    // const float target_val = basic_math_abs(wave_generator_get_value(&test_wave));
     const float now_small_yaw = gimbal.small_yaw_motor.get_total_angle() - SMALL_YAW_MOTOR_MID_ANGLE;
 
     // 小yaw目标值设置

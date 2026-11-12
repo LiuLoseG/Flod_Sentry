@@ -210,6 +210,8 @@ typedef struct
     slope_class big_yaw_omega_slope; // 大yaw角速度斜坡规划器
 
 /*------------------------------------控制低通滤波器---------------------------------------------*/
+    // 规划器低通滤波器
+    gimbal_input_control_t plan_fil_val;
     // 云台自瞄低通滤波器对象
     gimbal_low_pass_filter_t pc_filter;  
     // 云台自瞄轨迹规划器低通滤波器对象
@@ -260,6 +262,7 @@ typedef struct
 
     gimbal_feedback_timestamp_t feedback_timestamp; // 云台电机反馈时间(s)
     gimbal_timestamp_us_t timestamp; // 云台电机反馈时间戳(us)
+    gimbal_timestamp_us_t plan_time; // 云台轨迹规划时间戳(us)
 /*------------------------------------云台控制方式---------------------------------------------*/
     gimbal_method_e now_method; // 云台控制方式
     gimbal_method_e last_method; // 云台上一次控制方式, 用于检测模式切换
