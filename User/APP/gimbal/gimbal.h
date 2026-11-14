@@ -18,6 +18,7 @@
 #include "arm_math.h"
 #include "slope_math.h"
 #include "frequency_filter.h"
+#include "controller.h"
 
 #include "robot_def.h"
 #include "basic_math.h"
@@ -229,6 +230,9 @@ typedef struct
     gimbal_low_pass_filter_t plan_filter;
     // 底盘角速度补偿前馈低通滤波器对象
     low_pass_filter_class chassis_angular_filter;
+
+/*------------------------------------系统前馈控制量---------------------------------------------*/
+    Feedforward_t small_pitch_ffd; // 小pitch轴前馈控制量
 
 /*------------------------------------重力/摩擦力+系统辨识参数----------------------------------------*/
     gimbal_identification_t ident_small_yaw;
