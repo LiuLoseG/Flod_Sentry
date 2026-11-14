@@ -256,6 +256,8 @@ typedef struct
     reference_track_plan_t small_pitch_plan; // 小pitch轨迹规划器
     reference_value_t small_pitch_plan_output; // 小pitch轨迹规划器输出
 
+    float dynamic_comp; // 小pitch轴前馈动态补偿量(J*acc + B*rate + 库仑摩擦), 单位: N·m
+    float all_comp; // 小pitch轴前馈总补偿量(动态补偿 + 重力补偿), 单位: N·m
 /*----------------------------------遥控器控制PID---------------------------------------------*/
     gimbal_pid_t rc_small_yaw_pid;
     gimbal_pid_t rc_small_pitch_pid;
@@ -280,6 +282,8 @@ typedef struct
     gimbal_feedback_timestamp_t feedback_timestamp; // 云台电机反馈时间(s)
     gimbal_timestamp_us_t timestamp; // 云台电机反馈时间戳(us)
     gimbal_timestamp_us_t plan_time; // 云台轨迹规划时间戳(us)
+    float plan_dt_meas_s; // 规划器上一拍实测周期(s), 仅用于监测
+    uint32_t plan_skip_frames; // 规划器因调度异常跳过的拍数
 /*------------------------------------云台控制方式---------------------------------------------*/
     gimbal_method_e now_method; // 云台控制方式
     gimbal_method_e last_method; // 云台上一次控制方式, 用于检测模式切换

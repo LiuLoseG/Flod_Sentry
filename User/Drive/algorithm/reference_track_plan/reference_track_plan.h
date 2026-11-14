@@ -34,6 +34,7 @@ typedef struct {
                                     // 建议取 2~4 倍 position_gain_per_s: 闭环 wn=sqrt(K*Kp), zeta=sqrt(K/Kp)/2
     float dt_min_s;                 // 最小采样时间，单位：秒
     float dt_max_s;                 // 最大采样时间，单位：秒
+    float dt_filter_alpha;          // 采样时间低通系数 [0,1)
     bool wrap_angle;                // 是否进行角度环绕处理(最短角规划)
 
     bool  accel_sat_guard_enable;   // true: 检测到加速度/加加速度被限幅时临时降低位置增益
@@ -53,6 +54,7 @@ typedef struct
     float gain_scale;                   // 当前位置增益缩放, 1.0=正常, 饱和时 -> sat_gain_scale
     bool accel_saturated;               // 上一帧 accel/jerk 是否被限幅 (供上层 P4 监督读取)
     uint32_t sat_frames;                // 连续饱和帧数 (调试/观察用)
+    float dt_used_s;                    // 本帧实际使用的采样时间(低通后), 0 表示尚未建立
 } reference_track_plan_t;
 
 // 初始化参考轨迹规划

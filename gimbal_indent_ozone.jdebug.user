@@ -1,20 +1,31 @@
 
 
-OpenDocument="main.c", FilePath="E:/use/Flod_Sentry/Flod_Sentry/Core/Src/main.c", Line=59
+GraphedExpression="(((gimbal).small_pitch_plan).value).angle_rad", Color=#e56a6f
+GraphedExpression="(((gimbal).small_pitch_plan).value).rate_rad_s", Color=#35792b, Show=0
+GraphedExpression="(((gimbal).small_pitch_plan).value).accel_rad_s2", Color=#769dda, Show=0
+GraphedExpression="((gimbal).target_val).small_pitch_angle", Color=#aa0000, Show=0
+GraphedExpression="((gimbal).plan_fil_val).pitch_omega", Color=#b3c38e, Show=0
+GraphedExpression="((gimbal).plan_fil_val).pitch_torque", Color=#ab7b05, Show=0
+GraphedExpression="((test_wave).state).current_value", Color=#7fd3b7, Show=0
+GraphedExpression="(gimbal).dynamic_comp", Color=#50328f, Show=0
+GraphedExpression="(gimbal).all_comp", Color=#c587a5, Show=0
+GraphedExpression="(((gimbal).small_pitch_motor).rx_data).now_torque", Color=#999401, Show=0
+GraphedExpression="((gimbal).now_val).small_pitch_angle", Color=#0000ff
+OpenDocument="main.c", FilePath="E:/use/Flod_Sentry/Flod_Sentry/Core/Src/main.c", Line=56
 OpenDocument="gimbal.cpp", FilePath="E:/use/Flod_Sentry/Flod_Sentry/User/APP/gimbal/gimbal.cpp", Line=36
 OpenToolbar="Debug", Floating=0, x=0, y=0
-OpenWindow="Disassembly", DockArea=RIGHT, x=0, y=0, w=1321, h=1314, TabPos=1, TopOfStack=0, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
-OpenWindow="Watched Data 1", DockArea=LEFT, x=0, y=0, w=717, h=1070, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
-OpenWindow="Code Profile", DockArea=LEFT, x=0, y=1, w=717, h=504, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, GroupByFiles=0, SortRespectsFilters=0, ParentRelativeLoad=0
-OpenWindow="Data Sampling", DockArea=RIGHT, x=0, y=1, w=1321, h=223, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VisibleTab=0, UniformSampleSpacing=0
-OpenWindow="Timeline", DockArea=RIGHT, x=0, y=0, w=1321, h=1314, TabPos=0, TopOfStack=1, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=1, DataPaneShown=1, PowerPaneShown=0, CodePaneShown=0, PinCursor="Cursor Movable", TimePerDiv="500 ms / Div", TimeStampFormat="Time", DataGraphDrawAsPoints=0, DataGraphLegendShown=1, DataGraphUniformSampleSpacing=0, DataGraphLegendPosition="424;349", DataGraphShowNamesAtCursor=0, PowerGraphDrawAsPoints=0, PowerGraphLegendShown=0, PowerGraphAvgFilterTime=Off, PowerGraphAvgFilterLen=Off, PowerGraphUniformSampleSpacing=0, PowerGraphLegendPosition="948;0", CodeGraphLegendShown=0, CodeGraphLegendPosition="980;0"
+OpenWindow="Disassembly", DockArea=RIGHT, x=0, y=0, w=1951, h=1210, TabPos=1, TopOfStack=0, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Watched Data 1", DockArea=LEFT, x=0, y=0, w=717, h=1022, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Code Profile", DockArea=LEFT, x=0, y=1, w=717, h=552, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, GroupByFiles=0, SortRespectsFilters=0, ParentRelativeLoad=0
+OpenWindow="Data Sampling", DockArea=RIGHT, x=0, y=1, w=1951, h=327, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VisibleTab=0, UniformSampleSpacing=0
+OpenWindow="Timeline", DockArea=RIGHT, x=0, y=0, w=1951, h=1210, TabPos=0, TopOfStack=1, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=1, DataPaneShown=1, PowerPaneShown=0, CodePaneShown=0, PinCursor="Cursor Movable", TimePerDiv="500 ms / Div", TimeStampFormat="Time", DataGraphDrawAsPoints=0, DataGraphLegendShown=1, DataGraphUniformSampleSpacing=0, DataGraphLegendPosition="1072;534", DataGraphShowNamesAtCursor=0, PowerGraphDrawAsPoints=0, PowerGraphLegendShown=0, PowerGraphAvgFilterTime=Off, PowerGraphAvgFilterLen=Off, PowerGraphUniformSampleSpacing=0, PowerGraphLegendPosition="968;-133", CodeGraphLegendShown=0, CodeGraphLegendPosition="1001;0"
 SmartViewPlugin="", Page="", Toolbar="Hidden", Window="SmartView 1"
 TableHeader="Code Profile", SortCol="File / Function", SortOrder="ASCENDING", VisibleCols=["File / Function";"Source Coverage";"Inst. Coverage";"Run Count";"Fetch Count";"Load"], ColWidths=[2344;219;230;148;172;152]
-TableHeader="Data Sampling Table", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time"], ColWidths=[100;1254]
-TableHeader="Data Sampling Setup", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Type";"Value";"Min";"Max";"Average";"# Changes";"Min. Change";"Max. Change"], ColWidths=[664;103;238;222;206;254;171;222;199]
+TableHeader="Data Sampling Table", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";" (((gimbal).small_pitch_plan).value).angle_rad";" (((gimbal).small_pitch_plan).value).rate_rad_s";" (((gimbal).small_pitch_plan).value).accel_rad_s2";" ((gimbal).target_val).small_pitch_angle";" ((gimbal).plan_fil_val).pitch_omega";" ((gimbal).plan_fil_val).pitch_torque";" ((test_wave).state).current_value";" (gimbal).dynamic_comp";" (gimbal).all_comp";" (((gimbal).small_pitch_motor).rx_data).now_torque";" ((gimbal).now_val).small_pitch_angle"], ColWidths=[100;100;100;100;100;100;100;100;100;100;100;100;100]
+TableHeader="Data Sampling Setup", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Type";"Value";"Min";"Max";"Average";"# Changes";"Min. Change";"Max. Change"], ColWidths=[638;103;206;206;190;254;171;222;199]
 TableHeader="Power Sampling", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";"Ch 0"], ColWidths=[100;100;100]
 TableHeader="Task List", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Name";"Run Count";"Priority";"Status";"Timeout";"Stack Info";"ID";"Mutex Count";"Notified Value";"Notify State"], ColWidths=[110;110;110;110;110;110;110;110;110;110]
-TableHeader="Watched Data 1", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Value";"Location";"Refresh";"Access"], ColWidths=[359;335;173;116;110]
+TableHeader="Watched Data 1", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Value";"Location";"Refresh";"Access"], ColWidths=[359;335;173;116;103]
 TableHeader="RegisterSelectionDialog", SortCol="None", SortOrder="ASCENDING", VisibleCols=[], ColWidths=[]
 TableHeader="TargetExceptionDialog", SortCol="Name", SortOrder="ASCENDING", VisibleCols=["Name";"Value";"Address";"Description"], ColWidths=[200;243;100;570]
 WatchedExpression="gimbal", RefreshRate=5, Window=Watched Data 1
