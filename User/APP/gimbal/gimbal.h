@@ -163,6 +163,17 @@ typedef struct
 } gimbal_pid_t;
 
 /**
+ * @brief pitch轴重力补偿结构体
+ * @note 用于补偿pitch轴的重力影响，提升控制精度
+ */
+typedef struct
+{
+    // 多项拟合系数(4:四次项系数 3:三次项系数 2:二次项系数 1:一次项系数 0:常数系数)
+    float factor[5]; // pitch轴重力补偿系数
+    float amount; // pitch轴重力补偿量
+} pitch_gravity_compensation_t;
+
+/**
  * @brief 云台结构体
  * @note 云台的主结构体，包含所有云台相关的数据和控制逻辑
  */
@@ -230,6 +241,8 @@ typedef struct
     gimbal_identification_sample_t ident_small_pitch_sample;
     gimbal_identification_output_t ident_small_pitch_output;
     
+    pitch_gravity_compensation_t s_pit_gra_comp; // 小pitch轴重力补偿对象
+
 /*--------------------------------------轨迹规划器---------------------------------------------*/
     reference_config_t small_yaw_plan_config; // 小yaw轨迹规划器配置
     reference_track_plan_t small_yaw_plan; // 小yaw轨迹规划器
