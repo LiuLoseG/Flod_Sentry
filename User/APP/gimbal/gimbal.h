@@ -222,7 +222,7 @@ typedef struct
     float big_yaw_rho; // 大yaw跟随小yaw的趋近率
     slope_class big_yaw_omega_slope; // 大yaw角速度斜坡规划器
 
-/*------------------------------------控制低通滤波器---------------------------------------------*/
+/*------------------------------------控制器低通滤波器---------------------------------------------*/
     // 规划器低通滤波器
     gimbal_input_control_t plan_fil_val;
     // 云台自瞄低通滤波器对象
@@ -231,6 +231,8 @@ typedef struct
     gimbal_low_pass_filter_t plan_filter;
     // 底盘角速度补偿前馈低通滤波器对象
     low_pass_filter_class chassis_angular_filter;
+    // 大pitch目标值低通滤波器(限制角度变化量)
+    low_pass_filter_class big_pit_ang_fil;
 
     gimbal_observate_filter_t observate_filter; // 云台观测值低通滤波器对象
 
@@ -264,7 +266,7 @@ typedef struct
     reference_value_t small_pitch_plan_output; // 小pitch轨迹规划器输出
 
 /*------------------------------------前馈补偿量---------------------------------------------*/
-    float small_pit_gravity_comp;          // 小pitch轴前馈重力补偿量, 单位: N·m
+    float small_pit_gravity_comp;       // 小pitch轴前馈重力补偿量, 单位: N·m
     float small_pit_dynamic_comp;       // 小pitch轴前馈动态补偿量(J*acc + B*rate + 库仑摩擦), 单位: N·m
     float small_pit_toqure_comp;        // 小pitch轴前馈总补偿量(动态补偿 + 重力补偿), 单位: N·m
 

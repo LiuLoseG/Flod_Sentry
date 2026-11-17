@@ -33,7 +33,7 @@ void low_pass_filter_class::init(const float &__cutoff_frequency, const float &_
 /**
  * @brief 重算双线性一阶系数
  * @note 双线性变换 + 预畸变: K = tan(pi*fc*T)
- *         b0 = b1 = K/(1+K),  极点 = (1-K)/(1+K) = 1-2*b0
+ *       b0 = b1 = K/(1+K),  极点 = (1-K)/(1+K) = 1-2*b0
  *       预畸变保证 |H(fc)| 严格 -3dB 且与 fc/fs 无关; 直流增益 = 2*b0/(1-极点) = 1;
  *       零点在 z=-1(Nyquist), 故 Nyquist 处增益为 0。
  */

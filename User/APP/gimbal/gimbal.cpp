@@ -368,6 +368,9 @@ void gimbal_init(void)
     gimbal.plan_filter.pitch_omega.init(10, 0.001f);
     gimbal.plan_filter.pitch_torque.init(10, 0.001f);
 
+    // 大pitch角度目标值滤波规划器
+    gimbal.big_pit_ang_fil.init(10, 0.001f);
+
     // 初始化云台轨迹规划器
     small_yaw_track_plan_config_init(&gimbal.small_yaw_plan_config);
     reference_track_plan_init(&gimbal.small_yaw_plan, &gimbal.small_yaw_plan_config, 0.0f);

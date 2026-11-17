@@ -3,6 +3,8 @@
 > 本文按“每个优化环节”逐一展开：**要解决什么问题 → 原理与数学 → 代码实现 → 参数与整定 → 注意事项**。
 > 说明：此代码是在**麻神代码和玺佬**的基础上进行优化和更新。
 
+> **2026-11-17 迭代说明（优先于下文历史推导片段）**：修复死区边界、目标被改写、积分当帧越限、负 `k_i` 限幅、CLAMP 回退与输出不一致、BACK_CALC 回退后越限以及下游限幅放宽内部限幅的问题。接口及默认参数保持兼容，但这些边界行为有意修正，不再保证与旧版逐位一致。复现方法与验证结果见文末。
+
 ---
 
 ## 目录
@@ -24,6 +26,9 @@
 | 12 | 整定流程（推荐顺序） |
 | 13 | 观测与调试 |
 | 14 | 版本记录 |
+| 15 | 迭代回归与闭环仿真（位于使用示例之前） |
+| 16 | 第二轮迭代：采样周期一致性、积分精度与抗饱和语义 |
+| 17 | 最小修复落地与历史建议修正 |
 
 ---
 
@@ -49,7 +54,7 @@ error = target - now
       │
       ├─ ⑤ 前馈  = k_f * (target - pre_target)
       │
-      └─ ⑥ out = P + I + D + F ──► 输出限幅（out_max / anti_windup_out_max）
+      └─ ⑥ out = P + I + D + F ──► 硬输出限幅（out_max）
                                    └─ ⑦ 抗积分饱和（anti_windup）── 反馈回积分器
 ```
 
@@ -64,7 +69,7 @@ error = target - now
 | ⑦ | 抗积分饱和 | `anti_windup` 等 | 饱和时回退积分，抑制积分过冲 |
 | ⑧ | 数值安全 / 鲁棒性 | `k_i != 0` 守卫等 | 防除零、参数缺省、向下兼容 |
 
-> 说明：所有新增优化均**带默认值且关时不改变原有行为**，可安全合入既有工程。既有调用（如 `init(0.7f, 0.0f, 0.023f, 0.0f, 0.5f, 1.2f)`）无需修改即可继续编译运行。
+> 说明：新增参数带默认值，既有调用（如 `init(0.7f, 0.0f, 0.023f, 0.0f, 0.5f, 1.2f)`）无需修改即可继续编译。边界行为修正需结合实际对象重新验证。
 
 ---
 
@@ -94,9 +99,9 @@ pre_now = now; pre_target = target; pre_out = out; pre_error = term.error;
 **⚙ 计算顺序（每帧固定执行次序，务必记牢）**
 
 ```
-① 死区整形 error        → 让 P/D/F 都基于“整形后误差”
+① 死区整形 error        → P 和标准 D 使用整形误差；F 使用原始目标变化量
 ② P = k_p·error
-③ I = k_i·integral      → 先判变速/分离/限幅，再累加，再算 i_out
+③ I = k_i·integral      → 判变速/分离，累加前后限幅，再算 i_out
 ④ D = 微分先行+低通     → 用 now - pre_now（上一帧真实测量）
 ⑤ F = k_f·(target-pre_target)
 ⑥ out = P+I+D+F → 限幅（记录 saturated）
@@ -135,11 +140,9 @@ pre_now = now; pre_target = target; pre_out = out; pre_error = term.error;
 
 ```cpp
 // 判断死区
-if (term.abs_error < dead_zone)
+if (term.abs_error <= dead_zone)
 {
-    target = now;            // 把目标直接对齐到当前值
-    term.error = 0.0f;       // 误差清零 → P/D/F 全为 0
-    term.abs_error = 0.0f;
+    term.error = 0.0f;
 }
 // 死区外：把误差“平移”掉一个死区宽度（对称削去）
 else if (term.error > 0.0f && term.abs_error > dead_zone)
@@ -150,20 +153,21 @@ else if (term.error < 0.0f && term.abs_error > dead_zone)
 {
     term.error += dead_zone;
 }
+term.abs_error = basic_math_abs(term.error);
 ```
 
 ### 2.3 原理说明（两个动作）
 
-1. **死区内（`|error| < dead_zone`）**：误差直接置 0，`target = now` 把目标值拉平到当前值。这样后续所有环节（P、D、前馈）都看到“误差=0”，输出自然为 0，彻底停止动作。
+1. **死区内及边界（`|error| <= dead_zone`）**：仅将本帧误差置 0，保留调用方目标。P 项归零，积分不再新增；历史积分、D 项和目标差分前馈仍可能输出，因此死区并不保证总输出为 0。
 2. **死区外（`|error| > dead_zone`）**：不是简单“保留原误差”，而是**削去一个死区宽度**（正误差减、负误差加）。这是一个**连续化**处理：
    - 误差刚好跨过死区边界时，整形后误差从 0 平滑开始增长，避免在边界处输出“突跳一个死区宽度”造成的不连续；
    - 对称处理正负误差，保证正反向行为一致。
 
 > 直观理解：这相当于把误差曲线在 ±dead_zone 上“开一个平底凹槽”，槽底为 0、槽外斜率仍是 1。既消除了零附近抖动，又不影响远处增益。
 
-### 2.4 `target = now` 的深意
+### 2.4 保留目标值
 
-把 `target` 拉到 `now`，会让 `pre_target` 在帧尾也被更新为 `now`。这样**前馈项 `k_f*(target-pre_target)` 在死区内恒为 0**，不会因目标与实际的小偏差持续输出，进一步抑制抖振。
+死区不改写 `target`，避免测量噪声污染目标历史，也避免调用方只设置一次目标时丢失指令。前馈始终使用调用方目标的帧间变化。
 
 ### 2.5 参数与整定
 
@@ -238,8 +242,8 @@ speed_ratio
 | `i_variable_speed_a` | 全速积分上界（内段阈值） | 设为“正常跟踪时的典型误差”，如接近稳态误差的 2~3 倍 |
 | `i_variable_speed_b` | 停止积分下界（外段阈值） | 设为“可接受的大误差门限”，应 `B > A` |
 
-- 两者**同时为 0** 表示关闭变速积分（代码第一条分支）。
-- 必须满足 `0 < A < B`；若 `A = B` 会导致中间段除零（`B-A=0`）。
+- `B=0` 表示关闭变速积分，与 `A` 的值无关。
+- 启用时必须满足 `0 <= A < B`；`A=B` 时中间段不可达，不会除零，但会退化成不连续门限，不属于有效配置。
 
 ### 3.5 与其它环节的关系
 
@@ -313,16 +317,17 @@ else
 // 积分限幅 (k_i==0 时积分项恒为0, 不做除法, 避免除零)
 if (i_out_max != 0.0f && k_i != 0.0f)
 {
-    basic_math_constrain(&integral_error, -i_out_max / k_i, i_out_max / k_i);
+    const float limit = basic_math_abs(i_out_max / k_i);
+    basic_math_constrain(&integral_error, -limit, limit);
 }
 ```
 
 ### 5.3 原理说明
 
-限幅对象是**积分项输出 `term.i_out = k_i * integral_error`**，所以对 `integral_error` 的限制边界是 `± i_out_max / k_i`：
+限幅对象是**积分项输出 `term.i_out = k_i * integral_error`**，所以对 `integral_error` 的限制边界是 `± abs(i_out_max / k_i)`。累加前、累加后以及 BACK_CALC 修正后均应用限幅，保证当前帧不越限：
 
 $$
--\frac{i\_out\_max}{k_i} \le integral\_error \le \frac{i\_out\_max}{k_i}
+-\left|\frac{i\_out\_max}{k_i}\right| \le integral\_error \le \left|\frac{i\_out\_max}{k_i}\right|
 \quad\Longrightarrow\quad
 |term.i\_out| = |k_i \cdot integral\_error| \le i\_out\_max
 $$
@@ -407,7 +412,7 @@ y_k = \alpha\,x_k + (1-\alpha)\,y_{k-1},
 \alpha = \frac{T N}{1 + T N},\qquad 1-\alpha = \frac{1}{1 + T N}
 $$
 
-其中 `N = d_filter_n` 为截止频率（Hz）。它与连续域一阶低通 `N/(s+N)` 经后向差分离散化的结果一致：`α` 越大（`N` 越高）跟随越快、滤波越弱；`α` 越小滤波越强、相位滞后越大。
+其中 `N = d_filter_n` 为截止角频率（rad/s），换算为 Hz 时使用 `f_c = N/(2π)`。它与连续域一阶低通 `N/(s+N)` 经后向差分离散化的结果一致：`α` 越大跟随越快、滤波越弱；`α` 越小滤波越强、相位滞后越大。
 
 **等效传递函数：Kd 变成有界的一阶高通**
 
@@ -445,7 +450,7 @@ $$
 | 参数 | 含义 | 建议 |
 |---|---|---|
 | `d_first` | `PID_D_First_ENABLE` 开启微分先行（同时启用低通）；`DISABLE` 为标准微分 | 建议**默认开启**（本仓库绝大多数环已使用 `PID_D_First_ENABLE`） |
-| `d_filter_n` | 微分低通截止频率 `N`（Hz），默认 10 | 按噪声水平调：噪声大→降低（如 5~15Hz）；响应要求高→提高（如 30~50Hz）；过低会削弱 D 的阻尼作用 |
+| `d_filter_n` | 微分低通截止角频率 `N`（rad/s），默认 10 | 噪声大时降低，响应要求高时提高；若按 Hz 整定，先乘 `2π` |
 
 - `N` 越大 → 转折点右移 → 越接近理想微分（阻尼强，但噪声放大更明显）；
 - `N` 越小 → 越早“封顶” → 抗噪更好，但 D 的有效作用频段变窄、相位滞后变大。
@@ -455,7 +460,7 @@ $$
 - 开关 `d_first` **同时控制“微分先行”和“微分低通”**——本实现里微分低通只在微分先行分支里存在。若关闭微分先行，得到的是**无滤波的标准微分**（`k_d*(error-pre_error)/d_t`）。如需“标准微分 + 滤波”，需自行扩展。
 - `d_filter_n` 只在 `d_first == ENABLE` 时生效；`k_d == 0` 时 D 项恒为 0。
 - 微分先行用 `now - pre_now`，注意 `pre_now` 在帧尾才更新为 `now`，保证求导用的是“上一帧的真实测量值”。
-- 严格来说，代码把 `d_filter_n` 直接当作截止**角频率 `N`** 参与 `α = T·N/(1+T·N)` 计算；文档标注 Hz 属工程习惯，若需严格以 Hz 计，可按 `N = 2π·f_c` 换算理解。
+- `d_filter_n` 的单位是 rad/s；本次仅纠正文档单位，不改变滤波公式与既有参数效果。
 
 ---
 
@@ -532,12 +537,14 @@ integ_delta    = term.speed_ratio * d_t * term.error;
 integral_error += integ_delta;   // 先记增量，再累加
 ```
 
-输出段：
+历史输出段（当前上限取两者非零绝对值较小者，见 §15）：
 
 ```cpp
 out_unsaturated = term.p_out + term.i_out + term.d_out + term.f_out;
 
-float out_limit = (anti_windup_out_max != 0.0f) ? anti_windup_out_max : out_max;
+float out_limit = basic_math_abs(out_max); // 实际输出硬限幅
+float anti_windup_limit = (anti_windup_out_max != 0.0f)
+    ? basic_math_abs(anti_windup_out_max) : out_limit; // 仅供抗饱和判定
 out = out_unsaturated;
 
 bool saturated = false;
@@ -554,6 +561,8 @@ if (saturated && anti_windup != PID_Anti_Windup_DISABLE && k_i != 0.0f)
 ```
 
 ### 8.3 方案一：条件积分（CLAMP）
+
+以下为历史判据示意；当前实现改用 `k_i * integ_delta` 判断方向，并在恢复积分后重算输出，见 §15。
 
 ```cpp
 if (anti_windup == PID_Anti_Windup_CLAMP)
@@ -579,6 +588,8 @@ if (anti_windup == PID_Anti_Windup_CLAMP)
 要点：**只撤“本帧增量”，不回滚历史积分** → 稳态所需积分不动，故不改稳态精度；误差一反向立即恢复积分，帮助快速脱离饱和。**零参数、最稳**。
 
 ### 8.4 方案二：反算（BACK_CALC）
+
+以下展示反算公式；当前实现还会在修正后再次应用积分限幅，见 §15。
 
 ```cpp
 else if (anti_windup == PID_Anti_Windup_BACK_CALC)
@@ -633,7 +644,7 @@ $$
 1. **积分限幅防除零**：`if (i_out_max != 0.0f && k_i != 0.0f)` —— 当 `k_i == 0`（纯 PD 环，如本仓库多个 `pid_omega` 的 `k_i=0`）时不做 `i_out_max / k_i`，避免除零；同时 `k_i=0` 时积分项本就恒为 0。
 2. **抗饱和也守 `k_i != 0`**：`if (saturated && anti_windup != DISABLE && k_i != 0.0f)` —— 纯 PD 环无积分可回退，直接跳过。
 3. **输出限幅可选**：`out_limit == 0` 视为“不限制”，`basic_math_constrain` 不会被调用（避免把输出强行拉到 0）。
-4. **所有新增参数带默认值**：`init()` 末尾新增的 `anti_windup` 等 3 个形参均有默认值，**老调用无需修改**；且 `anti_windup` 默认 `DISABLE`，不开启时新分支不执行，**输出与原实现逐位一致**。
+4. **所有新增参数带默认值**：`init()` 末尾新增的 `anti_windup` 等 3 个形参均有默认值，**老调用无需修改**；`anti_windup` 默认 `DISABLE`，但本次修复的死区与积分限幅边界行为同样适用于此模式。
 5. **成员就地初始化**：`pre_now / pre_target / pre_out / pre_error / out / out_unsaturated` 等均 `= 0.0f` 初始化，避免上电首帧读到垃圾值。
 6. **量纲统一**：`f_out`、`i_out`、`p_out`、`d_out` 单位一致，直接相加得到 `out`；`i_out_max`、`out_max`、`anti_windup_out_max` 单位均与输出一致。
 7. **接口完备**：提供 `get_out()`、`get_out_unsaturated()`、`get_integral_error()` 供观测，以及全套 `set_*()` 供在线整定。
@@ -656,10 +667,175 @@ $$
 | `i_variable_speed_b` | 同误差 | 0（关闭） | 变速积分停止下界 | `> A`，大误差门限 |
 | `i_separate_threshold` | 同误差 | 0（关闭） | 积分分离阈值 | 稳态精度的若干倍 |
 | `d_first` | 枚举 | DISABLE | 微分先行 + 微分低通 | 建议 `ENABLE` |
-| `d_filter_n` | Hz | 10 | 微分低通截止频率 | 噪声大调低，响应强调高 |
+| `d_filter_n` | rad/s | 10 | 微分低通截止角频率 | 噪声大调低，响应强调高 |
 | `anti_windup` | 枚举 | DISABLE | 抗饱和方案 | 见 §8.6 |
 | `anti_windup_gain`（`Kb`） | 1/s | 10 | 反算回退强度（仅 BACK_CALC） | 10~15 |
-| `anti_windup_out_max` | 同输出 | 0（沿用 `out_max`） | 抗饱和判定用真实限幅 | ★=下游最后一级硬限幅 |
+| `anti_windup_out_max` | 同输出 | 0（沿用 `out_max`） | 抗饱和跟踪阈值，不限制实际输出 | 设为积分器开始回算的输出边界 |
+
+---
+
+## 15. 迭代回归与闭环仿真（2026-11-17）
+
+当前实现的顺序与约定：
+
+- 死区使用连续的 `sign(e) * max(abs(e) - dead_zone, 0)`，不改写目标；变速积分及积分分离使用整形后的绝对误差。
+- 积分累加前后都限幅，边界使用 `abs(i_out_max / k_i)`；BACK_CALC 更新后再次限幅。
+- CLAMP 根据实际接纳的积分输出增量 `k_i * integ_delta` 判断是否加深饱和，恢复累加前状态后重新计算当前帧输出。积分分离清零不属于可回退的积分增量。
+- BACK_CALC 的 `out_unsaturated` 与 `out` 保留本帧修正前的输出决策，修正后的积分用于下一帧；因此它们不一定等于修正后各项之和。
+- 实际输出只由 `out_max` 硬限幅；`anti_windup_out_max` 仅在启用抗积分饱和时用于判定是否开始回算/条件积分，不改变下发输出。两项均为 0 时，输出不受 PID 内部限幅。
+- `pid_clear()` 将误差、测量和目标历史对齐当前输入，避免输入不变时下一帧出现复位引起的 D/F 冲击。`init()` 仍只更新参数，不自动复位状态。
+- 参数约定：输入与增益须有限，`d_t > 0`，死区和阈值非负，启用变速积分时 `B > A`，反算增益与滤波角频率非负。本次未新增运行时参数校验接口。
+
+主机测试编译真实的 `pid.cpp`，使用仓库 CMSIS 头文件，不替换 PID 或数学辅助函数。从仓库根目录运行（需本机 `g++`，先确保 `build\tests` 存在）：
+
+```powershell
+g++ -std=c++11 -Wall -Wextra -Werror -pedantic -I User\Drive\algorithm\pid -I User\Drive\algorithm\basic_math -I Middlewares\Third_Party\DSP\Include -I Drivers\CMSIS\Include tests\pid_tests.cpp User\Drive\algorithm\pid\pid.cpp -o build\tests\pid_tests.exe
+if ($LASTEXITCODE -eq 0) { & .\build\tests\pid_tests.exe }
+```
+
+测试覆盖死区正负边界、目标保持、整形误差、正负积分增益、当帧积分限幅、CLAMP 精确恢复及输出重算、积分分离与抗饱和交互、BACK_CALC 限幅、内外输出上限、复位以及微分先行。
+
+闭环对象为一阶模型 `dy/dt = (u-y)/0.2`，周期 1 ms、执行器上限 ±1；先施加不可达目标 ±3 持续 3 s，再恢复至可达目标 ±0.4 持续 7 s。采用 `Kp=2, Ki=4, Kd=0.05, Kb=10`，开启微分先行，正负方向分别验证：
+
+| 模式 | 恢复阶段累计绝对误差 IAE | 相对 DISABLE 降低 | 最终绝对误差 |
+|---|---|---|---|
+| DISABLE | 4.200226 | — | 作为对照，不要求收敛 |
+| CLAMP | 0.147578 | 96.5% | 0.00000653 |
+| BACK_CALC | 0.478668 | 88.6% | 0.00002101 |
+
+结果：120025 项断言通过；固件通过 VS Code CMake Tools 构建和链接。仿真断言要求输出全程有限且不越限，启用抗饱和后恢复 IAE 至少降低 50%、最终误差小于 0.001。以上为软件闭环仿真，不代表实际云台对象；本次未烧录、未进行硬件闭环测试。
+
+## 17. 最小修复落地（2026-11-18）
+
+本轮只修复两项，接口和默认参数不变：
+
+- `B=0` 关闭变速积分，即使 `A!=0` 也全速积分；启用时参数仍要求 `0<=A<B`。`A=B` 不会执行中间段除法，但不属于有效配置。
+- CLAMP/BACK_CALC 使用 `tracking_out=clamp(out_unsaturated, ±anti_windup_limit)` 计算饱和反馈，不再误用硬限幅后的 `out`。实际输出仍只受 `out_max` 限制；`out_max=0` 时也可通过独立跟踪阈值进行抗饱和。
+
+`tests/pid_tests.cpp` 为本轮聚焦回归测试，可按 §15 的主机命令编译运行；历史轮次的断言数量与仿真结果不是当前测试文件的输出。
+
+本轮验证：588 项检查通过，覆盖正负误差、正负积分增益、独立/硬限幅组合、抗饱和开关、CLAMP 允许反向退积分以及变速积分分段；主机编译启用 `-Wall -Wextra -Werror -pedantic`，固件通过 CMake Tools 编译和链接。未烧录或做硬件闭环验证。
+
+对前述建议的修正（优先于历史建议）：标准 BACK_CALC 允许积分抵消 P/D 引起的饱和，这是跟踪反馈的正常行为，不应仅凭产生反向积分而增加方向门控。CLAMP 保持条件积分语义，不改为投影历史积分；不强制 `i_out_max<=out_max`，以免破坏各项抵消时的可用范围。前馈量纲、首帧/复位语义、异常输入策略、采样调度和积分精度均未在本轮变更。非法参数仍须由调用方保证，不能静默替换为默认值。
+
+### 17.1 闭环回归补充
+
+本次只扩展测试与文档，没有继续修改 PID 实现。对象使用精确离散的一阶模型 `y_next=a*y+(1-a)*(u_applied+load)`，`a=exp(-dt/0.2)`；执行器实际将命令裁剪到 ±1，不能用 PID 的输出命令代替实际施加的控制量。参数 `Kp=2, Ki=4, Kd=0.05, Kb=10`，微分先行开启；不可达目标 ±3 持续 3 s，随后切换到 ±0.4 并恢复 7 s。负载用例在恢复阶段施加与目标方向相反的 0.2 恒定扰动，恢复目标仍可达。
+
+覆盖 CLAMP/BACK_CALC、1/2 ms 周期、正负方向、有无负载，以及三种限幅配置：内部硬限幅 1；内部硬限幅 10 + 跟踪阈值 1；内部无限幅 + 跟踪阈值 1。后两种均保留下游真实执行器限幅。
+
+| 模式 | 周期 | 无负载恢复 IAE | 有负载恢复 IAE |
+|---|---|---|---|
+| CLAMP | 1 ms | 0.147698 | 0.190980 |
+| BACK_CALC | 1 ms | 0.478435 | 0.538755 |
+| CLAMP | 2 ms | 0.146936 | 0.190698 |
+| BACK_CALC | 2 ms | 0.477096 | 0.537388 |
+
+总计 812 项检查全部通过，新增断言要求：输出和状态全程有限、硬限幅不越界、峰值积分状态不超过 2、恢复 IAE 比同场景 DISABLE 降低至少 50%、最终误差小于 0.001；内部/下游限幅的 IAE 差及正负方向差均不超过 1e-5；1/2 ms 周期的 IAE 差不超过 2%；`A>0,B=0` 与关闭变速积分的恢复 IAE 一致。所有闭环结果均为软件仿真，不能代替实际电机闭环验证。
+
+## 16. 第二轮迭代：采样周期一致性、积分精度与抗饱和语义（2026-11-17）
+
+在 §15 的基础上又追加了 8 组主机测试（`tests/pid_tests.cpp` 的 `iteration: ...` 章节），编译/运行命令与 §15 相同。本轮**未修改 `pid.cpp`**，只做黑盒测试与量化，结论如下。
+
+### 16.1 验证结论：P/I/D/AW 与周期一致，前馈不一致
+
+| 项目 | d_t=1 ms | d_t=2 ms | 结论 |
+|---|---|---|---|
+| P 项（阶跃 1） | 2.000000 | 2.000000 | 一致 |
+| I 项（1 s 单位误差） | 0.999991 | 0.999994 | 一致（差 3e-6，仅 float 累加误差） |
+| 标准 D（1 rad/s 测量斜坡） | -0.500000 | -0.500000 | 一致 |
+| 微分先行（同上，滤波稳态） | -0.499976 | -0.499975 | 一致 |
+| 饱和恢复 IAE（CLAMP） | 0.104445 | 0.103647 | 差 0.8% |
+| 饱和恢复终值 | 0.389095 | 0.389130 | 一致 |
+| **前馈（1 rad/s 目标斜坡）** | **0.002500** | **0.005000** | **随 d_t 线性缩放（2×）** |
+
+闭环仿真使用**精确离散**的一阶对象 `y ← a·y + (1-a)·u, a = exp(-d_t/0.05)`，避免把对象积分误差误算到 PID 头上（用显式欧拉对象时 2 ms 采样会多出约 6% 的 IAE 偏差，那属于仿真误差）。
+
+结论：除 `f_out` 外，`pid_class` 的所有通道都是**按秒**标定的，换采样率只需保持 `d_t` 与实际回调周期一致。`f_out = k_f·Δtarget` 是**逐帧**标定，换周期后物理意义改变。
+
+### 16.2 新增问题（按严重度）
+
+1. **变速积分 `i_variable_speed_b == 0` 与头文件契约冲突（真缺陷）**
+   头文件写的是“变速区间, `0` 为不限制”，代码却把 `B == 0` 当成硬门限。
+   闭环实测（`k_p=2, k_i=4, d_t=1 ms`，一阶对象 `τ=0.05`）：`A=0.05, B=0` 终值误差 **0.3333**（植物停在 0.667），`B=10` 时误差 3.6e-4。原因：`|e| > A` 时 `speed_ratio = 0`，积分被永久关断，退化为纯 P。
+2. **`anti_windup_out_max` 曾在 `anti_windup == DISABLE` 时削输出**
+   已修复：实际输出只由 `out_max` 硬限幅；`anti_windup_out_max` 仅在启用抗积分饱和时作为跟踪阈值，不再改变下发输出。测试覆盖抗饱和开/关及两种限幅值不同时的情形。
+3. **积分状态是 `float`，大积分时有精度死区**
+   `i_out_max=10, k_i=0.1`（积分上限 100）时，积分在 99 处 `ULP=7.63e-6`；误差 1e-3 的单帧增量 `d_t·e = 1e-6` 低于半个 ULP，1 s 内积分**完全不增加**（实测 delta=0）。等效误差死区 `0.5·ULP/d_t ≈ 3.8e-3`（约 0.22°），成为稳态误差下限。误差 0.05 时仍能正常累积（99 → 99.0534）。
+4. **CLAMP 只能“阻止新增”，不能“回退已有”**
+   预置积分 5、`out_max=1`、误差反向后：输出仍在**错误方向**保持饱和 **400 帧（0.4 s）**；同样条件下 BACK_CALC（`Kb=10`）为 161 帧。积分限幅不是万能解药：只要积分在开环/未饱和阶段已经涨过 `out_max/k_i`，CLAMP 就没有手段把它拉回来。
+5. **微分先行对单帧跳变没有上界**
+   首帧响应约为 `k_d·N·Δ`（与 `d_t` 无关）：`k_d=0.38, N=10` 时，0.05 rad 跳变产生 `d_out=-0.188`（out_max 的 6.3%），0.2 rad 跳变产生 `-0.752`（25.1%）。编码器单点跳变/通信丢帧会被直接放大成力矩尖峰。
+6. **`i_out_max > out_max` 会成倍拉长退饱和时间**
+   `i_out_max=5, out_max=1` 充 10 s 后积分到 5，误差反向后输出还要 5000 帧（5 s）才换向；`i_out_max=1` 时为 1000 帧（1 s）。积分上限应 ≤ 输出上限。
+7. **量化反馈本身不会自激；死区的代价是 1:1 的稳态偏移**
+   1 LSB=0.5 mrad、`k_p=1, k_i=2` 的环在 20 s 后收敛到**静止点**（输出峰峰值 0），残差 = `dead_zone + 0.25 mrad`：`dz=0 → 0.000249`、`3 LSB → 0.001750`、`20 LSB → 0.010249`、`40 LSB → 0.020249`。死区应按**噪声峰峰值**设，而不是按编码器 LSB 设。
+8. **固件侧 `d_t` 是标称值，不是实测值**
+   云台任务用 `osDelay(1)` 轮询（见 [gimbal.cpp](../../../APP/gimbal/gimbal.cpp:1341)，tick=1 kHz），实际周期 = 1 tick + 本拍执行时间，恒 > 1 ms，且随负载抖动。若本拍耗时 100 µs，实际约 909 Hz，等效 `k_i` 偏低约 9%、`k_d` 偏高约 10%。所有 PID 都以 `d_t=0.001` 初始化，因此整定值与实测周期绑定。仓库里规划器已经在测 `plan_dt_meas_s`，PID 没有对应通道。
+
+### 16.3 优化建议
+
+**P0（建议本轮修）**
+
+1. 明确变速积分契约（二选一，并同步头文件注释）：
+   ```cpp
+   if (i_variable_speed_a == 0.0f && i_variable_speed_b == 0.0f) { ratio = 1.0f; }
+   else if (i_variable_speed_b <= i_variable_speed_a)            { ratio = 1.0f; } // 非法配置=关闭
+   else { /* 现有分段线性 */ }
+   ```
+   如果希望保留“B=0 表示不限制”，则 `B==0` 时应改成 `ratio = 1`（即从 A 开始就全速），不能是 `ratio = 0`。
+2. `anti_windup_out_max` 仅用于抗饱和跟踪判定，不能代替执行器硬限幅；实际执行器上限应配置在 `out_max`。若下游还会施加更严格的限幅，可通过 `anti_windup_out_max` 让抗饱和按实际可用输出范围工作。
+3. `init()`/`set_i_out_max()` 里把 `i_out_max` 约束到 `out_max`：`if (out_max != 0 && (i_out_max > out_max || i_out_max < 0)) i_out_max = out_max;`
+
+**P1（整定前建议做）**
+
+4. **积分状态升为 `double`**，或改为直接累积积分项输出：
+   ```cpp
+   double integral_error = 0.0;          // 内部累加用 double, 输出时转 float
+   ```
+   `get_integral_error()`/`set_integral_error()` 仍用 `float` 接口即可。H7 每拍多几十个周期，1 kHz 下可忽略。
+5. **CLAMP 改为“边界钳位”**：饱和时不要整帧丢弃增量，而是把积分钳到“输出正好等于限幅”的边界：
+   ```cpp
+   // 仅在积分项本身把输出往限幅方向推时
+   if (k_i * integral_error * (out_unsaturated - out) > 0.0f)
+   {
+       integral_error = (out_limit - (term.p_out + term.d_out + term.f_out)) / k_i;
+       integral_error = basic_math_constrain(integral_error, -integral_limit, integral_limit);
+   }
+   ```
+   这样既不会 stall（纯 I + 大 Ki），也能在误差反向后**立刻**退出饱和（解决 0.4 s 反向输出）。
+6. **BACK_CALC 加方向门控 + 幅值限制**：只有积分项在推动饱和时才回算，避免 P/D/前馈造成的瞬时饱和把积分打穿（对应当前 `separation + BACK_CALC` 终值误差 0.276 与 `k_f` 尖峰问题）：
+   ```cpp
+   if (k_i * integral_error * (out - out_unsaturated) > 0.0f)
+   {
+       float delta = (anti_windup_gain / k_i) * (out - out_unsaturated) * d_t;
+       delta = basic_math_constrain(delta, -0.5f * integral_limit, 0.5f * integral_limit); // Kb*d_t<=1
+       integral_error += delta;
+   }
+   ```
+7. **给微分项加上限** `d_out_max`（0=不限），直接把 `term.d_out` 钳位；配合调用方做单点跳变剔除。这比调低 `d_filter_n` 更直接，也不会牺牲正常频段的阻尼。
+8. **补 `set_d_t()` 并用实测周期驱动**：用 `bsp_dwt` 计算上一拍周期（与 `plan_dt_meas_s` 同源），或把 `gimbal_motor_calculate()` 放进固定频率定时器回调。至少增加：
+   ```cpp
+   inline void set_d_t(const float &__d_t);      // d_t > 0
+   inline void set_dead_zone(const float &__dz); // >= 0
+   inline void set_d_first(const pid_d_first_e &__d_first);
+   ```
+
+**P2（清理与文档）**
+
+9. `k_f` 建议删除或重定义为速率前馈 `k_f·(target-pre_target)/d_t`。当前参与编译的调用点 `k_f` 全为 0（前馈已由独立 `feedforward` 模块承担），但未参与编译的 [steering_wheel.cpp](../../../APP/steering_wheel/steering_wheel.cpp) 仍在用 `k_f=1.2/3.5`，说明这条通道仍有人依赖；保留逐帧差分形式只会在换周期、重新启用时留下隐患。
+10. `pre_out` 只写不读，可直接删除；若要保留，用它实现输出变化率限制。
+11. `init()` 末尾调用 `pid_clear()`（或增加 `clear` 参数），避免“重新 init 后旧积分/旧滤波状态继续生效”。
+12. 积分分离当前是“清零”，跨阈值时输出会阶跃；如需平滑，改为“保持（冻结）”或按 `k` 衰减，并作为可选项暴露。
+
+### 16.4 本轮结果
+
+```
+checks: 49166, failures: 0, findings: 30
+RESULT: PASS (documented behavior and invariants hold)
+```
+
+30 条 FINDING 中，§16.2 的 8 条为本轮新增；其余为 §15 已记录的参数/用法风险。所有结论均为**主机软件仿真**，未烧录、未做硬件闭环；实车验证前请先按 §16.3 的 P0 修完并重新整定。
 
 ---
 
