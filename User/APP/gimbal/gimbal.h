@@ -26,6 +26,7 @@
 #include "robot_decision.h"
 #include "general_filter.h"
 #include "wave_generator.h"
+#include "feedforward.h"
 #include "gimbal_identification.h"
 #include "reference_track_plan.h"
 
@@ -132,6 +133,17 @@ typedef struct
 } gimbal_low_pass_filter_t;
 
 /**
+ * @brief 观测原始数据低通滤波器
+ */
+typedef struct
+{
+    low_pass_filter_class small_yaw_omega;           // 小yaw角速度
+    low_pass_filter_class small_pitch_omega;         // 小pitch角速度
+    low_pass_filter_class big_yaw_omega;             // 大yaw角速度
+    low_pass_filter_class big_pit_omega;           // 大pitch角速度
+} gimbal_observate_filter_t;
+
+/**
  * @brief 云台任务两次反馈时间s
  */
 typedef struct
@@ -162,17 +174,6 @@ typedef struct
     pid_class angle; // 云台角度PID控制器
     pid_class speed; // 云台角速度PID控制器
 } gimbal_pid_t;
-
-/**
- * @brief pitch轴重力补偿结构体
- * @note 用于补偿pitch轴的重力影响，提升控制精度
- */
-typedef struct
-{
-    // 多项拟合系数(4:四次项系数 3:三次项系数 2:二次项系数 1:一次项系数 0:常数系数)
-    float factor[5]; // pitch轴重力补偿系数
-    float amount; // pitch轴重力补偿量
-} pitch_gravity_compensation_t;
 
 /**
  * @brief 云台结构体
@@ -231,6 +232,8 @@ typedef struct
     // 底盘角速度补偿前馈低通滤波器对象
     low_pass_filter_class chassis_angular_filter;
 
+    gimbal_observate_filter_t observate_filter; // 云台观测值低通滤波器对象
+
 /*------------------------------------系统前馈控制量---------------------------------------------*/
     Feedforward_t small_pitch_ffd; // 小pitch轴前馈控制量
 
@@ -244,8 +247,12 @@ typedef struct
     gimbal_identification_config_t ident_small_pitch_config;
     gimbal_identification_sample_t ident_small_pitch_sample;
     gimbal_identification_output_t ident_small_pitch_output;
-    
-    pitch_gravity_compensation_t s_pit_gra_comp; // 小pitch轴重力补偿对象
+
+    /* 大pitch轴(与大pitch电机同轴, 受重力): 与 small_pitch 同构的 5 参模型 */
+    gimbal_identification_t ident_big_pitch;
+    gimbal_identification_config_t ident_big_pitch_config;
+    gimbal_identification_sample_t ident_big_pitch_sample;
+    gimbal_identification_output_t ident_big_pitch_output;
 
 /*--------------------------------------轨迹规划器---------------------------------------------*/
     reference_config_t small_yaw_plan_config; // 小yaw轨迹规划器配置
@@ -256,8 +263,13 @@ typedef struct
     reference_track_plan_t small_pitch_plan; // 小pitch轨迹规划器
     reference_value_t small_pitch_plan_output; // 小pitch轨迹规划器输出
 
-    float dynamic_comp; // 小pitch轴前馈动态补偿量(J*acc + B*rate + 库仑摩擦), 单位: N·m
-    float all_comp; // 小pitch轴前馈总补偿量(动态补偿 + 重力补偿), 单位: N·m
+/*------------------------------------前馈补偿量---------------------------------------------*/
+    float small_pit_gravity_comp;          // 小pitch轴前馈重力补偿量, 单位: N·m
+    float small_pit_dynamic_comp;       // 小pitch轴前馈动态补偿量(J*acc + B*rate + 库仑摩擦), 单位: N·m
+    float small_pit_toqure_comp;        // 小pitch轴前馈总补偿量(动态补偿 + 重力补偿), 单位: N·m
+
+    float big_pit_gravity_comp;        // 大pitch轴前馈重力补偿量, 单位: N·m
+
 /*----------------------------------遥控器控制PID---------------------------------------------*/
     gimbal_pid_t rc_small_yaw_pid;
     gimbal_pid_t rc_small_pitch_pid;

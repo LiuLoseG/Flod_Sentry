@@ -24,46 +24,41 @@
 
 /*--------------------------------------------------云台-------------------------------------------------------*/
 
-#define SMALL_YAW_TORQUE_LIMIT 1.0f
-#define SMALL_PITCH_TORQUE_LIMIT 1.8f
-#define PITCH_GRAVITY_COMPENSATION -0.85f
+/*--------------------------Gimbal_All-------------------------------*/
 
-// 云台yaw轴对齐时是否大于0度, 若大于则设为1，否则设为0
-#define YAW_RAD_MIDDLE_THAN_ZERO 1
+#define YAW_RAD_MIDDLE_THAN_ZERO 1      // 云台yaw轴对齐时是否大于0度, 若大于则设为1，否则设为0
+#define YAW_MOTOR_MID_ANGLE 1.64509869f // yaw电机中间位置角度 (单位: rad)
 
-// yaw电机中间位置角度 (单位: rad)
-#define YAW_MOTOR_MID_ANGLE 1.64509869f
+/*--------------------------Small_Yaw-------------------------------*/     
 
-// 小pitch轴电机中间位置角度 (单位: rad)
-#define SMALL_PITCH_MOTOR_MID_ANGLE -0.975132346f
-// 小yaw电机中间位置角度 (单位: rad)          
-#define SMALL_YAW_MOTOR_MID_ANGLE 0.0f      
+#define SMALL_YAW_MOTOR_MID_ANGLE 0.0f          // 小yaw电机中间位置角度 (单位: rad)     
+#define SMALL_YAW_MIN_OFFSET -0.56515547f       // 云台YAW轴限辐，2.88848591 - 3.49364138 = -0.60515547 留0.04f的余量       
+#define SMALL_YAW_MAX_OFFSET 0.54899019f        // 云台YAW轴限辐，4.1033988 - 3.49364138 = 0.60899019 留0.06f的余量  
 
-// 大pitch轴电机中间位置角度 (单位: rad)
-#define BIG_PITCH_MOTOR_TAG_ANGLE 0.0f
-// 大pitch电机角度到位判断阈值 (单位: rad)
-#define BIG_PITCH_MOTOR_FIL_DIF_ANGLE 0.005f
-// 大pitch电机起始角度 (单位: rad)
-#define BIG_PITCH_START_ANGLE 0.0f
-// 大yaw轴电机中间位置角度 (单位: rad)
-#define BIG_YAW_MOTOR_MID_ANGLE 0.0f
+#define SMALL_YAW_ANGLE_INCREMENT_RATION 0.0035f // 小yaw电机单次角度增量系数 (单位: rad/单位输入)
 
-#define BIG_YAW_SCAN_OMEGA 1.0f
+#define SMALL_YAW_TORQUE_LIMIT 1.0f             // 小yaw电机扭矩限幅 (单位: N·m)
 
-// 云台PITCH轴限辐，-1.96359122 - (-0.975132346) = -0.988458874 留0.04f的余量
-#define SMALL_PITCH_MIN_OFFSET -0.988458874f 
-// 云台PITCH轴限辐，-0.316000015 - (-0.975132346) = 0.659132331 留0.08f的余量           
-#define SMALL_PITCH_MAX_OFFSET 0.659132331f               
+/*--------------------------Small_Pitch-----------------------------*/   
 
-// 云台YAW轴限辐，2.88848591 - 3.49364138 = -0.60515547 留0.04f的余量
-#define SMALL_YAW_MIN_OFFSET -0.56515547f 
-// 云台YAW轴限辐，4.1033988 - 3.49364138 = 0.60899019 留0.06f的余量         
-#define SMALL_YAW_MAX_OFFSET 0.54899019f           
+#define SMALL_PITCH_MOTOR_MID_ANGLE -0.975132346f       // 小pitch轴电机中间位置角度 (单位: rad)
+#define SMALL_PITCH_MIN_OFFSET -0.988458874f            // 小PITCH轴限辐，-1.96359122-(-0.975132346) = -0.988458874 留0.04f的余量
+#define SMALL_PITCH_MAX_OFFSET 0.659132331f             // 小PITCH轴限辐，-0.316000015-(-0.975132346) = 0.659132331 留0.08f的余量            
+#define SMALL_PITCH_ANGLE_INCREMENT_RATION 0.0020f      // pitch电机单次角度增量系数 (单位: rad/单位输入)      
 
-// 小yaw电机单次角度增量系数 (单位: rad/单位输入)
-#define SMALL_YAW_ANGLE_INCREMENT_RATION    0.0035f 
-// pitch电机单次角度增量系数 (单位: rad/单位输入)       
-#define SMALL_PITCH_ANGLE_INCREMENT_RATION        0.0020f        
+#define SMALL_PITCH_TORQUE_LIMIT 1.8f                   // 小pitch电机扭矩限幅 (单位: N·m)      
+
+/*----------------------------Big_Yaw-------------------------------*/   
+
+#define BIG_YAW_SCAN_OMEGA 1.0f                         // 大yaw扫描角速度 (单位: rad/s)
+
+/*----------------------------Big_Pitch-----------------------------*/  
+
+#define BIG_PITCH_MOTOR_FIL_DIF_ANGLE 0.005f    // 大pitch电机角度到位判断阈值 (单位: rad)
+#define BIG_PITCH_START_ANGLE -0.12128035f      // 大pitch电机起始角度 (单位: rad)
+#define BIG_PITCH_MOTOR_TAG_ANGLE -2.09234977f  // 大pitch轴电机目标位置角度 (单位: rad)
+
+#define BIG_PITCH_TORQUE_LIMIT 2.0f             // 大pitch轴电机扭矩限幅 (单位: N·m)
 
 /*--------------------------------------------------发射机构-------------------------------------------------------*/
 
