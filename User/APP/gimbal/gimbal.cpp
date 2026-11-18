@@ -45,7 +45,7 @@ float small_pitch_c_angle = 0.00065f;
 float small_yaw_c_angle = 0.00112f;
 
 // 调试目标值
-float debug_data = -0.6f;
+float debug_data = 0.6f;
 float test_torque = 0.0f;
 
 /**
@@ -369,7 +369,7 @@ void gimbal_init(void)
     gimbal.plan_filter.pitch_torque.init(10, 0.001f);
 
     // 大pitch角度目标值滤波规划器
-    gimbal.big_pit_ang_fil.init(10, 0.001f);
+    gimbal.big_pit_ang_fil.init(0.82f, 0.001f);
 
     // 初始化云台轨迹规划器
     small_yaw_track_plan_config_init(&gimbal.small_yaw_plan_config);
@@ -482,7 +482,7 @@ void gimbal_update_mode(void)
         }
     }
 
-    if(gimbal.crsf->get_left_lock() == CRSF_SWITCH_PRESS)
+    if(gimbal.crsf->get_left_lock() == CRSF_SWITCH_FREE)
     {
         gimbal.target_val.big_pitch_status = Gimbal_Big_Pitch_Up;
     }
@@ -897,6 +897,9 @@ void gimbal_control_decision(void)
             }
         }
     }
+
+    gimbal.big_pit_ang_fil.set_now_input(gimbal.target_val.big_pitch_angle);
+    gimbal.big_pit_ang_fil.low_calculate_callback();
 }
 
 /**
@@ -1201,35 +1204,51 @@ void gimbal_motor_control_test(void)
 
     // 目标值设置
     // const float target_val = basic_math_abs(wave_generator_get_value(&test_wave));
-    // const float now_small_yaw = gimbal.small_yaw_motor.get_total_angle() - SMALL_YAW_MOTOR_MID_ANGLE;
+    const float now_small_yaw = gimbal.small_yaw_motor.get_total_angle() - SMALL_YAW_MOTOR_MID_ANGLE;
     // const float now_small_pitch = gimbal.small_pitch_motor.get_total_angle() - SMALL_PITCH_MOTOR_MID_ANGLE;
     const float now_big_pitch = gimbal.big_pitch_motor.get_total_angle() - BIG_PITCH_START_ANGLE;
 
     // 小yaw目标值设置
-    if(now_big_pitch < BIG_PITCH_MOTOR_TAG_ANGLE + 0.2f)
+    if(now_small_yaw >= SMALL_YAW_MAX_OFFSET - 0.01f)
     {
         // gimbal.target_val.small_pitch_omega = -target_val;
-        // gimbal.target_val.small_yaw_omega = -debug_data;
+        gimbal.target_val.small_yaw_omega = -debug_data;
         // gimbal.target_val.small_pitch_omega = -debug_data;
         // gimbal.target_val.big_pitch_omega = -debug_data;
     }
 
-    else if(now_big_pitch > BIG_PITCH_START_ANGLE + 0.1f)
+    else if(now_small_yaw <= SMALL_YAW_MIN_OFFSET + 0.01f)
     {
         // gimbal.target_val.small_pitch_omega = target_val;
-        // gimbal.target_val.small_yaw_omega = debug_data;
+        gimbal.target_val.small_yaw_omega = debug_data;
         // gimbal.target_val.small_pitch_omega = debug_data;
         // gimbal.target_val.big_pitch_omega = debug_data;
     }
 
     // gimbal.target_val.small_pitch_angle = basic_math_constrain(wave_generator_get_value(&test_wave), gimbal.small_pitch_imu_limit_angle + SMALL_PITCH_MIN_OFFSET + 0.1f, gimbal.small_pitch_imu_limit_angle + SMALL_PITCH_MAX_OFFSET - 0.2f);
-    gimbal.target_val.big_pitch_angle = basic_math_constrain(wave_generator_get_value(&test_wave) - 1.08681506f, BIG_PITCH_MOTOR_TAG_ANGLE + 0.04f, BIG_PITCH_START_ANGLE - 0.04f);
+    // gimbal.target_val.big_pitch_angle = basic_math_constrain(wave_generator_get_value(&test_wave) - 1.08681506f, BIG_PITCH_MOTOR_TAG_ANGLE + 0.04f, BIG_PITCH_START_ANGLE - 0.04f);
+
+    if(gimbal.target_val.big_pitch_status == Gimbal_Big_Pitch_Up)
+    {
+        gimbal.target_val.big_pitch_angle = BIG_PITCH_MOTOR_TAG_ANGLE;
+    }
+    else if(gimbal.target_val.big_pitch_status == Gimbal_Big_Pitch_Down)
+    {
+        gimbal.target_val.big_pitch_angle = BIG_PITCH_START_ANGLE;
+    }
+    else
+    {
+        gimbal.target_val.big_pitch_angle = gimbal.now_val.big_pitch_angle;
+    }
+
+    gimbal.big_pit_ang_fil.set_now_input(gimbal.target_val.big_pitch_angle);
+    gimbal.big_pit_ang_fil.low_calculate_callback();
     gimbal.target_val.small_pitch_angle = 0.0f;
 
     // 轨迹规划 + 前馈(重力/动态补偿在函数内部算好)
     gimbal_update_feedforward();
 
-    gimbal.big_pit_gravity_comp = -0.177708238 * arm_sin_f32(gimbal.now_val.big_pitch_angle) + -0.535059273 * arm_cos_f32(gimbal.now_val.big_pitch_angle);
+    gimbal.big_pit_gravity_comp = -0.144609526 * arm_sin_f32(gimbal.now_val.big_pitch_angle) - 0.111498073 * arm_cos_f32(gimbal.now_val.big_pitch_angle);
 
     // 速度环
     if(gimbal.now_method == Gimbal_Method_Zero_Force)
@@ -1278,7 +1297,7 @@ void gimbal_motor_control_test(void)
         gimbal.big_yaw_motor.set_control_torque(gimbal.pc_big_yaw_pid.speed.get_out());
 
         // 大pitch
-        gimbal.pc_big_pitch_pid.angle.set_target(basic_math_constrain(gimbal.target_val.big_pitch_angle, BIG_PITCH_MOTOR_TAG_ANGLE + 0.04f, BIG_PITCH_START_ANGLE - 0.04f));
+        gimbal.pc_big_pitch_pid.angle.set_target(basic_math_constrain(gimbal.big_pit_ang_fil.get_out(), BIG_PITCH_MOTOR_TAG_ANGLE + 0.04f, BIG_PITCH_START_ANGLE - 0.04f));
         gimbal.pc_big_pitch_pid.angle.set_now(gimbal.now_val.big_pitch_angle);
         gimbal.pc_big_pitch_pid.angle.pid_calculate_callback();
         gimbal.target_val.big_pitch_omega = gimbal.pc_big_pitch_pid.angle.get_out();
@@ -1298,7 +1317,7 @@ void gimbal_motor_control_test(void)
     //     gimbal.big_pitch_motor.set_control_torque(test_torque);
     // }
 
-    // gimbal.small_yaw_motor.calculate_callback();
+    gimbal.small_yaw_motor.calculate_callback();
     gimbal.small_pitch_motor.calculate_callback();
     // gimbal.big_yaw_motor.calculate_callback();
     gimbal.big_pitch_motor.calculate_callback();
