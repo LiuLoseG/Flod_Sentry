@@ -39,7 +39,7 @@ typedef struct {
 
     bool  accel_sat_guard_enable;   // true: 检测到加速度/加加速度被限幅时临时降低位置增益
     float sat_gain_scale;           // 饱和时位置增益缩放系数, 0<scale<1 (建议 0.4~0.6)
-    float sat_release_per_s;        // 饱和解除后增益恢复速率, 单位 1/s (建议 1~3)
+    float sat_release_per_s;        // 增益降低/恢复的最大速率, 单位 1/s (建议 1~3); 0 表示保持增益
 } reference_config_t;
 
 /**

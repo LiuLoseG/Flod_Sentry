@@ -69,9 +69,9 @@ feedforward_param_t pitch_ff = {
  * @note 小yaw辨识模型不包含重力项；完成辨识后将 J/B/Fc 填入本表。
  */
 feedforward_param_t small_yaw_ff = {
-    0.00861408561f,                     // j: RLS 在线辨识值
-    0.0385769084f,                       // b: RLS 在线辨识值
-    0.23977007f,                         // fc: RLS 在线辨识值
+    0.00814038701f,                     // j: RLS 在线辨识值
+    0.0483040921f,                       // b: RLS 在线辨识值
+    0.198885202f,                         // fc: RLS 在线辨识值
     0.08f,                         // eps: 与辨识配置 friction_velocity_rad_s 保持一致
     0.0f,                          // grav_sin: 小yaw无重力项
     0.0f,                          // grav_cos: 小yaw无重力项
@@ -278,7 +278,7 @@ static void small_yaw_track_plan_config_init(reference_config_t *config)
     config->accel_sat_guard_enable = true;    // 轨迹规划器饱和守护函数
 
     config->sat_gain_scale = 0.5f;           // 饱和时位置增益缩放系数, 0 < scale < 1 (建议 0.4~0.6)
-    config->sat_release_per_s = 2.0f;        // 饱和解除后增益恢复速率, 单位 1/s 
+    config->sat_release_per_s = 2.0f;        // 饱和时增益降低/解除后恢复的最大速率, 单位 1/s
 }
 
 /**
@@ -304,7 +304,7 @@ static void small_pitch_track_plan_config_init(reference_config_t *config)
     config->accel_sat_guard_enable = true;    // 轨迹规划器饱和守护函数
 
     config->sat_gain_scale = 0.5f;           // 饱和时位置增益缩放系数, 0 < scale < 1 (0.4~0.6)
-    config->sat_release_per_s = 2.0f;        // 饱和解除后增益恢复速率, 单位 1/s (1~3)
+    config->sat_release_per_s = 2.0f;        // 饱和时增益降低/解除后恢复的最大速率, 单位 1/s (1~3)
 }
 
 /**
@@ -406,7 +406,7 @@ void gimbal_init(void)
     gimbal.rc_big_pitch_pid.speed.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
 
     // 初始化云台自瞄PID控制器
-    gimbal.pc_small_yaw_pid.angle.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.pc_small_yaw_pid.angle.init(12.5f, 0.0f, 0.0132f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
     gimbal.pc_small_yaw_pid.speed.init(0.45f, 2.4f, 0.0f, 0.0f, 1.2f, 3.5f, 0.001f, 0.0f, 0.58f, 1.2f, 1.8f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
 
     gimbal.pc_small_pitch_pid.angle.init(10.85f, 0.0f, 0.05f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
@@ -1296,12 +1296,12 @@ void gimbal_motor_control_test(void)
         gimbal.pc_small_yaw_pid.angle.set_target(basic_math_constrain(gimbal.target_val.small_yaw_angle, SMALL_YAW_MIN_OFFSET, SMALL_YAW_MAX_OFFSET));
         gimbal.pc_small_yaw_pid.angle.set_now(gimbal.now_val.small_yaw_angle);
         gimbal.pc_small_yaw_pid.angle.pid_calculate_callback();
-        gimbal.target_val.small_yaw_omega = gimbal.pc_small_yaw_pid.angle.get_out();
+        gimbal.target_val.small_yaw_omega = gimbal.pc_small_yaw_pid.angle.get_out() + gimbal.small_yaw_plan_output.rate_rad_s * 0.62f;
 
         gimbal.pc_small_yaw_pid.speed.set_target(gimbal.target_val.small_yaw_omega);
         gimbal.pc_small_yaw_pid.speed.set_now(gimbal.now_val.small_yaw_omega);
         gimbal.pc_small_yaw_pid.speed.pid_calculate_callback();
-        gimbal.small_yaw_motor.set_control_torque(basic_math_constrain(gimbal.pc_small_yaw_pid.speed.get_out(), -SMALL_YAW_TORQUE_LIMIT, SMALL_YAW_TORQUE_LIMIT));
+        gimbal.small_yaw_motor.set_control_torque(basic_math_constrain(gimbal.pc_small_yaw_pid.speed.get_out() + gimbal.small_yaw_toqure_comp, -SMALL_YAW_TORQUE_LIMIT, SMALL_YAW_TORQUE_LIMIT));
 
         // 小pitch: 角度环跟踪规划输出(与前馈同源), 力矩 = 速度环 + 总前馈
         gimbal.pc_small_pitch_pid.angle.set_target(gimbal.target_val.small_pitch_angle);

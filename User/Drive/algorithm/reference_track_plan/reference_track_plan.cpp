@@ -285,7 +285,9 @@ bool reference_track_plan_update(reference_track_plan_t *plan, float target_angl
     {
         if (limited)
         {
-            if (plan->gain_scale > c->sat_gain_scale) plan->gain_scale = c->sat_gain_scale; // 限幅时立即降低位置增益
+            // Slew the gain: an abrupt drop changes desired_rate while the axis is moving.
+            plan->gain_scale -= c->sat_release_per_s * dt;
+            if (plan->gain_scale < c->sat_gain_scale) plan->gain_scale = c->sat_gain_scale;
             if (plan->sat_frames < 0xFFFFFFFFu) plan->sat_frames++;
         }
         else
