@@ -266,6 +266,9 @@ typedef struct
     reference_value_t small_pitch_plan_output; // 小pitch轨迹规划器输出
 
 /*------------------------------------前馈补偿量---------------------------------------------*/
+    float small_yaw_dynamic_comp;       // 小yaw轴前馈动态补偿量(J*acc + B*rate + 库仑摩擦), 单位: N·m
+    float small_yaw_toqure_comp;        // 小yaw轴前馈总补偿量, 单位: N·m
+
     float small_pit_gravity_comp;       // 小pitch轴前馈重力补偿量, 单位: N·m
     float small_pit_dynamic_comp;       // 小pitch轴前馈动态补偿量(J*acc + B*rate + 库仑摩擦), 单位: N·m
     float small_pit_toqure_comp;        // 小pitch轴前馈总补偿量(动态补偿 + 重力补偿), 单位: N·m

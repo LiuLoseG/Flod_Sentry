@@ -65,6 +65,20 @@ feedforward_param_t pitch_ff = {
 };
 
 /**
+ * @brief 小yaw轴系统辨识前馈参数
+ * @note 小yaw辨识模型不包含重力项；完成辨识后将 J/B/Fc 填入本表。
+ */
+feedforward_param_t small_yaw_ff = {
+    0.00861408561f,                     // j: RLS 在线辨识值
+    0.0385769084f,                       // b: RLS 在线辨识值
+    0.23977007f,                         // fc: RLS 在线辨识值
+    0.08f,                         // eps: 与辨识配置 friction_velocity_rad_s 保持一致
+    0.0f,                          // grav_sin: 小yaw无重力项
+    0.0f,                          // grav_cos: 小yaw无重力项
+    0.65f                           // dynamic_max: 动态前馈限幅，须小于 SMALL_YAW_TORQUE_LIMIT
+};
+
+/**
  * @brief 大pitch轴重力前馈参数
  * @note 仅使用重力项, 默认全 0
  *       辨识完成前前馈恒为 0, 不改变任何现有控制行为。
@@ -393,7 +407,7 @@ void gimbal_init(void)
 
     // 初始化云台自瞄PID控制器
     gimbal.pc_small_yaw_pid.angle.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
-    gimbal.pc_small_yaw_pid.speed.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.pc_small_yaw_pid.speed.init(0.45f, 2.4f, 0.0f, 0.0f, 1.2f, 3.5f, 0.001f, 0.0f, 0.58f, 1.2f, 1.8f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
 
     gimbal.pc_small_pitch_pid.angle.init(10.85f, 0.0f, 0.05f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
     // gimbal.pc_small_pitch_pid.speed.init(0.65f, 0.23f, 0.0f, 0.0f, 0.65f, 10.0f, 0.001f, 0.0f, 0.45f, 0.82f, 0.86f, PID_D_First_ENABLE, PID_Anti_Windup_DISABLE);
@@ -442,7 +456,7 @@ void gimbal_init(void)
     gimbal.last_mode = Gimbal_Auto_Disable;
 
     // 波形发送器(调试用), 初始化后必须使能, 否则 calc() 直接返回 offset 恒定值
-    wave_generator_init(&test_wave, WAVE_SINE, 0.35f, 0.95f, 0.0f);
+    wave_generator_init(&test_wave, WAVE_SINE, 0.35f, 0.3f, 0.0f);
     wave_generator_enable(&test_wave);
 }
 
@@ -911,6 +925,7 @@ void gimbal_control_decision(void)
 void gimbal_update_feedforward(void)
 {
     feedforward_output_t pitch_ff_out = {};
+    feedforward_output_t small_yaw_ff_out = {};
 
     // 首次调用规划标记
     const bool first_call = (gimbal.plan_time.small_yaw_us == 0u) || (gimbal.plan_time.small_pitch_us == 0u);
@@ -931,6 +946,9 @@ void gimbal_update_feedforward(void)
         gimbal.small_pit_gravity_comp = pitch_ff_out.gravity_nm;
         gimbal.small_pit_dynamic_comp = pitch_ff_out.dynamic_nm;
         gimbal.small_pit_toqure_comp  = pitch_ff_out.total_nm;
+        feedforward_calculate(&small_yaw_ff, gimbal.now_val.small_yaw_angle, 0.0f, 0.0f, SMALL_YAW_TORQUE_LIMIT, &small_yaw_ff_out);
+        gimbal.small_yaw_dynamic_comp = small_yaw_ff_out.dynamic_nm;
+        gimbal.small_yaw_toqure_comp = small_yaw_ff_out.total_nm;
         gimbal.plan_dt_meas_s   = 0.0f;
         gimbal.plan_skip_frames = 0;
         return;
@@ -951,6 +969,9 @@ void gimbal_update_feedforward(void)
         gimbal.small_pit_gravity_comp = pitch_ff_out.gravity_nm;
         gimbal.small_pit_dynamic_comp = pitch_ff_out.dynamic_nm;
         gimbal.small_pit_toqure_comp  = pitch_ff_out.total_nm;
+        feedforward_calculate(&small_yaw_ff, gimbal.now_val.small_yaw_angle, 0.0f, 0.0f, SMALL_YAW_TORQUE_LIMIT, &small_yaw_ff_out);
+        gimbal.small_yaw_dynamic_comp = small_yaw_ff_out.dynamic_nm;
+        gimbal.small_yaw_toqure_comp = small_yaw_ff_out.total_nm;
         return;
     }
 
@@ -990,6 +1011,13 @@ void gimbal_update_feedforward(void)
     gimbal.small_pit_gravity_comp = pitch_ff_out.gravity_nm;
     gimbal.small_pit_dynamic_comp = pitch_ff_out.dynamic_nm;
     gimbal.small_pit_toqure_comp  = pitch_ff_out.total_nm;
+
+    // 小yaw轴前馈: 小yaw系统辨识模型仅包含动态项
+    feedforward_calculate(&small_yaw_ff, gimbal.now_val.small_yaw_angle,
+                          gimbal.plan_fil_val.yaw_omega, gimbal.plan_fil_val.yaw_torque,
+                          SMALL_YAW_TORQUE_LIMIT, &small_yaw_ff_out);
+    gimbal.small_yaw_dynamic_comp = small_yaw_ff_out.dynamic_nm;
+    gimbal.small_yaw_toqure_comp = small_yaw_ff_out.total_nm;
 }
 
 /**
@@ -1031,7 +1059,7 @@ void gimbal_motor_calculate(void)
         gimbal.rc_small_yaw_pid.speed.set_target(gimbal.target_val.small_yaw_omega);
         gimbal.rc_small_yaw_pid.speed.set_now(gimbal.now_val.small_yaw_omega);
         gimbal.rc_small_yaw_pid.speed.pid_calculate_callback();
-        gimbal.small_yaw_motor.set_control_torque(gimbal.rc_small_yaw_pid.speed.get_out());
+        gimbal.small_yaw_motor.set_control_torque(basic_math_constrain(gimbal.rc_small_yaw_pid.speed.get_out(), -SMALL_YAW_TORQUE_LIMIT, SMALL_YAW_TORQUE_LIMIT));
 
         // 小pitch: 角度环跟踪规划输出(与前馈同源), 力矩 = 速度环 + 总前馈
         gimbal.rc_small_pitch_pid.angle.set_target(gimbal.target_val.small_pitch_angle);
@@ -1078,7 +1106,7 @@ void gimbal_motor_calculate(void)
         gimbal.pc_small_yaw_pid.speed.set_target(gimbal.target_val.small_yaw_omega);
         gimbal.pc_small_yaw_pid.speed.set_now(gimbal.now_val.small_yaw_omega);
         gimbal.pc_small_yaw_pid.speed.pid_calculate_callback();
-        gimbal.small_yaw_motor.set_control_torque(gimbal.pc_small_yaw_pid.speed.get_out());
+        gimbal.small_yaw_motor.set_control_torque(basic_math_constrain(gimbal.pc_small_yaw_pid.speed.get_out(), -SMALL_YAW_TORQUE_LIMIT, SMALL_YAW_TORQUE_LIMIT));
 
         // 小pitch: 角度环跟踪规划输出(与前馈同源), 力矩 = 速度环 + 总前馈
         gimbal.pc_small_pitch_pid.angle.set_target(gimbal.target_val.small_pitch_angle);
@@ -1139,7 +1167,7 @@ void gimbal_motor_calculate(void)
 /**
  * @brief 更新云台系统辨识参数
  */
-void gimbal_identification_update(void)
+void gimbal_joint_identification_update(void)
 {
     const uint32_t time_us = bsp_dwt_get_timeline_us();
     const bool ident_enable = gimbal.now_method != Gimbal_Method_Zero_Force;
@@ -1206,13 +1234,13 @@ void gimbal_motor_control_test(void)
     // const float target_val = basic_math_abs(wave_generator_get_value(&test_wave));
     const float now_small_yaw = gimbal.small_yaw_motor.get_total_angle() - SMALL_YAW_MOTOR_MID_ANGLE;
     // const float now_small_pitch = gimbal.small_pitch_motor.get_total_angle() - SMALL_PITCH_MOTOR_MID_ANGLE;
-    const float now_big_pitch = gimbal.big_pitch_motor.get_total_angle() - BIG_PITCH_START_ANGLE;
+    // const float now_big_pitch = gimbal.big_pitch_motor.get_total_angle() - BIG_PITCH_START_ANGLE;
 
     // 小yaw目标值设置
     if(now_small_yaw >= SMALL_YAW_MAX_OFFSET - 0.01f)
     {
         // gimbal.target_val.small_pitch_omega = -target_val;
-        gimbal.target_val.small_yaw_omega = -debug_data;
+        // gimbal.target_val.small_yaw_omega = -debug_data;
         // gimbal.target_val.small_pitch_omega = -debug_data;
         // gimbal.target_val.big_pitch_omega = -debug_data;
     }
@@ -1220,7 +1248,7 @@ void gimbal_motor_control_test(void)
     else if(now_small_yaw <= SMALL_YAW_MIN_OFFSET + 0.01f)
     {
         // gimbal.target_val.small_pitch_omega = target_val;
-        gimbal.target_val.small_yaw_omega = debug_data;
+        // gimbal.target_val.small_yaw_omega = debug_data;
         // gimbal.target_val.small_pitch_omega = debug_data;
         // gimbal.target_val.big_pitch_omega = debug_data;
     }
@@ -1240,6 +1268,8 @@ void gimbal_motor_control_test(void)
     {
         gimbal.target_val.big_pitch_angle = gimbal.now_val.big_pitch_angle;
     }
+
+    gimbal.target_val.small_yaw_angle = basic_math_constrain(wave_generator_get_value(&test_wave), SMALL_YAW_MIN_OFFSET, SMALL_YAW_MAX_OFFSET);
 
     gimbal.big_pit_ang_fil.set_now_input(gimbal.target_val.big_pitch_angle);
     gimbal.big_pit_ang_fil.low_calculate_callback();
@@ -1263,15 +1293,15 @@ void gimbal_motor_control_test(void)
     else if (gimbal.now_method == Gimbal_Method_Manual) // 直接调试pc模式的pid
     {
         // 小yaw
-        // gimbal.pc_small_yaw_pid.angle.set_target(gimbal.target_val.small_yaw_angle);
-        // gimbal.pc_small_yaw_pid.angle.set_now(gimbal.now_val.small_yaw_angle);
-        // gimbal.pc_small_yaw_pid.angle.pid_calculate_callback();
-        // gimbal.target_val.small_yaw_omega = gimbal.pc_small_yaw_pid.angle.get_out();
+        gimbal.pc_small_yaw_pid.angle.set_target(basic_math_constrain(gimbal.target_val.small_yaw_angle, SMALL_YAW_MIN_OFFSET, SMALL_YAW_MAX_OFFSET));
+        gimbal.pc_small_yaw_pid.angle.set_now(gimbal.now_val.small_yaw_angle);
+        gimbal.pc_small_yaw_pid.angle.pid_calculate_callback();
+        gimbal.target_val.small_yaw_omega = gimbal.pc_small_yaw_pid.angle.get_out();
 
         gimbal.pc_small_yaw_pid.speed.set_target(gimbal.target_val.small_yaw_omega);
         gimbal.pc_small_yaw_pid.speed.set_now(gimbal.now_val.small_yaw_omega);
         gimbal.pc_small_yaw_pid.speed.pid_calculate_callback();
-        gimbal.small_yaw_motor.set_control_torque(gimbal.pc_small_yaw_pid.speed.get_out());
+        gimbal.small_yaw_motor.set_control_torque(basic_math_constrain(gimbal.pc_small_yaw_pid.speed.get_out(), -SMALL_YAW_TORQUE_LIMIT, SMALL_YAW_TORQUE_LIMIT));
 
         // 小pitch: 角度环跟踪规划输出(与前馈同源), 力矩 = 速度环 + 总前馈
         gimbal.pc_small_pitch_pid.angle.set_target(gimbal.target_val.small_pitch_angle);
@@ -1351,10 +1381,10 @@ extern "C" void gimbal_task(void *argument)
         // gimbal_motor_calculate();
 
         // 电机辨识
-        // gimbal_identification_update();
+        gimbal_joint_identification_update();
 
         // 大pitch轴辨识(生成 big_pitch_ff 的参数来源)
-        gimbal_big_pitch_identification_update();
+        // gimbal_big_pitch_identification_update();
 
         // 调试程序
         gimbal_motor_control_test();
