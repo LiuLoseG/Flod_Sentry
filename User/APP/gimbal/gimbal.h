@@ -28,7 +28,6 @@
 #include "wave_generator.h"
 #include "feedforward.h"
 #include "gimbal_identification.h"
-#include "reference_track_plan.h"
 
 /**
  * @brief 云台模式枚举
@@ -223,12 +222,8 @@ typedef struct
     slope_class big_yaw_omega_slope; // 大yaw角速度斜坡规划器
 
 /*------------------------------------控制器低通滤波器---------------------------------------------*/
-    // 规划器低通滤波器
-    gimbal_input_control_t plan_fil_val;
     // 云台自瞄低通滤波器对象
     gimbal_low_pass_filter_t pc_filter;  
-    // 云台自瞄轨迹规划器低通滤波器对象
-    gimbal_low_pass_filter_t plan_filter;
     // 底盘角速度补偿前馈低通滤波器对象
     low_pass_filter_class chassis_angular_filter;
     // 大pitch目标值低通滤波器(限制角度变化量)
@@ -255,15 +250,6 @@ typedef struct
     gimbal_identification_config_t ident_big_pitch_config;
     gimbal_identification_sample_t ident_big_pitch_sample;
     gimbal_identification_output_t ident_big_pitch_output;
-
-/*--------------------------------------轨迹规划器---------------------------------------------*/
-    reference_config_t small_yaw_plan_config; // 小yaw轨迹规划器配置
-    reference_track_plan_t small_yaw_plan; // 小yaw轨迹规划器
-    reference_value_t small_yaw_plan_output; // 小yaw轨迹规划器输出
-
-    reference_config_t small_pitch_plan_config; // 小pitch轨迹规划器配置
-    reference_track_plan_t small_pitch_plan; // 小pitch轨迹规划器
-    reference_value_t small_pitch_plan_output; // 小pitch轨迹规划器输出
 
 /*------------------------------------前馈补偿量---------------------------------------------*/
     float small_yaw_dynamic_comp;       // 小yaw轴前馈动态补偿量(J*acc + B*rate + 库仑摩擦), 单位: N·m
@@ -298,9 +284,6 @@ typedef struct
 
     gimbal_feedback_timestamp_t feedback_timestamp; // 云台电机反馈时间(s)
     gimbal_timestamp_us_t timestamp; // 云台电机反馈时间戳(us)
-    gimbal_timestamp_us_t plan_time; // 云台轨迹规划时间戳(us)
-    float plan_dt_meas_s; // 规划器上一拍实测周期(s), 仅用于监测
-    uint32_t plan_skip_frames; // 规划器因调度异常跳过的拍数
 /*------------------------------------云台控制方式---------------------------------------------*/
     gimbal_method_e now_method; // 云台控制方式
     gimbal_method_e last_method; // 云台上一次控制方式, 用于检测模式切换

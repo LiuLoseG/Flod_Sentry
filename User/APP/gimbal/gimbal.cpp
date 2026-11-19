@@ -18,7 +18,6 @@
 #include "dsp/fast_math_functions.h"
 #include "gimbal_identification.h"
 #include "pid.h"
-#include "reference_track_plan.h"
 #include "robot_def.h"
 #include "safe_daemon_process.h"
 #include "wave_generator.h"
@@ -254,61 +253,6 @@ static void big_pitch_identification_config_init(gimbal_identification_config_t 
     config->rls.dt_max_s = 0.1f;
 }
 
-/*------------------------------------云台控制器轨迹规划函数-------------------------------------------*/
-
-/**
- * @brief 云台小yaw轨迹规划器配置初始化函数
- */
-static void small_yaw_track_plan_config_init(reference_config_t *config)
-{
-    if (config == NULL) return;
-    memset(config, 0, sizeof(*config));
-
-    config->max_rate_rad_s = 6.5f;           // 最大角速度，单位：rad/s
-    config->max_accel_rad_s2 = 55.0f;        // 最大角加速度，单位：rad/s^2 (不要降低: 它同时决定跟随的加速度能力, 降低会加大跟踪滞后)
-    config->max_jerk_rad_s3 = 5000.0f;       // 最大角加加速度，单位：rad/s^3 (≈透明, 仅挡异常尖峰; 太小会削掉正常拐点)
-    config->position_gain_per_s = 35.0f;      // 三阶跟踪带宽，单位：1/秒
-    config->rate_servo_gain_per_s = 450.0f;   // 速率环比例增益，单位：1/秒 
-
-    config->dt_min_s = 0.0002f;               // 最小采样时间，单位：秒
-    config->dt_max_s = 0.02f;                 // 最大采样时间，单位：秒 (覆盖实测5~12ms调度抖动，仍拒绝长时间抢占)
-
-    config->wrap_angle = true;                // 是否进行角度环绕处理(最短角规划)
-    config->accel_sat_guard_enable = true;    // 轨迹规划器饱和守护函数
-
-    config->sat_gain_scale = 0.5f;           // 饱和时位置增益缩放系数, 0 < scale < 1 (建议 0.4~0.6)
-    config->sat_release_per_s = 2.0f;        // 饱和时增益降低/解除后恢复的最大速率, 单位 1/s
-    config->sat_hold_time_s = 0.3f;          // 增益降到下限后位置项暂挂 0.3s, 目标超能力时不做饱和追踪
-    config->estimate_target_rate = true;
-}
-
-/**
- * @brief 云台小pitch轨迹规划器配置初始化函数
- */
-static void small_pitch_track_plan_config_init(reference_config_t *config)
-{
-    if (config == NULL) return;
-    memset(config, 0, sizeof(*config));
-
-    config->max_rate_rad_s = 5.0f;           // 最大角速度，单位：rad/s
-    config->max_accel_rad_s2 = 58.0f;        // 最大角加速度，单位：rad/s^2 (不要降低: 它同时决定跟随的加速度能力, 降低会加大跟踪滞后)
-    config->max_jerk_rad_s3 = 4500.0f;       // 最大角加加速度，单位：rad/s^3 (≈透明, 仅挡异常尖峰; 太小会削掉正常拐点)
-    config->position_gain_per_s = 35.0f;      // 位置比例增益，单位：1/秒 (P滞后≈v/Kp)
-    config->rate_servo_gain_per_s = 450.0f;   // 速率环比例增益，单位：1/秒 (wn=13.8Hz, zeta=0.80)
-
-    config->dt_min_s = 0.0002f;               // 最小采样时间，单位：秒
-                                             // 只作为"不可能为真"的健全性下界, 见 small_yaw 配置处说明
-    config->dt_max_s = 0.02f;                 // 最大采样时间，单位：秒 (覆盖实测5~12ms调度抖动)
-
-    config->wrap_angle = false;                // 是否进行角度环绕处理(最短角规划)
-    config->accel_sat_guard_enable = true;    // 轨迹规划器饱和守护函数
-
-    config->sat_gain_scale = 0.5f;           // 饱和时位置增益缩放系数, 0 < scale < 1 (0.4~0.6)
-    config->sat_release_per_s = 2.0f;        // 饱和时增益降低/解除后恢复的最大速率, 单位 1/s (1~3)
-    config->sat_hold_time_s = 0.3f;          // 增益降到下限后位置项暂挂 0.3s, 目标超能力时不做饱和追踪
-    config->estimate_target_rate = true;
-}
-
 /**
  * @brief 填充云台系统辨识样本
  */
@@ -375,29 +319,12 @@ void gimbal_init(void)
     gimbal.observate_filter.big_yaw_omega.init(45.0f, 0.001f);
     gimbal.observate_filter.big_pit_omega.init(45.0f, 0.001f);
 
-    // 规划器滤波器
-    gimbal.plan_filter.yaw_angle.init(100, 0.001f);
-    // 规划器已限制 jerk；提高前馈滤波截止频率，避免再次引入约 11 ms 相位滞后。
-    gimbal.plan_filter.yaw_omega.init(30, 0.001f);
-    gimbal.plan_filter.yaw_torque.init(30, 0.001f);
-
-    gimbal.plan_filter.pitch_angle.init(100, 0.001f);
-    gimbal.plan_filter.pitch_omega.init(30, 0.001f);
-    gimbal.plan_filter.pitch_torque.init(30, 0.001f);
-
-    // 大pitch角度目标值滤波规划器
+    // 大pitch角度目标值低通滤波器
     gimbal.big_pit_ang_fil.init(0.82f, 0.001f);
 
-    // 初始化云台轨迹规划器
-    small_yaw_track_plan_config_init(&gimbal.small_yaw_plan_config);
-    reference_track_plan_init(&gimbal.small_yaw_plan, &gimbal.small_yaw_plan_config, 0.0f);
-
-    small_pitch_track_plan_config_init(&gimbal.small_pitch_plan_config);
-    reference_track_plan_init(&gimbal.small_pitch_plan, &gimbal.small_pitch_plan_config, 0.0f);
-
     // 初始化遥控器PID控制器
-    gimbal.rc_small_yaw_pid.angle.init(12.5f, 0.0f, 0.54f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
-    gimbal.rc_small_yaw_pid.speed.init(0.72f, 0.25f, 0.0f, 0.0f, 0.85f, 3.5f, 0.001f, 0.0101f, 0.12f, 0.35f, 0.45f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.rc_small_yaw_pid.angle.init(12.5f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.rc_small_yaw_pid.speed.init(0.68f, 0.0f, 0.0f, 0.0f, 0.85f, 3.5f, 0.001f, 0.0101f, 0.12f, 0.35f, 0.45f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
 
     gimbal.rc_small_pitch_pid.angle.init(12.85f, 0.0f, 0.05f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
     gimbal.rc_small_pitch_pid.speed.init(0.52f, 0.0f, 0.0f, 0.0f, 0.65f, 10.0f, 0.001f, 0.0f, 0.45f, 0.82f, 0.88f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
@@ -728,18 +655,21 @@ void gimbal_control_decision(void)
                 gimbal.target_val.big_yaw_angle = basic_math_loop_constrain(gimbal.target_val.big_yaw_angle - gimbal.now_val.big_yaw_angle + yaw_angle_increment, -PI, PI) + gimbal.now_val.big_yaw_angle;
             }
 
-            // 大pitch
-            if (gimbal.target_val.big_pitch_status == Gimbal_Big_Pitch_Up)
+            if(gimbal.target_val.big_pitch_status == Gimbal_Big_Pitch_Down)
             {
-                gimbal.target_val.big_pitch_angle = BIG_PITCH_MOTOR_TAG_ANGLE;
+                gimbal.target_val.small_yaw_angle = 0.0f;
+                gimbal.target_val.small_pitch_angle = 0.0f;
             }
-            else if (gimbal.target_val.big_pitch_status == Gimbal_Big_Pitch_Down)
+
+            // 大pitch
+            if ((gimbal.target_val.big_pitch_status == Gimbal_Big_Pitch_Down) && (basic_math_abs(gimbal.now_val.small_yaw_angle) < SMALL_YAW_DOWN_MAX_ANGLE) && (basic_math_abs(gimbal.now_val.small_pitch_angle) < 0.03f))
             {
                 gimbal.target_val.big_pitch_angle = BIG_PITCH_START_ANGLE;
             }
-            else
+
+            else if (gimbal.target_val.big_pitch_status == Gimbal_Big_Pitch_Up)
             {
-                gimbal.target_val.big_pitch_angle = gimbal.now_val.big_pitch_angle;
+                gimbal.target_val.big_pitch_angle = BIG_PITCH_MOTOR_TAG_ANGLE;
             }
         }
     }
@@ -921,116 +851,28 @@ void gimbal_control_decision(void)
 
 /**
  * @brief 更新云台前馈控制量
- * @note 调度异常时整拍跳过；规划器使用实际经过的时间推进参考轨迹。
+ * @note 轨迹规划器已移除, 前馈用的角速度/角加速度暂按 0 计算,
+ *       因此当前只输出重力补偿项, 动态项(J*acc + B*rate + 库仑摩擦)恒为 0。
  */
 void gimbal_update_feedforward(void)
 {
     feedforward_output_t pitch_ff_out = {};
     feedforward_output_t small_yaw_ff_out = {};
 
-    // 首次调用规划标记
-    const bool first_call = (gimbal.plan_time.small_yaw_us == 0u) ||
-        (gimbal.plan_time.small_pitch_us == 0u);
-
     // 未收到反馈时 get_total_angle() 为默认零值，减去机械零点后不是有效姿态。
-    if (first_call && gimbal.timestamp.small_yaw_us == 0u)
+    if (gimbal.timestamp.small_yaw_us == 0u || gimbal.timestamp.small_pitch_us == 0u)
     {
         return;
     }
 
-    // 实测周期(秒): 用于调度异常判定, 并经规划器内部低通后推进参考轨迹
-    const float meas_yaw_s   = bsp_dwt_get_deltat32(&gimbal.plan_time.small_yaw_us);
-    const float meas_pitch_s = bsp_dwt_get_deltat32(&gimbal.plan_time.small_pitch_us);
-
-    // 首次调用时没有上一拍, 先把规划器对齐到当前角度, 下一拍再开始真正规划
-    if (first_call)
-    {
-        reference_track_plan_reset(&gimbal.small_yaw_plan, gimbal.now_val.small_yaw_angle);
-        reference_track_plan_reset(&gimbal.small_pitch_plan, gimbal.now_val.small_pitch_angle);
-        // 规划输出同步对齐, 否则以规划角作角度环给定时会从 0 跳变
-        gimbal.small_yaw_plan_output   = gimbal.small_yaw_plan.value;
-        gimbal.small_pitch_plan_output = gimbal.small_pitch_plan.value;
-        // 规划前馈滤波器也必须从同一静止状态起步，不能从全局零值渐渐爬升。
-        gimbal.plan_filter.yaw_omega.reset(0.0f);
-        gimbal.plan_filter.yaw_torque.reset(0.0f);
-        gimbal.plan_filter.pitch_omega.reset(0.0f);
-        gimbal.plan_filter.pitch_torque.reset(0.0f);
-        feedforward_calculate(&pitch_ff, gimbal.now_val.small_pitch_angle, 0.0f, 0.0f, SMALL_PITCH_TORQUE_LIMIT, &pitch_ff_out);
-        gimbal.small_pit_gravity_comp = pitch_ff_out.gravity_nm;
-        gimbal.small_pit_dynamic_comp = pitch_ff_out.dynamic_nm;
-        gimbal.small_pit_toqure_comp  = pitch_ff_out.total_nm;
-        feedforward_calculate(&small_yaw_ff, gimbal.now_val.small_yaw_angle, 0.0f, 0.0f, SMALL_YAW_TORQUE_LIMIT, &small_yaw_ff_out);
-        gimbal.small_yaw_dynamic_comp = small_yaw_ff_out.dynamic_nm;
-        gimbal.small_yaw_toqure_comp = small_yaw_ff_out.total_nm;
-        gimbal.plan_dt_meas_s   = 0.0f;
-        gimbal.plan_skip_frames = 0;
-        return;
-    }
-
-    const float meas_s = 0.5f * (meas_yaw_s + meas_pitch_s);
-    gimbal.plan_dt_meas_s = meas_s;
-
-    // 调度异常(被高优先级任务长时间抢占 / 同一毫秒内重入)时整拍跳过, 而不是硬塞一个 1ms:
-    // 硬塞会让规划器时间基与真实时间脱节, 反而在恢复的那一拍引入跳变
-    if (!isfinite(meas_s) ||
-        meas_s <= gimbal.small_pitch_plan_config.dt_min_s ||
-        meas_s >= gimbal.small_pitch_plan_config.dt_max_s)
-    {
-        if (gimbal.plan_skip_frames < 0xFFFFFFFFu) gimbal.plan_skip_frames++;
-        // 本拍参考没有推进, 动态项沿用上一拍会给出与实际运动不符的力矩
-        feedforward_calculate(&pitch_ff, gimbal.now_val.small_pitch_angle, 0.0f, 0.0f, SMALL_PITCH_TORQUE_LIMIT, &pitch_ff_out);
-        gimbal.small_pit_gravity_comp = pitch_ff_out.gravity_nm;
-        gimbal.small_pit_dynamic_comp = pitch_ff_out.dynamic_nm;
-        gimbal.small_pit_toqure_comp  = pitch_ff_out.total_nm;
-        feedforward_calculate(&small_yaw_ff, gimbal.now_val.small_yaw_angle, 0.0f, 0.0f, SMALL_YAW_TORQUE_LIMIT, &small_yaw_ff_out);
-        gimbal.small_yaw_dynamic_comp = small_yaw_ff_out.dynamic_nm;
-        gimbal.small_yaw_toqure_comp = small_yaw_ff_out.total_nm;
-        return;
-    }
-
-    // 添加滤波处理算法
-    gimbal.plan_filter.yaw_angle.set_now_input(gimbal.target_val.small_yaw_angle);
-    gimbal.plan_filter.yaw_angle.low_calculate_callback();
-    gimbal.plan_filter.pitch_angle.set_now_input(gimbal.target_val.small_pitch_angle);
-    gimbal.plan_filter.pitch_angle.low_calculate_callback();
-
-    gimbal.plan_fil_val.yaw_angle = gimbal.plan_filter.yaw_angle.get_out();
-    gimbal.plan_fil_val.pitch_angle = gimbal.plan_filter.pitch_angle.get_out();
-
-    // 更新数据(规划器使用真实经过时间推进参考轨迹)
-    const bool yaw_plan_ok = reference_track_plan_update(&gimbal.small_yaw_plan, gimbal.target_val.small_yaw_angle, 0.0f, 0.0f, meas_s, &gimbal.small_yaw_plan_output, false, false);
-    const bool pitch_plan_ok = reference_track_plan_update(&gimbal.small_pitch_plan, gimbal.target_val.small_pitch_angle, 0.0f, 0.0f, meas_s, &gimbal.small_pitch_plan_output, false, false);
-
-    // 更新前馈控制量
-    // 规划器拒绝本拍时输出仍是上一拍的值, 不能当作本拍的速度/加速度前馈, 否则会把
-    // 已经过时的动态项继续加在力矩上; 此时只保留重力项(由下面的 feedforward 用 0 速度/加速度算出)。
-    gimbal.plan_filter.yaw_omega.set_now_input(yaw_plan_ok ? gimbal.small_yaw_plan_output.rate_rad_s : 0.0f);
-    gimbal.plan_filter.yaw_omega.low_calculate_callback();
-    gimbal.plan_filter.yaw_torque.set_now_input(yaw_plan_ok ? gimbal.small_yaw_plan_output.accel_rad_s2 : 0.0f);
-    gimbal.plan_filter.yaw_torque.low_calculate_callback();
-    gimbal.plan_filter.pitch_omega.set_now_input(pitch_plan_ok ? gimbal.small_pitch_plan_output.rate_rad_s : 0.0f);
-    gimbal.plan_filter.pitch_omega.low_calculate_callback();
-    gimbal.plan_filter.pitch_torque.set_now_input(pitch_plan_ok ? gimbal.small_pitch_plan_output.accel_rad_s2 : 0.0f);
-    gimbal.plan_filter.pitch_torque.low_calculate_callback();
-
-    gimbal.plan_fil_val.yaw_omega = gimbal.plan_filter.yaw_omega.get_out();
-    gimbal.plan_fil_val.yaw_torque = gimbal.plan_filter.yaw_torque.get_out();
-    gimbal.plan_fil_val.pitch_omega = gimbal.plan_filter.pitch_omega.get_out();
-    gimbal.plan_fil_val.pitch_torque = gimbal.plan_filter.pitch_torque.get_out();
-
-    // 小pitch轴前馈: 动态项(惯量 + 阻尼 + 库仑摩擦) + 重力项, 与辨识模型同构
-    const float rate  = gimbal.plan_fil_val.pitch_omega;     // 规划角速度(已低通)
-    const float accel = gimbal.plan_fil_val.pitch_torque;    // 规划角加速度(已低通)
-
-    feedforward_calculate(&pitch_ff, gimbal.now_val.small_pitch_angle, rate, accel, SMALL_PITCH_TORQUE_LIMIT, &pitch_ff_out);
+    // 小pitch轴前馈: 角速度、角加速度暂置 0
+    feedforward_calculate(&pitch_ff, gimbal.now_val.small_pitch_angle, 0.0f, 0.0f, SMALL_PITCH_TORQUE_LIMIT, &pitch_ff_out);
     gimbal.small_pit_gravity_comp = pitch_ff_out.gravity_nm;
     gimbal.small_pit_dynamic_comp = pitch_ff_out.dynamic_nm;
     gimbal.small_pit_toqure_comp  = pitch_ff_out.total_nm;
 
-    // 小yaw轴前馈: 小yaw系统辨识模型仅包含动态项
-    feedforward_calculate(&small_yaw_ff, gimbal.now_val.small_yaw_angle,
-                          gimbal.plan_fil_val.yaw_omega, gimbal.plan_fil_val.yaw_torque,
-                          SMALL_YAW_TORQUE_LIMIT, &small_yaw_ff_out);
+    // 小yaw轴前馈: 小yaw模型不含重力项, 角速度、角加速度置 0 后前馈恒为 0
+    feedforward_calculate(&small_yaw_ff, gimbal.now_val.small_yaw_angle, 0.0f, 0.0f, SMALL_YAW_TORQUE_LIMIT, &small_yaw_ff_out);
     gimbal.small_yaw_dynamic_comp = small_yaw_ff_out.dynamic_nm;
     gimbal.small_yaw_toqure_comp = small_yaw_ff_out.total_nm;
 }
@@ -1040,7 +882,7 @@ void gimbal_update_feedforward(void)
  */
 void gimbal_motor_calculate(void)
 {
-    // 前馈依赖本拍目标值, 且角度环给定量取自规划输出, 必须先算
+    // 前馈依赖本拍目标值, 必须先算
     gimbal_update_feedforward();
 
     if (gimbal.big_pitch_ready != gimbal.last_big_pitch_ready)
@@ -1070,7 +912,6 @@ void gimbal_motor_calculate(void)
         gimbal.rc_small_yaw_pid.angle.set_now(gimbal.now_val.small_yaw_angle);
         gimbal.rc_small_yaw_pid.angle.pid_calculate_callback();
         gimbal.target_val.small_yaw_omega = gimbal.rc_small_yaw_pid.angle.get_out();
-        // gimbal.target_val.small_yaw_omega = gimbal.rc_small_yaw_pid.angle.get_out() + gimbal.small_yaw_plan_output.rate_rad_s * 0.65f;
 
         gimbal.rc_small_yaw_pid.speed.set_target(gimbal.target_val.small_yaw_omega);
         gimbal.rc_small_yaw_pid.speed.set_now(gimbal.now_val.small_yaw_omega);
@@ -1078,7 +919,7 @@ void gimbal_motor_calculate(void)
         gimbal.small_yaw_motor.set_control_torque(basic_math_constrain(gimbal.rc_small_yaw_pid.speed.get_out(), -SMALL_YAW_TORQUE_LIMIT, SMALL_YAW_TORQUE_LIMIT));
         // gimbal.small_yaw_motor.set_control_torque(basic_math_constrain(gimbal.rc_small_yaw_pid.speed.get_out() + gimbal.small_yaw_toqure_comp, -SMALL_YAW_TORQUE_LIMIT, SMALL_YAW_TORQUE_LIMIT));
 
-        // 小pitch: 角度环跟踪规划输出(与前馈同源), 力矩 = 速度环 + 总前馈
+        // 小pitch: 力矩 = 速度环 + 总前馈
         gimbal.rc_small_pitch_pid.angle.set_target(gimbal.target_val.small_pitch_angle);
         gimbal.rc_small_pitch_pid.angle.set_now(gimbal.now_val.small_pitch_angle);
         gimbal.rc_small_pitch_pid.angle.pid_calculate_callback();
@@ -1119,14 +960,13 @@ void gimbal_motor_calculate(void)
         gimbal.pc_small_yaw_pid.angle.set_now(gimbal.now_val.small_yaw_angle);
         gimbal.pc_small_yaw_pid.angle.pid_calculate_callback();
         gimbal.target_val.small_yaw_omega = gimbal.pc_small_yaw_pid.angle.get_out();
-        // gimbal.target_val.small_yaw_omega = gimbal.pc_small_yaw_pid.angle.get_out() + gimbal.small_yaw_plan_output.rate_rad_s * 0.65f;
 
         gimbal.pc_small_yaw_pid.speed.set_target(gimbal.target_val.small_yaw_omega);
         gimbal.pc_small_yaw_pid.speed.set_now(gimbal.now_val.small_yaw_omega);
         gimbal.pc_small_yaw_pid.speed.pid_calculate_callback();
         gimbal.small_yaw_motor.set_control_torque(basic_math_constrain(gimbal.pc_small_yaw_pid.speed.get_out() + gimbal.small_yaw_toqure_comp, -SMALL_YAW_TORQUE_LIMIT, SMALL_YAW_TORQUE_LIMIT));
 
-        // 小pitch: 角度环跟踪规划输出(与前馈同源), 力矩 = 速度环 + 总前馈
+        // 小pitch: 力矩 = 速度环 + 总前馈
         gimbal.pc_small_pitch_pid.angle.set_target(gimbal.target_val.small_pitch_angle);
         gimbal.pc_small_pitch_pid.angle.set_now(gimbal.now_val.small_pitch_angle);
         gimbal.pc_small_pitch_pid.angle.pid_calculate_callback();
@@ -1294,7 +1134,7 @@ void gimbal_motor_control_test(void)
     gimbal.big_pit_ang_fil.low_calculate_callback();
     // gimbal.target_val.small_pitch_angle = 0.0f;
 
-    // 轨迹规划 + 前馈(重力/动态补偿在函数内部算好)
+    // 前馈(重力补偿在函数内部算好)
     gimbal_update_feedforward();
 
     gimbal.big_pit_gravity_comp = -0.144609526 * arm_sin_f32(gimbal.now_val.big_pitch_angle) - 0.111498073 * arm_cos_f32(gimbal.now_val.big_pitch_angle);
@@ -1316,7 +1156,7 @@ void gimbal_motor_control_test(void)
         gimbal.pc_small_yaw_pid.angle.set_now(gimbal.now_val.small_yaw_angle);
         gimbal.pc_small_yaw_pid.angle.pid_calculate_callback();
         // gimbal.target_val.small_yaw_omega = gimbal.pc_small_yaw_pid.angle.get_out();
-        gimbal.target_val.small_yaw_omega = gimbal.pc_small_yaw_pid.angle.get_out() + gimbal.small_yaw_plan_output.rate_rad_s * 0.65f;
+        gimbal.target_val.small_yaw_omega = gimbal.pc_small_yaw_pid.angle.get_out();
 
         gimbal.pc_small_yaw_pid.speed.set_target(gimbal.target_val.small_yaw_omega);
         gimbal.pc_small_yaw_pid.speed.set_now(gimbal.now_val.small_yaw_omega);
@@ -1324,7 +1164,7 @@ void gimbal_motor_control_test(void)
         // gimbal.small_yaw_motor.set_control_torque(basic_math_constrain(gimbal.pc_small_yaw_pid.speed.get_out(), -SMALL_YAW_TORQUE_LIMIT, SMALL_YAW_TORQUE_LIMIT));
         gimbal.small_yaw_motor.set_control_torque(basic_math_constrain(gimbal.pc_small_yaw_pid.speed.get_out() + gimbal.small_yaw_toqure_comp, -SMALL_YAW_TORQUE_LIMIT, SMALL_YAW_TORQUE_LIMIT));
 
-        // 小pitch: 角度环跟踪规划输出(与前馈同源), 力矩 = 速度环 + 总前馈
+        // 小pitch: 力矩 = 速度环 + 总前馈
         gimbal.pc_small_pitch_pid.angle.set_target(gimbal.target_val.small_pitch_angle);
         gimbal.pc_small_pitch_pid.angle.set_now(gimbal.now_val.small_pitch_angle);
         gimbal.pc_small_pitch_pid.angle.pid_calculate_callback();

@@ -36,11 +36,12 @@
  * @param __i_variable_speed_b 变速积分误差阈值B
  * @param __i_separate_threshold 积分分离误差阈值
  * @param __d_first 是否开启微分先行
+ * @param __d_filter 微分滤波器使能
  * @param __anti_windup 抗积分饱和方案
  * @param __anti_windup_gain 反算增益Kb, 单位1/s, 仅BACK_CALC使用
  * @param __anti_windup_out_max 抗饱和跟踪上限, 仅用于抗饱和判定, 0为沿用out_max
  */
-void pid_class::init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f, const float &__i_out_max, const float &__out_max, const float &__d_t, const float &__dead_zone, const float &__i_variable_speed_a, const float &__i_variable_speed_b, const float &__i_separate_threshold, const pid_d_first_e &__d_first, const pid_anti_windup_e &__anti_windup, const float &__anti_windup_gain, const float &__anti_windup_out_max)
+void pid_class::init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f, const float &__i_out_max, const float &__out_max, const float &__d_t, const float &__dead_zone, const float &__i_variable_speed_a, const float &__i_variable_speed_b, const float &__i_separate_threshold, const pid_d_first_e &__d_first, const pid_anti_windup_e &__anti_windup, const pid_d_filter_e &__d_filter, const float &__anti_windup_gain, const float &__anti_windup_out_max)
 {
     k_p = __k_p;
     k_i = __k_i;
@@ -54,6 +55,7 @@ void pid_class::init(const float &__k_p, const float &__k_i, const float &__k_d,
     i_variable_speed_b = __i_variable_speed_b;
     i_separate_threshold = __i_separate_threshold;
     d_first = __d_first;
+    d_filter = __d_filter;
     anti_windup = __anti_windup;
     anti_windup_gain = __anti_windup_gain;
     anti_windup_out_max = __anti_windup_out_max;
@@ -170,17 +172,25 @@ void pid_class::pid_calculate_callback()
     // 记录积分值变化前的值, 供抗积分饱和回退
     const float integral_before = integral_error;
 
-    if (i_separate_threshold != 0.0f && term.abs_error >= i_separate_threshold)
+    // 积分分离判断, 仅在积分分离阈值不为0时生效, 且误差超出阈值时清空积分并暂停抗积分饱和, 回到阈值内重新开始积分
+    const bool integral_separated = (i_separate_threshold != 0.0f && term.abs_error >= i_separate_threshold);
+
+    if (integral_separated)
     {
         // 在积分分离区间上
         integral_error = 0.0f;
         integ_delta = 0.0f;
     }
-    else
+    else if (k_i != 0.0f)
     {
         // 未启用积分分离或误差位于允许积分区间
         integ_delta = term.speed_ratio * d_t * term.error;
         integral_error += integ_delta;
+    }
+    else
+    {
+        // k_i为0时无积分作用, 不累积, 避免启用积分瞬间输出跳变
+        integ_delta = 0.0f;
     }
 
     // 积分限幅并更新积分项输出
@@ -191,29 +201,49 @@ void pid_class::pid_calculate_callback()
     term.i_out = k_i * integral_error;
 
     // 记录限幅后的实际积分增量，供抗积分饱和回退
-    if (i_separate_threshold == 0.0f || term.abs_error < i_separate_threshold)
+    if (!integral_separated)
     {
         integ_delta = integral_error - integral_before;
     }
 
     // 计算d项
 
+    // 没有微分先行
     if (d_first == PID_D_First_DISABLE)
     {
-        // 没有微分先行
-        term.d_out = k_d * (term.error - pre_error) / d_t;
+        if(d_filter == PID_D_Filter_ENABLE)
+        {
+            float d_raw = (term.error - pre_error) / d_t;
+            float alpha_d = d_t * d_filter_n / (1.0f + d_t * d_filter_n); // 微分滤波器系数
+
+            d_filter_out = alpha_d * d_raw + (1.0f - alpha_d) * d_filter_out; // 微分滤波器输出
+            
+            term.d_out = k_d * d_filter_out;
+        }
+
+        else 
+        {
+            term.d_out = k_d * (term.error - pre_error) / d_t;
+        }
     }
     
     else
     {
-
         // 微分先行使能
-        float d_raw = -(now - pre_now) / d_t;
-        float alpha_d = d_t * d_filter_n / (1.0f + d_t * d_filter_n); // 微分滤波器系数
+        if(d_filter == PID_D_Filter_ENABLE)
+        {
+            float d_raw = -(now - pre_now) / d_t;
+            float alpha_d = d_t * d_filter_n / (1.0f + d_t * d_filter_n); // 微分滤波器系数
 
-        d_filter_out = alpha_d * d_raw + (1.0f - alpha_d) * d_filter_out; // 微分滤波器输出
-        
-        term.d_out = k_d * d_filter_out;
+            d_filter_out = alpha_d * d_raw + (1.0f - alpha_d) * d_filter_out; // 微分滤波器输出
+            
+            term.d_out = k_d * d_filter_out;
+        }
+
+        else 
+        {
+            term.d_out = -k_d * (now - pre_now) / d_t;
+        }
     }
 
     // 计算前馈
@@ -240,7 +270,8 @@ void pid_class::pid_calculate_callback()
         anti_windup_limit = basic_math_abs(anti_windup_out_max);
     }
 
-    if (anti_windup_limit != 0.0f && (out_unsaturated > anti_windup_limit || out_unsaturated < -anti_windup_limit)
+    // 积分分离期间积分已被强制清零, 抗饱和不得再写回, 否则积分分离失效
+    if (!integral_separated && anti_windup_limit != 0.0f && (out_unsaturated > anti_windup_limit || out_unsaturated < -anti_windup_limit)
         && anti_windup != PID_Anti_Windup_DISABLE && k_i != 0.0f)
     {
         // 跟踪输出与硬限幅输出分开，允许按下游限幅反馈积分。
@@ -274,6 +305,17 @@ void pid_class::pid_calculate_callback()
                 basic_math_constrain(&integral_error, -integral_limit, integral_limit);
             }
             term.i_out = k_i * integral_error;
+
+            // 反算改写了积分项, 同步本帧各项与本帧输出, 避免调试量互相矛盾
+            out_unsaturated = term.p_out + term.i_out + term.d_out + term.f_out;
+            if (out_limit != 0.0f)
+            {
+                out = basic_math_constrain(out_unsaturated, -out_limit, out_limit);
+            }
+            else
+            {
+                out = out_unsaturated;
+            }
         }
     }
 

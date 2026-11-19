@@ -36,7 +36,7 @@
 
 #define SMALL_YAW_MOTOR_MID_ANGLE -1.68656385f  // 小yaw电机中间位置角度 (单位: rad)     
 #define SMALL_YAW_MIN_OFFSET -0.32695707f       // 云台YAW轴限辐，-2.05352092 - SMALL_YAW_MOTOR_MID_ANGLE = -0.36695707 留0.04f的余量       
-#define SMALL_YAW_MAX_OFFSET 0.3757567f         // 云台YAW轴限辐，-1.27080715 - SMALL_YAW_MOTOR_MID_ANGLE = 0.4157567 留0.04f的余量  
+#define SMALL_YAW_MAX_OFFSET 0.50f         // 云台YAW轴限辐，-1.27080715 - SMALL_YAW_MOTOR_MID_ANGLE = 0.4157567 留0.04f的余量  
 
 #define SMALL_YAW_ANGLE_INCREMENT_RATION 0.0035f // 小yaw电机单次角度增量系数 (单位: rad/单位输入)
 

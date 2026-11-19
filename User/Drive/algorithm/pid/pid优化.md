@@ -771,7 +771,7 @@ if ($LASTEXITCODE -eq 0) { & .\build\tests\pid_tests.exe }
 7. **量化反馈本身不会自激；死区的代价是 1:1 的稳态偏移**
    1 LSB=0.5 mrad、`k_p=1, k_i=2` 的环在 20 s 后收敛到**静止点**（输出峰峰值 0），残差 = `dead_zone + 0.25 mrad`：`dz=0 → 0.000249`、`3 LSB → 0.001750`、`20 LSB → 0.010249`、`40 LSB → 0.020249`。死区应按**噪声峰峰值**设，而不是按编码器 LSB 设。
 8. **固件侧 `d_t` 是标称值，不是实测值**
-   云台任务用 `osDelay(1)` 轮询（见 [gimbal.cpp](../../../APP/gimbal/gimbal.cpp:1341)，tick=1 kHz），实际周期 = 1 tick + 本拍执行时间，恒 > 1 ms，且随负载抖动。若本拍耗时 100 µs，实际约 909 Hz，等效 `k_i` 偏低约 9%、`k_d` 偏高约 10%。所有 PID 都以 `d_t=0.001` 初始化，因此整定值与实测周期绑定。仓库里规划器已经在测 `plan_dt_meas_s`，PID 没有对应通道。
+   云台任务用 `osDelay(1)` 轮询（见 [gimbal.cpp](../../../APP/gimbal/gimbal.cpp:1341)，tick=1 kHz），实际周期 = 1 tick + 本拍执行时间，恒 > 1 ms，且随负载抖动。若本拍耗时 100 µs，实际约 909 Hz，等效 `k_i` 偏低约 9%、`k_d` 偏高约 10%。所有 PID 都以 `d_t=0.001` 初始化，因此整定值与实测周期绑定。PID 目前没有任何实测周期通道。
 
 ### 16.3 优化建议
 
@@ -814,7 +814,7 @@ if ($LASTEXITCODE -eq 0) { & .\build\tests\pid_tests.exe }
    }
    ```
 7. **给微分项加上限** `d_out_max`（0=不限），直接把 `term.d_out` 钳位；配合调用方做单点跳变剔除。这比调低 `d_filter_n` 更直接，也不会牺牲正常频段的阻尼。
-8. **补 `set_d_t()` 并用实测周期驱动**：用 `bsp_dwt` 计算上一拍周期（与 `plan_dt_meas_s` 同源），或把 `gimbal_motor_calculate()` 放进固定频率定时器回调。至少增加：
+8. **补 `set_d_t()` 并用实测周期驱动**：用 `bsp_dwt` 计算上一拍周期，或把 `gimbal_motor_calculate()` 放进固定频率定时器回调。至少增加：
    ```cpp
    inline void set_d_t(const float &__d_t);      // d_t > 0
    inline void set_dead_zone(const float &__dz); // >= 0
