@@ -122,7 +122,7 @@ typedef struct
 /*--------------------------电机对象创建--------------------------------*/
     dji_c620_motor_class fric_r_motor;      // 右摩擦轮电机
     dji_c620_motor_class fric_l_motor;      // 左摩擦轮电机
-    dji_c610_motor_class trigger_motor;     // 拨盘电机
+    dji_c620_motor_class trigger_motor;     // 拨盘电机
 
 /*--------------------------控制模式--------------------------------*/
     shoot_method_e now_method;  // 当前控制模式

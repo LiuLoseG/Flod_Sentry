@@ -55,9 +55,9 @@ typedef enum
  */
 typedef enum
 {
-    Gimbal_Big_Pitch_Down = 0,        // 大pitch电机位于下方
-    Gimbal_Big_Pitch_Progress = 1,    // 大pitch电机正在运动
-    Gimbal_Big_Pitch_Up = 2,          // 大pitch电机位于上方
+    Gimbal_Big_Pitch_Down = 1,        // 大pitch电机位于下方
+    Gimbal_Big_Pitch_Progress = 2,    // 大pitch电机正在运动
+    Gimbal_Big_Pitch_Up = 3,          // 大pitch电机位于上方
 } gimbal_big_pitch_status_e;
 
 /**

@@ -40,7 +40,7 @@
 
 #define SMALL_YAW_ANGLE_INCREMENT_RATION 0.0035f // 小yaw电机单次角度增量系数 (单位: rad/单位输入)
 
-#define SMALL_YAW_TORQUE_LIMIT 1.0f             // 小yaw电机扭矩限幅 (单位: N·m)
+#define SMALL_YAW_TORQUE_LIMIT 2.5f             // 小yaw电机扭矩限幅 (单位: N·m)
 
 /*--------------------------Small_Pitch-----------------------------*/   
 
@@ -57,7 +57,7 @@
 
 /*----------------------------Big_Pitch-----------------------------*/  
 
-#define BIG_PITCH_MOTOR_FIL_DIF_ANGLE 0.005f    // 大pitch电机角度到位判断阈值 (单位: rad)
+#define BIG_PITCH_MOTOR_FIL_DIF_ANGLE 0.05f    // 大pitch电机角度到位判断阈值 (单位: rad)
 #define BIG_PITCH_START_ANGLE -0.12128035f      // 大pitch电机起始角度 (单位: rad)
 #define BIG_PITCH_MOTOR_TAG_ANGLE -2.09234977f  // 大pitch轴电机目标位置角度 (单位: rad)
 
@@ -78,7 +78,7 @@
 #define FRICT_TORQUE_ERR_HIGH  0.030f  // 偏差高于此值使用α_max(真实力矩事件)
 
 // 拨盘电机齿轮减速比
-#define TRTGGER_TOOTHED_REDUCTION 2.5f    
+#define TRTGGER_TOOTHED_REDUCTION 1.1818182f    // 52/44
 
 // 拨盘满载弹丸数量
 #define TRIGGER_PILL_NUM        9.0f               

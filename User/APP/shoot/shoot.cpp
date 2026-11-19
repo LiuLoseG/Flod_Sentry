@@ -67,14 +67,14 @@ void shoot_init(void)
     shoot.fric_r_motor.init(&hfdcan2, Motor_DJI_ID_0x201, DJI_Motor_Control_Method_Omega, 1.0f);
     shoot.fric_l_motor.init(&hfdcan2, Motor_DJI_ID_0x202, DJI_Motor_Control_Method_Omega, 1.0f);
 
-    shoot.trigger_motor.init(&hfdcan2, Motor_DJI_ID_0x203, DJI_Motor_Control_Method_Angle);
+    shoot.trigger_motor.init(&hfdcan2, Motor_DJI_ID_0x203, DJI_Motor_Control_Method_Angle, 268.0f/17.0f);
 
     //pid初始化
     shoot.fric_r_motor.pid_omega.init(0.00135f, 0.0f, 0.0f, 0.0f, 5.0f, 20.0f);
     shoot.fric_l_motor.pid_omega.init(0.00135f, 0.0f, 0.0f, 0.0f, 5.0f, 20.0f);
 
-    shoot.trigger_motor.pid_angle.init(30.0f, 0.0f, 0.0f, 0.0f, 5.0f, 35.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE);
-    shoot.trigger_motor.pid_omega.init(0.85f, 0.0f, 0.004f, 0.0f, 5.0f, 10.0f);
+    shoot.trigger_motor.pid_angle.init(15.0f, 0.0f, 0.0f, 0.0f, 5.0f, 35.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE);
+    shoot.trigger_motor.pid_omega.init(1.2f, 0.0f, 0.003f, 0.0f, 5.0f, 10.0f);
 
     // 斜坡函数初始化，摩擦轮电机转速缓慢上升
     shoot.fric_r_slope.init(0.12f, 0.12f, Slope_First_REAL);
@@ -91,7 +91,7 @@ void shoot_init(void)
     shoot.fric_spin_up_flag = false;    // 摩擦轮电机转速上升标志位, 0:未上升, 1:已上升
 
     // 波形生成器初始化，拨盘电机角度跟踪波形
-    wave_generator_init(&trigger_wave, WAVE_SQUARE, 0.2f, 1.7453f, 0.0f);
+    wave_generator_init(&trigger_wave, WAVE_SQUARE, 0.2f, TRIGGER_PILL_TURN_RAD, 0.0f);
     wave_generator_enable(&trigger_wave);
 
     // 注册 CAN 接收分发规则（统一分发层）
