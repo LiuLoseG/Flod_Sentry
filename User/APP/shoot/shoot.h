@@ -78,11 +78,11 @@ protected:
     // 内部变量
 
     // 拨弹盘堵转扭矩阈值, 超出被认为卡弹
-    const float Driver_Torque_Threshold = 0.4f;
+    const float Driver_Torque_Threshold = 1.2f;
     // 卡弹判定持续时间阈值, 超出被认为卡弹
     const uint32_t Jamming_Suspect_Time_Threshold = 100;  // 单位: ms
     // 卡弹处理持续时间阈值, 超出则认为处理结束
-    const uint32_t Jamming_Solving_Time_Threshold = 280;  // 单位: ms
+    const uint32_t Jamming_Solving_Time_Threshold = 500;  // 单位: ms
     // 卡弹处理回退角度(回转半发弹丸角度)
     const float Driver_Back_Angle = TRIGGER_PILL_TURN_RAD * 1.5f;
 

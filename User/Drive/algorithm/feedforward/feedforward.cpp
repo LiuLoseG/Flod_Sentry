@@ -19,59 +19,90 @@
  */
 #define FEEDFORWARD_EPS_MIN 0.001f
 
-/**
- * @brief 用给定速率播种参考跟踪器
- */
-void feedforward_ref_reset(feedforward_ref_t *ref, const float &rate_rad_s)
+void feedforward_tracker_init(feedforward_tracker_t *tracker,
+                              const float &angle_rad,
+                              const float &rate_rad_s,
+                              const float &max_rate_rad_s,
+                              const float &max_accel_rad_s2,
+                              const float &rate_filter_alpha,
+                              const float &accel_filter_alpha,
+                              const float &accel_jerk_limit_rad_s3)
 {
-    if (ref == NULL) return;
-    ref->rate_rad_s = isfinite(rate_rad_s) ? rate_rad_s : 0.0f;
-    ref->accel_rad_s2 = 0.0f;
-    ref->primed = false;
+    if (tracker == NULL) return;
+    tracker->max_rate_rad_s = isfinite(max_rate_rad_s) && max_rate_rad_s > 0.0f ? max_rate_rad_s : 0.0f;
+    tracker->max_accel_rad_s2 = isfinite(max_accel_rad_s2) && max_accel_rad_s2 > 0.0f ? max_accel_rad_s2 : 0.0f;
+    tracker->rate_filter_alpha = isfinite(rate_filter_alpha) ? basic_math_constrain(rate_filter_alpha, 0.0f, 1.0f) : 0.0f;
+    tracker->accel_filter_alpha = isfinite(accel_filter_alpha) ? basic_math_constrain(accel_filter_alpha, 0.0f, 1.0f) : 0.0f;
+    tracker->accel_jerk_limit_rad_s3 = isfinite(accel_jerk_limit_rad_s3) && accel_jerk_limit_rad_s3 > 0.0f ? accel_jerk_limit_rad_s3 : 0.0f;
+    tracker->last_angle_rad = isfinite(angle_rad) ? angle_rad : 0.0f;
+    feedforward_tracker_reset(tracker, rate_rad_s);
 }
 
-/**
- * @brief 限斜率跟踪目标速率
- * @note 首拍只对齐不产生加速度: 播种速率可能来自实测(与目标差很远), 第一拍就差分会得到假加速度。
- */
-void feedforward_ref_track(feedforward_ref_t *ref, const float &target_rate_rad_s, const float &dt_s, const float &max_accel_rad_s2)
+void feedforward_tracker_reset(feedforward_tracker_t *tracker, const float &rate_rad_s)
 {
-    if (ref == NULL) return;
+    if (tracker == NULL) return;
+    tracker->rate_rad_s = isfinite(rate_rad_s) ? rate_rad_s : 0.0f;
+    tracker->accel_rad_s2 = 0.0f;
+    tracker->accel_filtered_rad_s2 = 0.0f;
+    tracker->primed = false;
+}
 
-    ref->accel_rad_s2 = 0.0f;
-
-    if (!ref->primed)
+void feedforward_tracker_update(feedforward_tracker_t *tracker,
+                                const float &target_angle_rad,
+                                const float &measured_rate_rad_s,
+                                const float &dt_s)
+{
+    if (tracker == NULL || !isfinite(target_angle_rad) || !isfinite(measured_rate_rad_s) ||
+        !isfinite(dt_s)) return;
+    if (!tracker->primed)
     {
-        // 首拍: 保持播种值, 下一拍才开始跟踪
-        ref->primed = true;
+        tracker->last_angle_rad = target_angle_rad;
+        tracker->primed = true;
+        tracker->accel_rad_s2 = 0.0f;
+        tracker->accel_filtered_rad_s2 = 0.0f;
         return;
     }
-
-    if (!isfinite(target_rate_rad_s) || !isfinite(max_accel_rad_s2))
+    if (dt_s <= 0.0f || dt_s > FEEDFORWARD_REF_DT_MAX_S)
     {
-        return; // 目标或加速度上限非法: 保持上一拍速率, 不产生加速度
-    }
-
-    if (!(max_accel_rad_s2 > 0.0f))
-    {
-        // 未配置斜率限制: 参考直接跟随目标, 不输出加速度前馈
-        ref->rate_rad_s = target_rate_rad_s;
+        tracker->last_angle_rad = target_angle_rad;
+        tracker->accel_rad_s2 = 0.0f;
+        tracker->accel_filtered_rad_s2 = 0.0f;
+        tracker->primed = false;
         return;
     }
+    const float raw_rate = tracker->max_rate_rad_s > 0.0f
+                               ? basic_math_constrain((target_angle_rad - tracker->last_angle_rad) / dt_s, -tracker->max_rate_rad_s, tracker->max_rate_rad_s)
+                               : 0.0f;
+    tracker->rate_rad_s += tracker->rate_filter_alpha * (raw_rate - tracker->rate_rad_s);
 
-    if (!isfinite(dt_s) || dt_s <= 0.0f || dt_s > FEEDFORWARD_REF_DT_MAX_S)
+    tracker->last_angle_rad = target_angle_rad;
+    tracker->accel_rad_s2 = 0.0f;
+    if (tracker->max_accel_rad_s2 <= 0.0f) return;
+    const float max_step = tracker->max_accel_rad_s2 * dt_s;
+
+    const float delta = basic_math_constrain(tracker->rate_rad_s - measured_rate_rad_s, -max_step, max_step);
+
+    const float next_rate = measured_rate_rad_s + delta;
+
+    tracker->accel_rad_s2 = basic_math_constrain((next_rate - tracker->rate_rad_s) / dt_s, -tracker->max_accel_rad_s2, tracker->max_accel_rad_s2);
+
+    tracker->rate_rad_s = next_rate;
+    // 按实际采样周期归一化低通系数，避免周期抖动改变滤波器动态。
+    const float normalized_alpha = (tracker->accel_filter_alpha <= 0.0f) ? 0.0f : (tracker->accel_filter_alpha >= 1.0f) ? 1.0f
+                                             : 1.0f - powf(1.0f - tracker->accel_filter_alpha, dt_s / 0.01f);
+
+    const float filtered_target = tracker->accel_filtered_rad_s2 + normalized_alpha * (tracker->accel_rad_s2 - tracker->accel_filtered_rad_s2);
+
+    float filtered_delta = filtered_target - tracker->accel_filtered_rad_s2;
+
+    if (tracker->accel_jerk_limit_rad_s3 > 0.0f)
     {
-        return; // 调度异常: 本拍不推进参考, 也不产生加速度
+        const float max_delta = tracker->accel_jerk_limit_rad_s3 * dt_s;
+        filtered_delta = basic_math_constrain(filtered_delta, -max_delta, max_delta);
     }
-
-    const float max_step = max_accel_rad_s2 * dt_s;
-    const float delta = basic_math_constrain(target_rate_rad_s - ref->rate_rad_s, -max_step, max_step);
-    const float next_rate = ref->rate_rad_s + delta;
-    // 用实际可表示的速率增量差分, 并抑制浮点舍入造成的加速度越界。
-    const float accel = (next_rate - ref->rate_rad_s) / dt_s;
-    if (!isfinite(next_rate) || !isfinite(accel)) return;
-    ref->rate_rad_s = next_rate;
-    ref->accel_rad_s2 = basic_math_constrain(accel, -max_accel_rad_s2, max_accel_rad_s2);
+    
+    tracker->accel_filtered_rad_s2 += filtered_delta;
+    if (!isfinite(tracker->accel_filtered_rad_s2)) tracker->accel_filtered_rad_s2 = 0.0f;
 }
 
 /**

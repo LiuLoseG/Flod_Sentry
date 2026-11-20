@@ -49,7 +49,7 @@
 #define SMALL_PITCH_MAX_OFFSET 0.659132331f             // 小PITCH轴限辐，-0.316000015-(-0.975132346) = 0.659132331 留0.08f的余量            
 #define SMALL_PITCH_ANGLE_INCREMENT_RATION 0.0020f      // pitch电机单次角度增量系数 (单位: rad/单位输入)      
 
-#define SMALL_PITCH_TORQUE_LIMIT 1.8f                   // 小pitch电机扭矩限幅 (单位: N·m)      
+#define SMALL_PITCH_TORQUE_LIMIT 2.4f                   // 小pitch电机扭矩限幅 (单位: N·m)      
 
 /*----------------------------Big_Yaw-------------------------------*/   
 
@@ -87,7 +87,7 @@
 #define TRIGGER_PILL_TURN_RAD ((TRTGGER_TOOTHED_REDUCTION * 2.0f * PI) / TRIGGER_PILL_NUM)       
 
 // 拨盘电机默认旋转频率18HZ(单位: Hz)
-#define TRIGGER_AMMO_FREQUENCY_DEFAULT   18.0f
+#define TRIGGER_AMMO_FREQUENCY_DEFAULT   5.0f
 // 拨盘电机默认旋转速度18HZ(单位: rad/s)
 #define TRIGGER_DRIVER_OMEGA_DEFAULT ((TRIGGER_AMMO_FREQUENCY_DEFAULT / 9.0f * TRTGGER_TOOTHED_REDUCTION) * 2.0f * PI)
 

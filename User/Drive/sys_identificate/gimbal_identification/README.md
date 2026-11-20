@@ -114,7 +114,7 @@ uint32_t observe_yaw(const gimbal_identification_sample_t &coherent_sample,
 
 模型映射到 [feedforward](../../algorithm/feedforward/feedforward.h)：inertia→j，viscous→b，coulomb→fc，friction_velocity→eps，gravity_sin/cos→grav_sin/cos。`dynamic_max`、最大加速度、总力矩上限属于应用配置，不从辨识结果推断。
 
-前馈实现将 eps 下限固定为 0.001 rad/s；辨识若选更小 epsilon，摩擦模型将不一致。前馈重力输入必须沿用辨识的 gravity_angle 相位。切模式时用实测速率 `feedforward_ref_reset`；首拍只对齐，随后用 `feedforward_ref_track` 生成有界参考速率/加速度，再调用 `feedforward_calculate`。
+前馈实现将 eps 下限固定为 0.001 rad/s；辨识若选更小 epsilon，摩擦模型将不一致。前馈重力输入必须沿用辨识的 gravity_angle 相位。切模式时用实测速率 `feedforward_tracker_reset`；首拍只对齐，随后用 `feedforward_tracker_update` 生成有界参考速率/加速度，再调用 `feedforward_calculate`。
 
 动态项先按 dynamic_max 限幅，重力另算，总和再按 torque_limit 限幅；后续与反馈控制器相加后的最终电机命令仍需应用层限幅。非有限输入/中间溢出会使前馈输出全零，不能用零输出反推模型正常。
 

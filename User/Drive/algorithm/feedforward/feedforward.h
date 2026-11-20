@@ -28,17 +28,24 @@ typedef struct
 } feedforward_param_t;
 
 /**
- * @brief 前馈参考速率跟踪器
+ * @brief 前馈参考信号跟踪器
  * @note 前馈的 J*acc 项要求加速度有界可微。上游给的是阶跃速度指令(如换向 ±0.6rad/s)时,
  *       直接差分会造出上千 rad/s^2 的假加速度(J*acc 可达数 N·m), 完全盖过真实惯量补偿。
  *       因此参考速率必须先过限斜率跟踪, 再差分得到加速度。
  */
 typedef struct
 {
-    float rate_rad_s;   // 当前参考速率
-    float accel_rad_s2; // 上一拍算出的参考加速度(每拍刷新)
-    bool primed;        // 是否已完成首拍对齐
-} feedforward_ref_t;
+    float last_angle_rad;             // 上一拍目标角
+    float rate_rad_s;               // 当前参考速率
+    float accel_rad_s2;             // 上一拍算出的参考加速度(每拍刷新)
+    float accel_filtered_rad_s2;    // 一阶低通后的参考加速度
+    float accel_filter_alpha;       // 加速度低通系数, [0,1]; 0冻结输出, 1不过滤
+    float accel_jerk_limit_rad_s3;  // 滤波加速度变化率上限, <=0 表示不限制
+    float max_rate_rad_s;             // 目标角差分限速
+    float max_accel_rad_s2;            // 参考速率限加速度
+    float rate_filter_alpha;           // 目标速率低通系数
+    bool primed;                       // 是否已完成首拍对齐
+} feedforward_tracker_t;
 
 /**
  * @brief 前馈输出
@@ -50,28 +57,31 @@ typedef struct
     float total_nm;   // 总前馈 = 动态项 + 重力项, 已按 torque_limit_nm 限幅
 } feedforward_output_t;
 
-/**
- * @brief 用给定速率播种参考跟踪器(上电/切模式时用实测速率播种, 避免首推前馈冲击)
- */
-void feedforward_ref_reset(feedforward_ref_t *ref, const float &rate_rad_s);
+/** @brief 初始化目标角到参考速率的完整跟踪器。 */
+void feedforward_tracker_init(feedforward_tracker_t *tracker,
+                              const float &angle_rad,
+                              const float &rate_rad_s,
+                              const float &max_rate_rad_s,
+                              const float &max_accel_rad_s2,
+                              const float &rate_filter_alpha,
+                              const float &accel_filter_alpha,
+                              const float &accel_jerk_limit_rad_s3);
 
-/**
- * @brief 限斜率跟踪目标速率, 并差分出参考加速度
- * @param ref                 跟踪器
- * @param target_rate_rad_s   目标速率(通常是速度环给定)
- * @param dt_s                本次调用间隔(s); 非有限、<=0 或 >20ms 视为调度异常, 本拍不产生加速度
- * @param max_accel_rad_s2    参考速率的最大变化率(rad/s^2); <=0 表示不使用加速度前馈(参考直接跟随, accel=0); 非有限时保持参考速率, accel=0
- * @note 结果写在 ref->rate_rad_s / ref->accel_rad_s2, 只受 max_accel 限制, 不受电机力矩限幅影响。
- *       加速度由实际可表示的速率增量差分并限幅; 步长小于浮点精度时速率保持, accel=0。
- */
-void feedforward_ref_track(feedforward_ref_t *ref, const float &target_rate_rad_s, const float &dt_s, const float &max_accel_rad_s2);
+/** @brief 用实测速率重新播种跟踪器，下一拍只对齐不产生加速度。 */
+void feedforward_tracker_reset(feedforward_tracker_t *tracker, const float &rate_rad_s);
+
+/** @brief 更新跟踪器并输出平滑的参考速率/加速度。 */
+void feedforward_tracker_update(feedforward_tracker_t *tracker,
+                                const float &target_angle_rad,
+                                const float &measured_rate_rad_s,
+                                const float &dt_s);
 
 /**
  * @brief 计算单轴力矩前馈
  * @param param            前馈参数
  * @param angle_rad        实测关节角(重力项的相位)
- * @param rate_rad_s       参考角速度(应来自 feedforward_ref_track)
- * @param accel_rad_s2     参考角加速度(应来自 feedforward_ref_track)
+ * @param rate_rad_s       参考角速度(应来自 feedforward_tracker_update)
+ * @param accel_rad_s2     参考角加速度(应来自 feedforward_tracker_update)
  * @param torque_limit_nm  该轴力矩上限, 用于总前馈收口; <=0 时不做总限幅
  * @param output           输出(可为空, 此时直接返回)
  * @note 任一输入(含模型参数与力矩上限)为非有限值或中间计算溢出时输出全 0 —— 前馈算错的方向可能是助力, 宁可少补不可乱补。
