@@ -91,14 +91,14 @@ void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : ACC_INT_Pin */
   GPIO_InitStruct.Pin = ACC_INT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(ACC_INT_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : GYRO_INT_Pin */
   GPIO_InitStruct.Pin = GYRO_INT_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GYRO_INT_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LCD_CS_Pin */
