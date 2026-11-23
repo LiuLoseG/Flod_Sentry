@@ -12,6 +12,7 @@
 //=============================================================================================
 #ifndef MahonyAHRS_h
 #define MahonyAHRS_h
+extern float q0, q1, q2, q3;
 void Mahony_update(float gx, float gy, float gz, float ax, float ay, float az, float mx, float my, float mz);
 void Mahony_Init(float sampleFrequency);
 void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az);
