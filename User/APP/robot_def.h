@@ -31,6 +31,7 @@
 
 /*--------------------------Small_Yaw-------------------------------*/     
 
+#define SMALL_YAW_MAX_INCREASE_ANGLE 0.3f // 小yaw轴最大角度增量 (单位: rad)
 #define SMALL_YAW_DOWN_MIN_ANGLE -0.02631736f // -1.71288121f - SMALL_YAW_MOTOR_MID_ANGLE = -0.02631736小yaw轴向下时的最小角度 (单位: rad)
 #define SMALL_YAW_DOWN_MAX_ANGLE 0.02631736f // -1.66024649 - SMALL_YAW_MOTOR_MID_ANGLE = 0.02631736小yaw轴向下时的最大角度 (单位: rad)
 
@@ -59,7 +60,7 @@
 
 #define BIG_PITCH_MOTOR_FIL_DIF_ANGLE 0.05f    // 大pitch电机角度到位判断阈值 (单位: rad)
 #define BIG_PITCH_START_ANGLE -0.12128035f      // 大pitch电机起始角度 (单位: rad)
-#define BIG_PITCH_MOTOR_TAG_ANGLE -2.09234977f  // 大pitch轴电机目标位置角度 (单位: rad)
+#define BIG_PITCH_MOTOR_TAG_ANGLE -2.19640636f  // 大pitch轴电机目标位置角度 (单位: rad)
 
 #define BIG_PITCH_TORQUE_LIMIT 2.0f             // 大pitch轴电机扭矩限幅 (单位: N·m)
 

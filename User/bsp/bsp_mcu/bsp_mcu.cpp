@@ -20,7 +20,6 @@ bool init_finished = false;
  * @param None
  * @retval None
  */
-
 extern "C" void bsp_mcu_init(void)
 {
     bsp_dwt_init(550); // 初始化DWT，参数为CPU频率（MHz）

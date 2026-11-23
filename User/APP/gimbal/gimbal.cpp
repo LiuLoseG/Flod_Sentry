@@ -97,6 +97,9 @@ feedforward_param_t big_pitch_ff = {
 static feedforward_tracker_t small_yaw_ff_tracker = {};
 static uint32_t feedforward_last_update_us = 0u;
 
+// 大pitch下降时小轴回中目标的单周期最大变化量，避免目标角度突变造成冲击。
+#define GIMBAL_SMALL_PITCH_RETURN_STEP_RAD 0.0051f
+
 #define GIMBAL_FF_MAX_RATE_RAD_S 3.0f
 #define GIMBAL_FF_MAX_ACCEL_RAD_S2 8.0f
 #define GIMBAL_FF_MAX_JERK_RAD_S3 20.0f
@@ -132,6 +135,18 @@ static void big_yaw_motor_rx_client(const volatile FDCAN_RxFrame_TypeDef *frame)
     gimbal.big_yaw_motor.can_rx_callback();       // CAN2 0x14
     gimbal.timestamp.big_yaw_us = (uint32_t)bsp_dwt_get_timeline_us(); // 更新时间戳
 }
+
+/*------------------------------------云台控制辅助函数-------------------------------------------*/
+
+/**
+ * @brief 限制目标角度的变化量
+ */
+static float gimbal_limit_target_step(float current, float target, float max_step)
+{
+    const float delta = target - current;
+    return current + basic_math_constrain(delta, -max_step, max_step);
+}
+
 
 /*------------------------------------云台电机系统辨识函数-------------------------------------------*/
 
@@ -636,7 +651,7 @@ void gimbal_control_decision(void)
 
                 // 小yaw
                 {
-                    float delta = basic_math_loop_constrain(gimbal.target_val.gimbal_yaw_angle - gimbal.now_val.gimbal_yaw_angle, -PI, PI);
+                    float delta = basic_math_constrain(gimbal.target_val.gimbal_yaw_angle - gimbal.now_val.gimbal_yaw_angle, -SMALL_YAW_MAX_INCREASE_ANGLE, SMALL_YAW_MAX_INCREASE_ANGLE);
                     gimbal.target_val.small_yaw_angle = basic_math_constrain(gimbal.now_val.small_yaw_angle + delta, SMALL_YAW_MIN_OFFSET, SMALL_YAW_MAX_OFFSET);
                 }
 
@@ -675,7 +690,8 @@ void gimbal_control_decision(void)
             if(gimbal.target_val.big_pitch_status == Gimbal_Big_Pitch_Down)
             {
                 gimbal.target_val.small_yaw_angle = 0.0f;
-                gimbal.target_val.small_pitch_angle = 0.0f;
+                gimbal.target_val.small_pitch_angle = gimbal_limit_target_step(gimbal.target_val.small_pitch_angle, 0.0f, GIMBAL_SMALL_PITCH_RETURN_STEP_RAD);
+                gimbal.target_val.gimbal_yaw_angle = gimbal.now_val.gimbal_yaw_angle;
             }
 
             // 大pitch
@@ -817,7 +833,7 @@ void gimbal_control_decision(void)
                                 gimbal.big_yaw_rho = basic_math_constrain(0.25f + 0.75f * n * n * n, 0.0f, 1.0f);
 
                                 gimbal.target_val.big_yaw_angle = (1.0f - gimbal.big_yaw_rho) * gimbal.now_val.big_yaw_angle;
-                            }   
+                            }
                         }
                     }
 
