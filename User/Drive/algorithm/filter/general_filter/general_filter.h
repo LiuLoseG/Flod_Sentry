@@ -38,6 +38,8 @@ public:
 
     inline float get_cutoff_frequency() const;
 
+    inline float get_sampling_period() const;
+
     void get_coefficients(float *__coeff) const;
 
     inline void set_now_input(const float &__input);
@@ -460,6 +462,14 @@ inline float low_pass_filter_class::get_alpha() const
 inline float low_pass_filter_class::get_cutoff_frequency() const
 {
     return (cutoff_frequency);
+}
+
+/**
+ * @brief 获取低通滤波器当前生效的采样周期(在线改周期后随之更新, 调用方可据此判断是否需要重算系数)
+ */
+inline float low_pass_filter_class::get_sampling_period() const
+{
+    return (sampling_period);
 }
 
 /**

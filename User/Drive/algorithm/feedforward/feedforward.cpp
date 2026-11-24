@@ -17,27 +17,41 @@ static float feedforward_positive_verify(const float &value, const float &fallba
     return (isfinite(value) && value > 0.0f) ? value : fallback;
 }
 
+// 调度周期相对变化超过该比例才重算滤波系数: 兼顾截止频率精度与 tanf 开销
+#define FEEDFORWARD_FILTER_PERIOD_TOLERANCE 0.02f
+
 /**
- * @brief 验证单位区间, 非有限时返回 0, 否则收口到 [0,1]
+ * @brief 把低通滤波器的系数同步到当前截止频率与实际调度周期(不动滤波状态)
+ * @note 系数由 (截止频率, 采样周期) 双线性算出, 采样周期取实际 dt, 因此调用频率变化不改变截止频率;
+ *       只有参数确实变化时才重算, 避免每拍调用一次超越函数。
  */
-static float feedforward_unit_alpha(const float &alpha)
+static void feedforward_filter_prepare(low_pass_filter_class *filter, const float &cutoff_hz, const float &dt_s)
 {
-    return isfinite(alpha) ? basic_math_constrain(alpha, 0.0f, 1.0f) : 0.0f;
+    if (filter->get_cutoff_frequency() != cutoff_hz)
+    {
+        filter->set_cutoff_frequency(cutoff_hz);
+    }
+
+    const float applied_period = filter->get_sampling_period();
+    if (dt_s > 0.0f && fabsf(applied_period - dt_s) > applied_period * FEEDFORWARD_FILTER_PERIOD_TOLERANCE)
+    {
+        filter->set_sampling_period(dt_s);
+    }
 }
 
 /**
- * @brief 按 dt 归一化低通系数
- * @note alpha = 1 - (1 - alpha)^(dt / base_dt)
+ * @brief 送入一个新样本并取回滤波输出
  */
-static float feedforward_normalize_alpha(const float &alpha, const float &dt_s, const float &base_dt_s)
+static float feedforward_filter_run(low_pass_filter_class *filter, const float &cutoff_hz, const float &dt_s, const float &input)
 {
-    if (alpha <= 0.0f) return 0.0f;
-    if (alpha >= 1.0f) return 1.0f;
-    return 1.0f - powf(1.0f - alpha, dt_s / base_dt_s);
+    feedforward_filter_prepare(filter, cutoff_hz, dt_s);
+    filter->set_now_input(input);
+    filter->low_calculate_callback();
+    return filter->get_out();
 }
 
 /**
- * @brief 限幅
+ * @brief 前馈限幅
  */
 static float feedforward_limit(const float &value, const float &limit)
 {
@@ -45,36 +59,38 @@ static float feedforward_limit(const float &value, const float &limit)
 }
 
 /**
- * @brief 把配置收口到合法范围
- * @note init/set_config 时写回一次, 便于在 Ozone 中看到实际生效值;
- *       update 时再对本地副本校验一次, 防止运行中被改成非法值。
+ * @brief 配置合法范围检查
  */
 static feedforward_tracker_config_t feedforward_tracker_config_sanitize(const feedforward_tracker_config_t &config)
 {
     feedforward_tracker_config_t out;
     out.max_rate_rad_s = feedforward_positive_verify(config.max_rate_rad_s, 0.0f);
     out.max_accel_rad_s2 = feedforward_positive_verify(config.max_accel_rad_s2, 0.0f);
-    out.rate_filter_alpha = feedforward_unit_alpha(config.rate_filter_alpha);
-    out.accel_filter_alpha = feedforward_unit_alpha(config.accel_filter_alpha);
+    // 截止频率非法时按"不滤波"处理: 参考信号宁可直通也不要被冻结在某个旧值上
+    out.rate_filter_cutoff_hz = feedforward_positive_verify(config.rate_filter_cutoff_hz, 0.0f);
+    out.accel_filter_cutoff_hz = feedforward_positive_verify(config.accel_filter_cutoff_hz, 0.0f);
     out.accel_jerk_limit_rad_s3 = feedforward_positive_verify(config.accel_jerk_limit_rad_s3, 0.0f);
     out.ref_dt_max_s = feedforward_positive_verify(config.ref_dt_max_s, FEEDFORWARD_DEFAULT_REF_DT_MAX_S);
-    out.filter_base_dt_s = feedforward_positive_verify(config.filter_base_dt_s, FEEDFORWARD_DEFAULT_FILTER_BASE_DT_S);
     return out;
 }
 
 void feedforward_tracker_set_config(feedforward_tracker_t *tracker, const feedforward_tracker_config_t *config)
 {
     if (tracker == NULL) return;
-    static const feedforward_tracker_config_t default_config = {
+    static const feedforward_tracker_config_t default_config = 
+    {
         0.0f,
         0.0f,
-        1.0f,
-        1.0f,
+        0.0f,
+        0.0f,
         0.0f,
         FEEDFORWARD_DEFAULT_REF_DT_MAX_S,
-        FEEDFORWARD_DEFAULT_FILTER_BASE_DT_S,
     };
     tracker->config = feedforward_tracker_config_sanitize((config != NULL) ? *config : default_config);
+
+    // 只刷新系数不动状态: 运行中替换配置不会让参考值跳变
+    tracker->rate_filter.set_cutoff_frequency(tracker->config.rate_filter_cutoff_hz);
+    tracker->accel_filter.set_cutoff_frequency(tracker->config.accel_filter_cutoff_hz);
 }
 
 void feedforward_tracker_reset(feedforward_tracker_t *tracker)
@@ -83,6 +99,8 @@ void feedforward_tracker_reset(feedforward_tracker_t *tracker)
     tracker->rate_rad_s = 0.0f;
     tracker->accel_rad_s2 = 0.0f;
     tracker->primed = false;
+    tracker->rate_filter.reset(0.0f);
+    tracker->accel_filter.reset(0.0f);
 }
 
 /**
@@ -127,12 +145,32 @@ void feedforward_tracker_update(feedforward_tracker_t *tracker, const float &tar
         tracker->rate_rad_s = rate_cmd;
         tracker->accel_rad_s2 = 0.0f;
         tracker->primed = true;
+
+        // 滤波器一起播种到当前稳态, 否则下一拍会因 x[n-1]/y[n-1] 缺历史出现半个阶跃
+        if (cfg.rate_filter_cutoff_hz > 0.0f)
+        {
+            feedforward_filter_prepare(&tracker->rate_filter, cfg.rate_filter_cutoff_hz, dt_s);
+            tracker->rate_filter.reset(rate_cmd);
+        }
+        if (cfg.accel_filter_cutoff_hz > 0.0f)
+        {
+            feedforward_filter_prepare(&tracker->accel_filter, cfg.accel_filter_cutoff_hz, dt_s);
+            tracker->accel_filter.reset(0.0f);
+        }
         return;
     }
 
-    tracker->rate_rad_s += feedforward_normalize_alpha(cfg.rate_filter_alpha, dt_s, cfg.filter_base_dt_s) * (rate_cmd - tracker->rate_rad_s);
+    // 角速度参考: 一阶低通; 未配置截止频率时直通
+    tracker->rate_rad_s = (cfg.rate_filter_cutoff_hz > 0.0f)
+                              ? feedforward_filter_run(&tracker->rate_filter, cfg.rate_filter_cutoff_hz, dt_s, rate_cmd)
+                              : rate_cmd;
 
-    float accel_delta = feedforward_normalize_alpha(cfg.accel_filter_alpha, dt_s, cfg.filter_base_dt_s) * (accel_cmd - tracker->accel_rad_s2);
+    // 角加速度参考: 一阶低通后再限 jerk
+    const float accel_target = (cfg.accel_filter_cutoff_hz > 0.0f)
+                                   ? feedforward_filter_run(&tracker->accel_filter, cfg.accel_filter_cutoff_hz, dt_s, accel_cmd)
+                                   : accel_cmd;
+
+    float accel_delta = accel_target - tracker->accel_rad_s2;
     if (cfg.accel_jerk_limit_rad_s3 > 0.0f)
     {
         accel_delta = feedforward_limit(accel_delta, cfg.accel_jerk_limit_rad_s3 * dt_s);

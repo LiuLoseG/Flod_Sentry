@@ -114,7 +114,9 @@ uint32_t observe_yaw(const gimbal_identification_sample_t &coherent_sample,
 
 模型映射到 [feedforward](../../algorithm/feedforward/feedforward.h)：inertia→j，viscous→b，coulomb→fc，friction_velocity→eps，gravity_sin/cos→grav_sin/cos。`dynamic_max`、最大加速度、总力矩上限属于应用配置，不从辨识结果推断。
 
-前馈实现用 `feedforward_param_t::eps_min_rad_s` 作为 eps 下限（非法或 <=0 时取 `FEEDFORWARD_DEFAULT_EPS_MIN_RAD_S` = 0.001 rad/s）；辨识若选更小 epsilon，需同步调小该下限，否则摩擦模型将不一致。前馈重力输入必须沿用辨识的 gravity_angle 相位。调理器配置（限幅、滤波系数、jerk、`ref_dt_max_s`、`filter_base_dt_s`）存于 `feedforward_tracker_t::config`，可在线改写，每拍重新校验。切模式时调用 `feedforward_tracker_reset`；首拍只对齐，随后用 `feedforward_tracker_update` 生成有界参考速率/加速度，再调用 `feedforward_calculate`。
+前馈实现用 `feedforward_param_t::eps_min_rad_s` 作为 eps 下限（非法或 <=0 时取 `FEEDFORWARD_DEFAULT_EPS_MIN_RAD_S` = 0.001 rad/s）；辨识若选更小 epsilon，需同步调小该下限，否则摩擦模型将不一致。前馈重力输入必须沿用辨识的 gravity_angle 相位。调理器配置（限幅、低通截止频率 `rate_filter_cutoff_hz`/`accel_filter_cutoff_hz`、jerk、`ref_dt_max_s`）存于 `feedforward_tracker_t::config`，可在线改写，每拍重新校验。
+
+参考低通由 [general_filter](../../algorithm/filter/general_filter/general_filter.h) 的 `low_pass_filter_class` 实现（双线性变换 + 预畸变，-3 dB 点严格落在配置的截止频率），采样周期取实际调用 dt，因此调用频率变化不改变截止频率；截止频率非有限或 <=0 表示不滤波。切模式时调用 `feedforward_tracker_reset`；首拍只对齐（滤波器一并播种到当前稳态），随后用 `feedforward_tracker_update` 生成有界参考速率/加速度，再调用 `feedforward_calculate`。
 
 动态项先按 dynamic_max 限幅，重力另算，总和再按 torque_limit 限幅；后续与反馈控制器相加后的最终电机命令仍需应用层限幅。非有限输入/中间溢出会使前馈输出全零，不能用零输出反推模型正常。
 

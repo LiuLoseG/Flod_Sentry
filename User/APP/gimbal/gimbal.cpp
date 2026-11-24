@@ -103,15 +103,15 @@ feedforward_param_t big_pitch_ff = {
  * @brief 小yaw前馈参考调理配置
  * @note 本表是初始化参数; Ozone 中可直接改写该表, 重新调用初始化后生效。
  *       运行中调参请改写 small_yaw_ff_tracker.config, 下一拍生效。
+ *       截止频率由 general_filter 的一阶低通实现, 采样周期取实际控制周期。
  */
 feedforward_tracker_config_t small_yaw_ff_tracker_config = {
     3.0f,                                 // max_rate_rad_s
     8.0f,                                 // max_accel_rad_s2
-    0.2f,                                 // rate_filter_alpha
-    0.08f,                                // accel_filter_alpha
+    10.0f,                                // rate_filter_cutoff_hz: 等效原 alpha=0.2 @ 100 Hz(τ≈44.8 ms)
+    8.0f,                                // accel_filter_cutoff_hz: 等效原 alpha=0.08 @ 100 Hz(τ≈120 ms)
     20.0f,                                // accel_jerk_limit_rad_s3
-    FEEDFORWARD_DEFAULT_REF_DT_MAX_S,     // ref_dt_max_s
-    FEEDFORWARD_DEFAULT_FILTER_BASE_DT_S  // filter_base_dt_s
+    FEEDFORWARD_DEFAULT_REF_DT_MAX_S      // ref_dt_max_s
 };
 
 /**
@@ -122,11 +122,10 @@ feedforward_tracker_config_t small_yaw_ff_tracker_config = {
 feedforward_tracker_config_t small_pitch_ff_tracker_config = {
     3.0f,                                 // max_rate_rad_s
     8.0f,                                 // max_accel_rad_s2
-    0.2f,                                 // rate_filter_alpha
-    0.08f,                                // accel_filter_alpha
+    10.0f,                                // rate_filter_cutoff_hz: 等效原 alpha=0.2 @ 100 Hz(τ≈44.8 ms)
+    8.0f,                                // accel_filter_cutoff_hz: 等效原 alpha=0.08 @ 100 Hz(τ≈120 ms)
     20.0f,                                // accel_jerk_limit_rad_s3
-    FEEDFORWARD_DEFAULT_REF_DT_MAX_S,     // ref_dt_max_s
-    FEEDFORWARD_DEFAULT_FILTER_BASE_DT_S  // filter_base_dt_s
+    FEEDFORWARD_DEFAULT_REF_DT_MAX_S      // ref_dt_max_s
 };
 
 /*------------------------------------云台电机can接收对象(注册到统一分发层）-------------------------------------------*/

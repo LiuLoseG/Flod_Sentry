@@ -10,6 +10,7 @@
 #pragma once
 
 #include "basic_math.h"
+#include "general_filter.h"
 
 /*------------------------------------默认配置(配置字段非法时回退到这里)-------------------------------------------*/
 
@@ -17,9 +18,6 @@
  * 超过它说明任务被长时间抢占, 这一拍的滤波/jerk 积分没有物理意义(会把整段变化压进一拍), 直接重新对齐
  */
 #define FEEDFORWARD_DEFAULT_REF_DT_MAX_S 0.02f
-
-/* 低通系数的标定周期, s; 系数按实际 dt 归一化到该周期, 调用频率变化不改变滤波动态 */
-#define FEEDFORWARD_DEFAULT_FILTER_BASE_DT_S 0.01f
 
 /* tanh 速度尺度下限, rad/s
  * eps 太小时 tanh 退化成 sign(阶跃), 摩擦前馈变成 bang-bang, 换向会抖
@@ -47,29 +45,33 @@ typedef struct
 /**
  * @brief 参考信号调理器配置
  * @note 初始化时传入一份结构体参数; 运行中也可直接改写 tracker->config (如在 Ozone 中), 每次 update 都会重新校验:
- *       限幅/jerk 非有限或 <=0 视为不限制; alpha 非有限视为 0 并收口到 [0,1];
- *       ref_dt_max_s / filter_base_dt_s 非有限或 <=0 时回退到默认值。
+ *       限幅/jerk 非有限或 <=0 视为不限制; 截止频率非有限或 <=0 视为不滤波(直通);
+ *       ref_dt_max_s 非有限或 <=0 时回退到默认值。
+ *       低通由 general_filter 的 low_pass_filter_class 实现(双线性变换 + 预畸变), 用截止频率而不是系数描述。
  */
 typedef struct
 {
     float max_rate_rad_s;          // 角速度限幅, rad/s; <=0 表示不限幅
     float max_accel_rad_s2;        // 角加速度限幅, rad/s^2; <=0 表示不限幅
-    float rate_filter_alpha;       // 角速度低通系数(filter_base_dt_s 基准), [0,1]; 1 不过滤
-    float accel_filter_alpha;      // 角加速度低通系数(filter_base_dt_s 基准), [0,1]; 1 不过滤
+
+    float rate_filter_cutoff_hz;   // 角速度参考低通截止频率, Hz; 非有限或 <=0 表示不滤波
+    float accel_filter_cutoff_hz;  // 角加速度参考低通截止频率, Hz; 非有限或 <=0 表示不滤波
+    
     float accel_jerk_limit_rad_s3; // 角加速度变化率上限, rad/s^3; <=0 表示不限制
     float ref_dt_max_s;            // 合法调用间隔上限, s; 超过则本拍重新对齐
-    float filter_base_dt_s;        // 低通系数的标定周期, s
 } feedforward_tracker_config_t;
 
 /**
  * @brief 前馈参考信号调理器
  * @note 目标角速度/角加速度由外部(轨迹规划、自瞄预测、遥控斜坡等)直接给定, 本模块不再对目标角差分,
- *       也不引入实测速率, 只做: 限幅 -> 一阶低通(按 dt 归一化) -> 加速度限 jerk。
+ *       也不引入实测速率, 只做: 限幅 -> 一阶低通(截止频率按实际 dt 重算) -> 加速度限 jerk。
  *       这样参考信号与反馈完全解耦, 前馈不会被测量噪声带偏。
  */
 typedef struct
 {
     feedforward_tracker_config_t config; // 可在线修改的配置
+    low_pass_filter_class rate_filter;   // 角速度参考低通(截止频率 <=0 时整段不调用)
+    low_pass_filter_class accel_filter;  // 角加速度参考低通(截止频率 <=0 时整段不调用)
     float rate_rad_s;                    // 调理后的参考角速度, rad/s
     float accel_rad_s2;                  // 调理后的参考角加速度, rad/s^2
     bool primed;                         // 是否已完成首拍对齐
