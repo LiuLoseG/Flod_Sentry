@@ -109,10 +109,10 @@ typedef struct
     float big_yaw_omega;   // 大yaw电机角速度前馈
     float big_pitch_omega; // 大pitch电机角速度前馈
 
-    float small_yaw_torque; // 小yaw电机力矩前馈
-    float small_pitch_torque; // 小pitch电机力矩前馈
-    float big_yaw_torque;   // 大yaw电机力矩前馈
-    float big_pitch_torque; // 大pitch电机力矩前馈
+    float small_yaw_accel;  // 小yaw目标角加速度, rad/s^2
+    float small_pitch_accel; // 小pitch目标角加速度, rad/s^2
+    float big_yaw_accel;    // 大yaw目标角加速度, rad/s^2
+    float big_pitch_accel;  // 大pitch目标角加速度, rad/s^
 
 } gimbal_motor_feedforward_t;
 
@@ -252,12 +252,11 @@ typedef struct
     gimbal_identification_output_t ident_big_pitch_output;
 
 /*------------------------------------前馈补偿量---------------------------------------------*/
-    float small_yaw_dynamic_comp;       // 小yaw轴前馈动态补偿量(J*acc + B*rate + 库仑摩擦), 单位: N·m
-    float small_yaw_toqure_comp;        // 小yaw轴前馈总补偿量, 单位: N·m
+    feedforward_tracker_t small_yaw_ff_tracker; // 小yaw前馈参考信号调理器
+    feedforward_tracker_t small_pitch_ff_tracker; // 小pitch前馈参考信号调理器
 
-    float small_pit_gravity_comp;       // 小pitch轴前馈重力补偿量, 单位: N·m
-    float small_pit_dynamic_comp;       // 小pitch轴前馈动态补偿量(J*acc + B*rate + 库仑摩擦), 单位: N·m
-    float small_pit_toqure_comp;        // 小pitch轴前馈总补偿量(动态补偿 + 重力补偿), 单位: N·m
+    feedforward_output_t small_yaw_ff_out; // 小yaw轴前馈计算输出
+    feedforward_output_t pitch_ff_out;     // 小pitch轴前馈计算输出
 
     float big_pit_gravity_comp;        // 大pitch轴前馈重力补偿量, 单位: N·m
 

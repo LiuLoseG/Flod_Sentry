@@ -45,6 +45,9 @@
 
 /*--------------------------Small_Pitch-----------------------------*/   
 
+#define SMALL_PITCH_DOWN_MIN_ANGLE -2.06397104f // 小pitch轴向下时的角度 (单位: rad)
+#define SMALL_PITCH_DOWN_MAX_ANGLE -1.79073071f // 小pitch轴向下时的最大角度 (单位: rad)
+
 #define SMALL_PITCH_MOTOR_MID_ANGLE -0.975132346f       // 小pitch轴电机中间位置角度 (单位: rad)
 #define SMALL_PITCH_MIN_OFFSET -0.988458874f            // 小PITCH轴限辐，-1.96359122-(-0.975132346) = -0.988458874 留0.04f的余量
 #define SMALL_PITCH_MAX_OFFSET 0.659132331f             // 小PITCH轴限辐，-0.316000015-(-0.975132346) = 0.659132331 留0.08f的余量            
