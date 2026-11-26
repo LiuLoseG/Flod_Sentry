@@ -147,6 +147,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     User/test/test.cpp
     # User/APP/chassis/chassis.cpp
     # User/APP/steering_wheel/steering_wheel.cpp
+    User/APP/chassis/power_ctrl/power_ctrl.cpp
     User/APP/gimbal/gimbal.cpp
     User/APP/imu_temp_ctrl/imu_temp_ctrl.cpp
     User/APP/shoot/shoot.cpp
@@ -248,6 +249,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     User/APP
     # User/APP/chassis
     # User/APP/steering_wheel
+    User/APP/chassis/power_ctrl
     User/APP/gimbal
     User/APP/imu_temp_ctrl
     User/APP/shoot

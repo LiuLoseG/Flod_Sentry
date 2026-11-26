@@ -1,37 +1,40 @@
 
 
-GraphedExpression="((gimbal).now_val).small_yaw_angle", Color=#e56a6f
-GraphedExpression="((gimbal).target_val).small_yaw_angle", Color=#35792b
+GraphedExpression="((gimbal).now_val).small_yaw_angle", Color=#e56a6f, Show=0
+GraphedExpression="((gimbal).target_val).small_yaw_angle", Color=#35792b, Show=0
 GraphedExpression="((gimbal).now_val).small_pitch_angle", Color=#769dda, Show=0
 GraphedExpression="((gimbal).target_val).small_pitch_angle", Color=#b14f0d, Show=0
 GraphedExpression="((gimbal).now_val).big_pitch_angle", Color=#b3c38e, Show=0
 GraphedExpression="((gimbal).target_val).big_pitch_angle", Color=#ab7b05, Show=0
 GraphedExpression="((gimbal).now_val).small_yaw_omega", Color=#7fd3b7, Show=0
-GraphedExpression="((gimbal).target_val).small_yaw_omega", Color=#50328f, Show=0
+GraphedExpression="((gimbal).target_val).small_yaw_omega", Color=#50328f
 GraphedExpression="((gimbal).now_val).small_pitch_omega", Color=#c587a5, Show=0
 GraphedExpression="((gimbal).target_val).small_pitch_omega", Color=#999401, Show=0
 GraphedExpression="((gimbal).now_val).big_pitch_omega", Color=#aa1d24, Show=0
 GraphedExpression="((gimbal).target_val).big_pitch_omega", Color=#86d27e, Show=0
-GraphedExpression="((gimbal).now_val).gimbal_yaw_angle", Color=#2a5191
-GraphedExpression="((gimbal).target_val).gimbal_yaw_angle", Color=#f49758
+GraphedExpression="((gimbal).now_val).gimbal_yaw_angle", Color=#2a5191, Show=0
+GraphedExpression="((gimbal).target_val).gimbal_yaw_angle", Color=#f49758, Show=0
+GraphedExpression="((gimbal).small_yaw_ff_out).dynamic_nm", Color=#5f6c3a, Show=0
+GraphedExpression="((gimbal).small_yaw_motor).control_torque", Color=#aa0000, Show=0
+GraphedExpression="((gimbal).small_yaw_ff_tracker).rate_rad_s", Color=#2e7d64
 OpenDocument="main.c", FilePath="E:/use/Flod_Sentry/Flod_Sentry/Core/Src/main.c", Line=65
 OpenDocument="hi12_imu.h", FilePath="E:/use/Flod_Sentry/Flod_Sentry/User/Drive/imu/hi12_imu/hi12_imu.h", Line=190
 OpenDocument="shoot.cpp", FilePath="E:/use/Flod_Sentry/Flod_Sentry/User/APP/shoot/shoot.cpp", Line=9
 OpenDocument="gimbal.cpp", FilePath="E:/use/Flod_Sentry/Flod_Sentry/User/APP/gimbal/gimbal.cpp", Line=21
 OpenToolbar="Debug", Floating=0, x=0, y=0
-OpenWindow="Disassembly", DockArea=RIGHT, x=0, y=1, w=1383, h=379, TabPos=0, TopOfStack=0, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
-OpenWindow="Watched Data 1", DockArea=LEFT, x=0, y=0, w=959, h=951, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
-OpenWindow="Code Profile", DockArea=LEFT, x=0, y=1, w=959, h=575, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, GroupByFiles=0, SortRespectsFilters=0, ParentRelativeLoad=0
-OpenWindow="Data Sampling", DockArea=RIGHT, x=0, y=1, w=1383, h=379, TabPos=1, TopOfStack=1, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VisibleTab=0, UniformSampleSpacing=0
-OpenWindow="Timeline", DockArea=RIGHT, x=0, y=0, w=1383, h=1110, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=1, DataPaneShown=1, PowerPaneShown=0, CodePaneShown=0, PinCursor="Cursor Movable", TimePerDiv="500 ms / Div", TimeStampFormat="Time", DataGraphDrawAsPoints=0, DataGraphLegendShown=1, DataGraphUniformSampleSpacing=0, DataGraphLegendPosition="667;320", DataGraphShowNamesAtCursor=0, PowerGraphDrawAsPoints=0, PowerGraphLegendShown=0, PowerGraphAvgFilterTime=Off, PowerGraphAvgFilterLen=Off, PowerGraphUniformSampleSpacing=0, PowerGraphLegendPosition="1137;-133", CodeGraphLegendShown=0, CodeGraphLegendPosition="1170;0"
+OpenWindow="Disassembly", DockArea=RIGHT, x=0, y=1, w=1383, h=407, TabPos=0, TopOfStack=0, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Watched Data 1", DockArea=LEFT, x=0, y=0, w=722, h=972, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0
+OpenWindow="Code Profile", DockArea=LEFT, x=0, y=1, w=722, h=602, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, GroupByFiles=0, SortRespectsFilters=0, ParentRelativeLoad=0
+OpenWindow="Data Sampling", DockArea=RIGHT, x=0, y=1, w=1383, h=407, TabPos=1, TopOfStack=1, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=0, VisibleTab=0, UniformSampleSpacing=0
+OpenWindow="Timeline", DockArea=RIGHT, x=0, y=0, w=1383, h=1130, FilterBarShown=0, TotalValueBarShown=0, ToolBarShown=1, DataPaneShown=1, PowerPaneShown=0, CodePaneShown=0, PinCursor="Cursor Movable", TimePerDiv="500 ms / Div", TimeStampFormat="Time", DataGraphDrawAsPoints=0, DataGraphLegendShown=1, DataGraphUniformSampleSpacing=0, DataGraphLegendPosition="599;226", DataGraphShowNamesAtCursor=0, PowerGraphDrawAsPoints=0, PowerGraphLegendShown=0, PowerGraphAvgFilterTime=Off, PowerGraphAvgFilterLen=Off, PowerGraphUniformSampleSpacing=0, PowerGraphLegendPosition="1030;-133", CodeGraphLegendShown=0, CodeGraphLegendPosition="1063;0"
 SmartViewPlugin="", Page="", Toolbar="Hidden", Window="SmartView 1"
-TableHeader="Data Sampling Table", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";" ((gimbal).now_val).small_yaw_angle";" ((gimbal).target_val).small_yaw_angle";" ((gimbal).now_val).small_pitch_angle";" ((gimbal).target_val).small_pitch_angle";" ((gimbal).now_val).big_pitch_angle";" ((gimbal).target_val).big_pitch_angle";" ((gimbal).now_val).small_yaw_omega";" ((gimbal).target_val).small_yaw_omega";" ((gimbal).now_val).small_pitch_omega";" ((gimbal).target_val).small_pitch_omega";" ((gimbal).now_val).big_pitch_omega";" ((gimbal).target_val).big_pitch_omega";" ((gimbal).now_val).gimbal_yaw_angle";" ((gimbal).target_val).gimbal_yaw_angle"], ColWidths=[100;100;100;100;100;100;100;100;100;100;100;100;100;100;100;100]
-TableHeader="Data Sampling Setup", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Type";"Value";"Min";"Max";"Average";"# Changes";"Min. Change";"Max. Change"], ColWidths=[638;103;254;238;222;238;171;254;238]
 TableHeader="Code Profile", SortCol="File / Function", SortOrder="ASCENDING", VisibleCols=["File / Function";"Source Coverage";"Inst. Coverage";"Run Count";"Fetch Count";"Load"], ColWidths=[2344;219;230;148;172;152]
 TableHeader="Power Sampling", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";"Ch 0"], ColWidths=[100;100;100]
 TableHeader="Task List", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Name";"Run Count";"Priority";"Status";"Timeout";"Stack Info";"ID";"Mutex Count";"Notified Value";"Notify State"], ColWidths=[110;110;110;110;110;110;110;110;110;110]
-TableHeader="Watched Data 1", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Value";"Location";"Refresh";"Access"], ColWidths=[359;325;173;116;158]
+TableHeader="Watched Data 1", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Value";"Location";"Refresh";"Access"], ColWidths=[359;319;128;116;158]
 TableHeader="RegisterSelectionDialog", SortCol="None", SortOrder="ASCENDING", VisibleCols=[], ColWidths=[]
+TableHeader="Data Sampling Table", SortCol="None", SortOrder="ASCENDING", VisibleCols=["Index";"Time";" ((gimbal).now_val).small_yaw_angle";" ((gimbal).target_val).small_yaw_angle";" ((gimbal).now_val).small_pitch_angle";" ((gimbal).target_val).small_pitch_angle";" ((gimbal).now_val).big_pitch_angle";" ((gimbal).target_val).big_pitch_angle";" ((gimbal).now_val).small_yaw_omega";" ((gimbal).target_val).small_yaw_omega";" ((gimbal).now_val).small_pitch_omega";" ((gimbal).target_val).small_pitch_omega";" ((gimbal).now_val).big_pitch_omega";" ((gimbal).target_val).big_pitch_omega";" ((gimbal).now_val).gimbal_yaw_angle";" ((gimbal).target_val).gimbal_yaw_angle";" ((gimbal).small_yaw_ff_out).dynamic_nm";" ((gimbal).small_yaw_motor).control_torque";" ((gimbal).small_yaw_ff_tracker).rate_rad_s"], ColWidths=[100;100;100;100;100;100;100;100;100;100;100;100;100;100;100;100;100;100;100]
+TableHeader="Data Sampling Setup", SortCol="Expression", SortOrder="ASCENDING", VisibleCols=["Expression";"Type";"Value";"Min";"Max";"Average";"# Changes";"Min. Change";"Max. Change"], ColWidths=[638;103;174;100;174;174;171;200;199]
 TableHeader="TargetExceptionDialog", SortCol="Name", SortOrder="ASCENDING", VisibleCols=["Name";"Value";"Address";"Description"], ColWidths=[200;243;100;570]
 WatchedExpression="gimbal", RefreshRate=5, Window=Watched Data 1
 WatchedExpression="small_pitch_gravity", Window=Watched Data 1
