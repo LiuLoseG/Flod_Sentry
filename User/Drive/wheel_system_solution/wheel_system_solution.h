@@ -105,12 +105,12 @@ typedef struct
 
     // 优化后的输出参数
     float optimize_angle[4];     // 舵向目标角, rad (多圈, 含零位; 同时是下一拍斜坡基准)
-    float optimize_speed[4];     // 轮向目标速度, rad/s (已含精确投影、四轮公共削减与方向符号; 纯力控为 0)
+    float optimize_speed[4];     // 轮向目标速度, rad/s (已含精确投影、逐轮 cos³ 削减与方向符号; 纯力控为 0)
 
     float optimize_direction[4]; // 轮速方向分支, ±1 (就近转位的翻转状态, 兼作下一拍迟滞记忆; 只由逆解写)
                                  //   迟滞带内 sign(optimize_speed) 可能与它不同, 速度符号以 optimize_speed 为准
     float cosine_optimize[4];    // 该轮 solution_speed -> optimize_speed 的实际倍数(幅值), [0,1]
-                                 //   速控 = 精确投影 |cos e| × 四轮公共削减 min|cos e|²; 力控 = |cos e|³ (逐轮)
+                                 //   速控 = 精确投影 |cos e| × 逐轮 cos³ 削减; 力控 = |cos e|³ (逐轮)
     float error_angle[4];        // 真实未对齐角, rad (相对所选方向分支, 0 表示已对齐; 速控与力控共用)
     float force_direction[4];    // 轮端出力方向, ±1 (+1 = 沿当前舵向 +û(θ) 推底盘; 只由力控写)
                                  //   纯力控与混控同判据 = sign(力在**实测**舵向 û(θ_now) 上的投影), 与轮速方向无关

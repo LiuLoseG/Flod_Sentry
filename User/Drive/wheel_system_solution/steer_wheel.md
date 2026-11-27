@@ -172,7 +172,7 @@ target = clamp(desired, prev − target_max_step, prev + target_max_step);
 
 ### 4.5 余弦削减（`cosine_optimize_enable`）
 
-舵向未对齐时，轮子只能沿**实测舵向** `û(θ_now)` 滚动，可实现的轮速是目标轮心速度在该方向上的投影。这条物理约束必须逐轮保留；在此之上再加一层"给舵向留对齐时间"的**附加**削减，且这一层必须四轮同值。
+舵向未对齐时，轮子只能沿**实测舵向** `û(θ_now)` 滚动，可实现的轮速是目标轮心速度在该方向上的投影。这条物理约束逐轮保留；在此之上，速控与纯力控一样按每轮有效误差做 cos³ 削减。
 
 ```cpp
 e_align = wrap(solution_angle[i] + 零位 − now_angle, 2π);        // 真实未对齐角
@@ -180,9 +180,9 @@ e_eff   = (dir < 0) ? wrap(e_align + π, 2π) : e_align;           // 折到所�
 cos_b   = cos(e_eff);                                            // 分支对齐角
 
 // 速度域
-proj_i  = (cos_b > 0) ? dir · cos_b : 0;                         // 精确投影 = cos(θ_sol − θ_now)
-s       = min_j |proj_j|²                                        // 附加削减: 四轮共用 (开关关/死区内为 1)
-speed_i = solution_speed_i · proj_i · s
+proj_i  = dir · cos_b                                             // 精确投影 = cos(θ_sol − θ_now)
+k_i     = constrain((nearest ? |cos_b| : cos_b)³, 0, 1)          // 逐轮削减 (开关关/死区内为 1)
+speed_i = solution_speed_i · proj_i · k_i
 
 // 力控域
 k_i     = constrain(|cos_b|³, 0, 1);                             // 逐轮幅值
@@ -217,11 +217,11 @@ sign_i  = sign(cos(e_align))                                     // 出力符号
 | 项 | 是否逐轮 | 作用 | 破坏刚体一致性? |
 |----|----------|------|------------------|
 | `proj_i = dir·cos(e_eff)` | 逐轮（必须） | 无滑移约束本身，等于把目标轮心速度投影到实测轮向 | 否（四轮投影仍是同一 twist 的像，残差 < 1e-14 m/s） |
-| `s = min_j proj_j²` | **四轮同值（必须）** | 额外的 `cos²` 减速，给舵向留对齐时间 | 否（公共比例只缩放 twist） |
+| `k_i = constrain((nearest ? |cos_b| : cos_b)³, 0, 1)` | 逐轮 | 按各轮有效误差削减，和力控的 cos³ 幅值一致 | 是（不同轮削减比例可能改变整体 twist） |
 
-反例：把 `cos²` 也做成逐轮（`k_i = |cos|³`）会让四轮轮速不再是任何单一 twist 的像。实测（随机 twist × 随机舵向 4000 组）：单帧一致性残差中位 **0.123 m/s**、p99 0.600；实现出的 twist 平移方向误差 p90 **25°**、p99 61°。闭环 1 s 直行阶跃（1 kHz、舵向 12 rad/s、起始舵向 `[0,15,−20,35]°`）横向漂 2.4 cm、航向 −8.4 mrad；改为公共削减后为 0.3 cm、−0.8 mrad。
+逐轮削减会让四轮轮速不再严格对应单一刚体 twist；收益是每轮依据自身舵角误差平滑降额，不再由单轮角度决定四轮共同减速。需要以仿真和实车检查转向过程中的轨迹偏差。
 
-**为什么取 `min`**：最不对齐的那只轮是刮擦最严重的，用它定全车减速最保守；且它在对齐过程中单调回到 1，不会引入新的稳态偏差。想更激进可换成均值/中位，但**只要不是逐轮**都保一致性。
+速控和力控均按有效角误差逐轮削减；就近转位取余弦幅值，关闭就近转位时负余弦经限幅归零，避免未对齐轮输出反向速度。
 
 **误差源必须是真实未对齐角**：早期实现取的是 `planned_target − now_angle`（斜坡之后），斜坡每拍只推进 `target_max_step`，该误差恒很小，削减恒接近 1，形同虚设。实测（指令突变 90°、舵向仍停在 0、`target_max_step = 0.02`）：旧写法前 30 拍 `k = 0.999 → 0.539`，现写法全程 `k = 0.000`。若要让车辆"边转边走"，应调大 `target_max_step` 或直接关掉余弦开关，而不是靠误差源取巧。
 
@@ -242,9 +242,9 @@ sign_i  = sign(cos(e_align))                                     // 出力符号
 
 ### 4.6 合成、限速与对齐判据
 
-合成：`optimize_speed = solution_speed · proj · s`（`proj = dir·cos(e_eff)`，`s = min_j proj_j²`）；`cmd_zero` 时在上述计算后统一清零，保证纯几何解也为 0。
+合成：`optimize_speed = solution_speed · proj · k_i`（`proj = dir·cos(e_eff)`，`k_i = constrain((nearest ? |cos(e_eff)| : cos(e_eff))³, 0, 1)`；开关关闭或死区内 `k_i = 1`）；`cmd_zero` 时在上述计算后统一清零，保证纯几何解也为 0。
 
-`cosine_optimize[]` 报的是该轮 `solution_speed → optimize_speed` 的**实际倍数**（幅值）：`|proj| · s`，恒在 `[0,1]` 内；锁定/零速轮报 `1`。`optimize_direction[]` 只是迟滞记忆，**速度符号一律以 `optimize_speed` 为准**（迟滞带内二者可能不同）。
+`cosine_optimize[]` 报的是该轮 `solution_speed → optimize_speed` 的**实际倍数**（幅值）：`|proj| · k_i`，恒在 `[0,1]` 内；锁定/零速轮报 `1`。`optimize_direction[]` 只是迟滞记忆，**速度符号一律以 `optimize_speed` 为准**（迟滞带内二者可能不同）。
 
 全局限速：`max|optimize_speed| > max_wheel_speed` 时四轮按同一比例缩放（`solution_speed` 同步缩放，避免下游改读它绕过限速），不改变运动形态。
 

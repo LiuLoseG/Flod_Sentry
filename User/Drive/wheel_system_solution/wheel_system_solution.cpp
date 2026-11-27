@@ -957,7 +957,7 @@ static float steer_limit_target_step(const float &__target, const float &__curre
  * @param __flip_hysteresis       就近转位翻转迟滞, rad; 须在 [0, π/2), 否则跳过
  * @param __max_wheel_torque      单轮轮端力矩上限, N·m; 须 > 0
  * @param __force_deadband        单轮力死区(扣除式), N; 允许 0
- * @param __cosine_optimize_enable    余弦削减开关 (速控与力控共用; 速控关掉的是四轮公共 cos² 削减, 精确投影保留)
+ * @param __cosine_optimize_enable    余弦削减开关 (速控与力控共用; 速控关掉的是逐轮 cos³ 削减, 精确投影保留)
  * @param __nearest_optimize_enable   就近转位开关 (速控与力控共用)
  * @param __target_step_limit_enable  舵向目标斜坡限幅开关 (速控与力控共用)
  * @note  校验口径分两种, 因为两类参数的性质不同:
@@ -1050,8 +1050,7 @@ void steer_wheel_class::init(const wheel_control_method_e &__control_method,
 /**
  * @brief 舵轮逆运动学解算 + 余弦削减
  * @note  就近转位 / 斜坡限幅 / 余弦削减分别由对应开关控制; 舵向死区依附余弦开关
- * @note  速度域 = 逐轮精确投影(dir·cos e_eff) × 四轮公共削减(second-min |cos e_eff|²): 前者是无滑移约束本身,
- *        后者才是"给舵向留对齐时间"的额外减速, 必须四轮同值, 否则四轮轮速不再是同一底盘 twist 的像
+ * @note  速度域 = 逐轮精确投影(dir·cos e_eff) × 逐轮 cos³ 削减; 逐轮降额会改变轮速间比例
  * @note  入口清零力控输出: wheel_torque 只在本拍有力控调用时才非零, 避免上一拍力矩残留
  */
 void steer_wheel_class::inverse_calculate_callback()
@@ -1090,11 +1089,6 @@ void steer_wheel_class::inverse_calculate_callback()
                                    ? atan2f(vel_y, vel_x)
                                    : steer_encoder_direction * basic_math_modulus_normalization(status.now_angle[i] - Enc_Zero_Angle[i], 2.0f * PI);
     }
-
-    // 精确投影: 轮子只能沿实测舵向滚动, 可实现的轮速就是目标轮心速度在该方向上的分量,·
-    float speed_projection[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-    // 余弦削减: 轮速额外乘以 cos²(e_eff) 的第二小值, 以给舵向留对齐时间; 只登记候选值, 合成时取第二小值
-    float speed_derate_candidate[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 
     // 舵向目标规划: 就近转位 + 斜坡限幅 + 死区 + 余弦削减
     for (uint8_t i = 0; i < 4; i++)
@@ -1146,37 +1140,22 @@ void steer_wheel_class::inverse_calculate_callback()
         // 非小陀螺模式，舵向已足够对其，不再削减轮速，避免舵向抖动
         const bool in_deadband = (fabsf(effective_error) < steer_angle_deadband) && (control_mode != 2);
 
-        // 余弦削减: 轮速额外乘以 cos²(e_eff) 的第二小值, 以给舵向留对齐时间; 只登记候选值, 合成时取第二小值
-        const float cos_branch = arm_cos_f32(effective_error);
-        // 精确投影: 轮子只能沿实测舵向滚动, 可实现的轮速就是目标轮心速度在该方向上的分量
-        speed_projection[i] = status.optimize_direction[i] * cos_branch;
-
-        // 额外的 cos² 安全削减只登记候选值, 合成时取第二小值: 单轮异常不应令整车停转。
+        // 余弦削减使用真实未对齐角；就近转位取幅值，避免与方向标志重复翻转
         if (cosine_optimize_enable && !in_deadband)
         {
-            speed_derate_candidate[i] = cos_branch * cos_branch;
+            const float cos_angle_raw = arm_cos_f32(effective_error);
+            const float cos_angle = nearest_optimize_enable ? fabsf(cos_angle_raw) : cos_angle_raw;
+            status.cosine_optimize[i] = basic_math_constrain(cos_angle * cos_angle * cos_angle, 0.0f, 1.0f);
+        }
+        else
+        {
+            status.cosine_optimize[i] = 1.0f;
         }
     }
 
-    float smallest = 1.0f;
     for (uint8_t i = 0; i < 4; i++)
     {
-        if (speed_derate_candidate[i] < smallest)
-        {
-            smallest = speed_derate_candidate[i];
-        }
-    }
-    const float speed_derate = cosine_optimize_enable ? smallest : 1.0f;
-
-    for (uint8_t i = 0; i < 4; i++)
-    {
-        // 精确投影(保运动学一致) × 第二小值公共削减(容忍单轮异常且保整体运动形态)
-        status.optimize_speed[i] = status.solution_speed[i] * speed_projection[i] * speed_derate;
-
-        if (status.solution_speed[i] > 0.0f)
-        {
-            status.cosine_optimize[i] = fabsf(speed_projection[i]) * speed_derate;
-        }
+        status.optimize_speed[i] = status.solution_speed[i] * status.cosine_optimize[i] * status.optimize_direction[i];
     }
 
     // 静止死区: 舵轮锁定当前角的同时, 轮速一并清零, 避免小幅爬行
