@@ -24,35 +24,48 @@
 
 /*--------------------------------------------------云台-------------------------------------------------------*/
 
-#define YAW_SMALL_TORQUE_LIMIT 1.0f
-#define PITCH_TORQUE_LIMIT 1.8f
-#define PITCH_GRAVITY_COMPENSATION -0.85f
+/*--------------------------Gimbal_All-------------------------------*/
 
-// 云台yaw轴对齐时是否大于0度, 若大于则设为1，否则设为0
-#define YAW_RAD_MIDDLE_THAN_ZERO 1
+#define YAW_RAD_MIDDLE_THAN_ZERO 1      // 云台yaw轴对齐时是否大于0度, 若大于则设为1，否则设为0
+#define YAW_MOTOR_MID_ANGLE 1.64509869f // yaw电机中间位置角度 (单位: rad)
 
-// yaw电机中间位置角度 (单位: rad)
-#define YAW_MOTOR_MID_ANGLE 1.64509869f
+/*--------------------------Small_Yaw-------------------------------*/     
 
-// pitch轴电机中间位置角度 (单位: rad)
-#define PITCH_MOTOR_MID_ANGLE 0.377454847f
-// 小yaw电机中间位置角度 (单位: rad)          
-#define YAW_SMALL_MOTOR_MID_ANGLE 3.50284529f      
+#define SMALL_YAW_MAX_INCREASE_ANGLE 0.3f // 小yaw轴最大角度增量 (单位: rad)
+#define SMALL_YAW_DOWN_MIN_ANGLE -0.02631736f // -1.71288121f - SMALL_YAW_MOTOR_MID_ANGLE = -0.02631736小yaw轴向下时的最小角度 (单位: rad)
+#define SMALL_YAW_DOWN_MAX_ANGLE 0.02631736f // -1.66024649 - SMALL_YAW_MOTOR_MID_ANGLE = 0.02631736小yaw轴向下时的最大角度 (单位: rad)
 
-// 云台PITCH轴限辐，0.780412078 - 1.320412078 = -0.599690202 留0.04f的余量
-#define PITCH_MIN_OFFSET -0.54f 
-// 云台PITCH轴限辐，2.02034688 - 1.38010228 = 0.6402446 留0.08f的余量           
-#define PITCH_MAX_OFFSET 0.55f               
+#define SMALL_YAW_MOTOR_MID_ANGLE -1.68656385f  // 小yaw电机中间位置角度 (单位: rad)     
+#define SMALL_YAW_MIN_OFFSET -0.32695707f       // 云台YAW轴限辐，-2.05352092 - SMALL_YAW_MOTOR_MID_ANGLE = -0.36695707 留0.04f的余量       
+#define SMALL_YAW_MAX_OFFSET 0.50f         // 云台YAW轴限辐，-1.27080715 - SMALL_YAW_MOTOR_MID_ANGLE = 0.4157567 留0.04f的余量  
 
-// 云台YAW轴限辐，2.88848591 - 3.49364138 = -0.60515547 留0.04f的余量
-#define YAW_SMALL_MIN_OFFSET -0.56515547f 
-// 云台YAW轴限辐，4.1033988 - 3.49364138 = 0.60899019 留0.06f的余量         
-#define YAW_SMALL_MAX_OFFSET 0.54899019f           
+#define SMALL_YAW_ANGLE_INCREMENT_RATION 0.0035f // 小yaw电机单次角度增量系数 (单位: rad/单位输入)
 
-// 小yaw电机单次角度增量系数 (单位: rad/单位输入)
-#define YAW_SMALL_ANGLE_INCREMENT_RATION    0.0035f 
-// pitch电机单次角度增量系数 (单位: rad/单位输入)       
-#define PITCH_ANGLE_INCREMENT_RATION        0.0020f        
+#define SMALL_YAW_TORQUE_LIMIT 2.5f             // 小yaw电机扭矩限幅 (单位: N·m)
+
+/*--------------------------Small_Pitch-----------------------------*/   
+
+#define SMALL_PITCH_DOWN_MIN_ANGLE -2.06397104f // 小pitch轴向下时的角度 (单位: rad)
+#define SMALL_PITCH_DOWN_MAX_ANGLE -1.79073071f // 小pitch轴向下时的最大角度 (单位: rad)
+
+#define SMALL_PITCH_MOTOR_MID_ANGLE -0.975132346f       // 小pitch轴电机中间位置角度 (单位: rad)
+#define SMALL_PITCH_MIN_OFFSET -0.988458874f            // 小PITCH轴限辐，-1.96359122-(-0.975132346) = -0.988458874 留0.04f的余量
+#define SMALL_PITCH_MAX_OFFSET 0.659132331f             // 小PITCH轴限辐，-0.316000015-(-0.975132346) = 0.659132331 留0.08f的余量            
+#define SMALL_PITCH_ANGLE_INCREMENT_RATION 0.0020f      // pitch电机单次角度增量系数 (单位: rad/单位输入)      
+
+#define SMALL_PITCH_TORQUE_LIMIT 2.4f                   // 小pitch电机扭矩限幅 (单位: N·m)      
+
+/*----------------------------Big_Yaw-------------------------------*/   
+
+#define BIG_YAW_SCAN_OMEGA 1.0f                         // 大yaw扫描角速度 (单位: rad/s)
+
+/*----------------------------Big_Pitch-----------------------------*/  
+
+#define BIG_PITCH_MOTOR_FIL_DIF_ANGLE 0.05f    // 大pitch电机角度到位判断阈值 (单位: rad)
+#define BIG_PITCH_START_ANGLE -0.12128035f      // 大pitch电机起始角度 (单位: rad)
+#define BIG_PITCH_MOTOR_TAG_ANGLE -2.19640636f  // 大pitch轴电机目标位置角度 (单位: rad)
+
+#define BIG_PITCH_TORQUE_LIMIT 2.0f             // 大pitch轴电机扭矩限幅 (单位: N·m)
 
 /*--------------------------------------------------发射机构-------------------------------------------------------*/
 
@@ -69,7 +82,7 @@
 #define FRICT_TORQUE_ERR_HIGH  0.030f  // 偏差高于此值使用α_max(真实力矩事件)
 
 // 拨盘电机齿轮减速比
-#define TRTGGER_TOOTHED_REDUCTION 2.5f    
+#define TRTGGER_TOOTHED_REDUCTION 1.1818182f    // 52/44
 
 // 拨盘满载弹丸数量
 #define TRIGGER_PILL_NUM        9.0f               
@@ -78,7 +91,7 @@
 #define TRIGGER_PILL_TURN_RAD ((TRTGGER_TOOTHED_REDUCTION * 2.0f * PI) / TRIGGER_PILL_NUM)       
 
 // 拨盘电机默认旋转频率18HZ(单位: Hz)
-#define TRIGGER_AMMO_FREQUENCY_DEFAULT   18.0f
+#define TRIGGER_AMMO_FREQUENCY_DEFAULT   5.0f
 // 拨盘电机默认旋转速度18HZ(单位: rad/s)
 #define TRIGGER_DRIVER_OMEGA_DEFAULT ((TRIGGER_AMMO_FREQUENCY_DEFAULT / 9.0f * TRTGGER_TOOTHED_REDUCTION) * 2.0f * PI)
 

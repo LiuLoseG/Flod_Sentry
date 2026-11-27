@@ -8,6 +8,7 @@
 /* Exported macros -----------------------------------------------------------*/
 extern const float BASIC_MATH_RPM_TO_RADPS;
 extern const float BASIC_MATH_DEG_TO_RAD;
+extern const float BASIC_MATH_RAD_TO_DEG;
 extern const float BASIC_MATH_CELSIUS_TO_KELVIN;
 
 /* Exported types ------------------------------------------------------------*/

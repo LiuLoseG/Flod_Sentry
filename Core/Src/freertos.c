@@ -117,12 +117,12 @@ const osThreadAttr_t safe_daemon_attributes = {
   .stack_size = sizeof(safe_daemonBuffer),
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for ins_task_rtos */
-osThreadId_t ins_task_rtosHandle;
+/* Definitions for imu */
+osThreadId_t imuHandle;
 uint32_t ins_task_rtosBuffer[ 1024 ];
 osStaticThreadDef_t ins_task_rtosControlBlock;
-const osThreadAttr_t ins_task_rtos_attributes = {
-  .name = "ins_task_rtos",
+const osThreadAttr_t imu_attributes = {
+  .name = "imu",
   .cb_mem = &ins_task_rtosControlBlock,
   .cb_size = sizeof(ins_task_rtosControlBlock),
   .stack_mem = &ins_task_rtosBuffer[0],
@@ -200,8 +200,8 @@ void MX_FREERTOS_Init(void) {
   /* creation of safe_daemon */
   safe_daemonHandle = osThreadNew(safe_daemon_task, NULL, &safe_daemon_attributes);
 
-  /* creation of ins_task_rtos */
-  ins_task_rtosHandle = osThreadNew(imu_task, NULL, &ins_task_rtos_attributes);
+  /* creation of imu */
+  imuHandle = osThreadNew(imu_task, NULL, &imu_attributes);
 
   /* creation of chassis */
   chassisHandle = osThreadNew(chassis_task, NULL, &chassis_attributes);

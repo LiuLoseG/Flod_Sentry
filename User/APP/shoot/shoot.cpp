@@ -67,14 +67,14 @@ void shoot_init(void)
     shoot.fric_r_motor.init(&hfdcan2, Motor_DJI_ID_0x201, DJI_Motor_Control_Method_Omega, 1.0f);
     shoot.fric_l_motor.init(&hfdcan2, Motor_DJI_ID_0x202, DJI_Motor_Control_Method_Omega, 1.0f);
 
-    shoot.trigger_motor.init(&hfdcan2, Motor_DJI_ID_0x203, DJI_Motor_Control_Method_Angle);
+    shoot.trigger_motor.init(&hfdcan2, Motor_DJI_ID_0x203, DJI_Motor_Control_Method_Omega, 268.0f/17.0f);
 
     //pid初始化
     shoot.fric_r_motor.pid_omega.init(0.00135f, 0.0f, 0.0f, 0.0f, 5.0f, 20.0f);
     shoot.fric_l_motor.pid_omega.init(0.00135f, 0.0f, 0.0f, 0.0f, 5.0f, 20.0f);
 
-    shoot.trigger_motor.pid_angle.init(30.0f, 0.0f, 0.0f, 0.0f, 5.0f, 35.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE);
-    shoot.trigger_motor.pid_omega.init(0.85f, 0.0f, 0.004f, 0.0f, 5.0f, 10.0f);
+    shoot.trigger_motor.pid_angle.init(22.0f, 0.0f, 0.0f, 0.0f, 5.0f, 35.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE);
+    shoot.trigger_motor.pid_omega.init(0.68f, 1.5f, 0.0f, 0.0f, 1.2f, 3.0f, 0.001f, 0.02f, 0.52f, 0.865f, 0.98f, PID_D_First_ENABLE);
 
     // 斜坡函数初始化，摩擦轮电机转速缓慢上升
     shoot.fric_r_slope.init(0.12f, 0.12f, Slope_First_REAL);
@@ -91,7 +91,7 @@ void shoot_init(void)
     shoot.fric_spin_up_flag = false;    // 摩擦轮电机转速上升标志位, 0:未上升, 1:已上升
 
     // 波形生成器初始化，拨盘电机角度跟踪波形
-    wave_generator_init(&trigger_wave, WAVE_SQUARE, 0.2f, 1.7453f, 0.0f);
+    wave_generator_init(&trigger_wave, WAVE_SQUARE, 0.2f, TRIGGER_PILL_TURN_RAD, 0.0f);
     wave_generator_enable(&trigger_wave);
 
     // 注册 CAN 接收分发规则（统一分发层）
@@ -271,6 +271,10 @@ void shoot_control_decision(void)
             shoot.target_value.trigger_angle = shoot.now_value.trigger_angle;
             shoot.target_value.trigger_omega = 0.0f;
 
+            // pid复位
+            shoot.trigger_motor.pid_angle.pid_clear();  
+            shoot.trigger_motor.pid_omega.pid_clear();  
+
             // 摩擦轮电机斜坡函数计算
             shoot.fric_r_motor.set_target_omega(shoot.fric_r_slope.get_out());
             shoot.fric_l_motor.set_target_omega(shoot.fric_l_slope.get_out());
@@ -320,6 +324,10 @@ void shoot_control_decision(void)
                 shoot.trigger_motor.set_target_torque(0.0f);
             }
 
+            // pid复位
+            shoot.trigger_motor.pid_angle.pid_clear();  
+            shoot.trigger_motor.pid_omega.pid_clear();  
+
             break;
         }
 
@@ -341,7 +349,7 @@ void shoot_control_decision(void)
             // 热量控制机制
             if ((shoot.decision->heat_fsm.get_now_heat() + 30.0f) <= shoot.decision->get_heat_maximum())
             {
-                shoot.target_value.trigger_angle = shoot.now_value.trigger_angle + TRIGGER_PILL_TURN_RAD;  // 拨盘电机转动一个弹丸的角度
+                shoot.target_value.trigger_angle = shoot.now_value.trigger_angle - TRIGGER_PILL_TURN_RAD;  // 拨盘电机转动一个弹丸的角度
                 shoot.trigger_motor.set_target_angle(shoot.target_value.trigger_angle);
             }
 
@@ -355,7 +363,7 @@ void shoot_control_decision(void)
             shoot.trigger_motor.set_control_method(DJI_Motor_Control_Method_Omega);
             shoot.fric_r_motor.set_control_method(DJI_Motor_Control_Method_Omega);
             shoot.fric_l_motor.set_control_method(DJI_Motor_Control_Method_Omega);
-
+            
             // 连发模式下，摩擦轮电机正常控制，拨盘电机按照波形生成器输出角度进行控制
             shoot.target_value.fric_r_omega = -FRICT_MOTOR_SPEED_SET;
             shoot.target_value.fric_l_omega = FRICT_MOTOR_SPEED_SET;
@@ -366,15 +374,18 @@ void shoot_control_decision(void)
 
             if(TRIGGER_DRIVER_OMEGA_DEFAULT <= shoot.Heat_Balance_Omega)
             {
-                shoot.target_value.trigger_omega = TRIGGER_DRIVER_OMEGA_DEFAULT;
+                shoot.target_value.trigger_omega = -TRIGGER_DRIVER_OMEGA_DEFAULT;
             }
 
             else
             {
                 // 热量平衡，拨盘电机按照热量比例调整旋转速度
-                shoot.target_value.trigger_omega = (shoot.Heat_Balance_Omega - TRIGGER_DRIVER_OMEGA_DEFAULT) / shoot.decision->get_heat_maximum()
-                * (shoot.decision->heat_fsm.get_now_heat() + 30.0f) + TRIGGER_DRIVER_OMEGA_DEFAULT;
+                shoot.target_value.trigger_omega = -1.0f * ((shoot.Heat_Balance_Omega - TRIGGER_DRIVER_OMEGA_DEFAULT) / shoot.decision->get_heat_maximum()
+                * (shoot.decision->heat_fsm.get_now_heat() + 30.0f) + TRIGGER_DRIVER_OMEGA_DEFAULT);
             }
+
+            // 拨盘电机角度PID复位
+            shoot.trigger_motor.pid_angle.pid_clear();  
 
             // 摩擦轮电机控制函数
             shoot.fric_r_motor.set_target_omega(shoot.fric_r_slope.get_out());
@@ -392,12 +403,12 @@ void shoot_control_decision(void)
 
             if(tmp_delta_heat >= HEAT_SLOWDOWN_THRESHOLD)   // 热量充足, 拨盘电机按照默认射速旋转
             {
-                shoot.target_value.trigger_omega = TRIGGER_DRIVER_OMEGA_DEFAULT;
+                shoot.target_value.trigger_omega = -TRIGGER_DRIVER_OMEGA_DEFAULT;
             }
 
             else if(tmp_delta_heat < HEAT_SLOWDOWN_THRESHOLD && tmp_delta_heat >= HEAT_CEASEFIRE_THRESHOLD) // 热量不足, 拨盘电机按照热量平衡射速旋转
             {
-                shoot.target_value.trigger_omega = ((TRIGGER_AMMO_FREQUENCY_DEFAULT * (HEAT_CEASEFIRE_THRESHOLD - tmp_delta_heat) + shoot.decision->get_heat_cd() / 10.0f * (tmp_delta_heat - HEAT_SLOWDOWN_THRESHOLD)) 
+                shoot.target_value.trigger_omega = -1.0f * ((TRIGGER_AMMO_FREQUENCY_DEFAULT * (HEAT_CEASEFIRE_THRESHOLD - tmp_delta_heat) + shoot.decision->get_heat_cd() / 10.0f * (tmp_delta_heat - HEAT_SLOWDOWN_THRESHOLD)) 
                                                     / (HEAT_CEASEFIRE_THRESHOLD - HEAT_SLOWDOWN_THRESHOLD)) * ((TRTGGER_TOOTHED_REDUCTION * 2.0f * PI) / TRIGGER_PILL_NUM);
             }
 
@@ -405,6 +416,9 @@ void shoot_control_decision(void)
             {
                 shoot.target_value.trigger_omega = 0.0f;
             }
+
+            // 拨盘电机角度PID复位
+            shoot.trigger_motor.pid_angle.pid_clear();  
 
             shoot.trigger_motor.set_control_method(DJI_Motor_Control_Method_Omega);
             shoot.fric_r_motor.set_control_method(DJI_Motor_Control_Method_Omega);
@@ -414,12 +428,13 @@ void shoot_control_decision(void)
             shoot.fric_r_motor.set_target_omega(-FRICT_MOTOR_SPEED_SET);
             shoot.fric_l_motor.set_target_omega(FRICT_MOTOR_SPEED_SET);
 
-
             break;
         }
 
         default:
         {
+            shoot.trigger_motor.pid_angle.pid_clear();  
+            shoot.trigger_motor.pid_omega.pid_clear();
             break;
         }
     }
@@ -456,7 +471,6 @@ void shoot_motor_calculate(void)
     shoot.trigger_motor.internal_calculate_callback(); 
 
     bsp_can_1_to_4_transmit(&hfdcan2, 0x200, can2_0x200_tx_data, Can_Transmit_Frequency_Div1);
-    // bsp_can_1_to_4_transmit(&hfdcan3, 0x200, can3_0x200_tx_data, Can_Transmit_Frequency_Div1);
 }
 
 /**
@@ -479,7 +493,7 @@ void shoot_motor_parameter_test(void)
     shoot.target_value.trigger_angle = wave_generator_calc(&trigger_wave);
     shoot.trigger_motor.set_target_angle(shoot.target_value.trigger_angle);
     shoot.trigger_motor.internal_calculate_callback();
-    bsp_can_1_to_4_transmit(&hfdcan3, 0x200, can3_0x200_tx_data, Can_Transmit_Frequency_Div1);
+    bsp_can_1_to_4_transmit(&hfdcan2, 0x200, can2_0x200_tx_data, Can_Transmit_Frequency_Div1);
 }
 
 /**
@@ -551,9 +565,15 @@ void shoot_jamming_fsm_class::fsm_calculate_callback()
 
         case Shoot_Fsm_Jamming_Status_Confirm:   // 卡弹确认状态
         {
-            shoot.trigger_motor.set_control_method(DJI_Motor_Control_Method_Angle);
-            shoot.trigger_motor.set_target_angle(shoot.trigger_motor.get_now_angle() - Driver_Back_Angle);  // 拨盘电机回退角度
-            shoot.target_value.trigger_angle = shoot.trigger_motor.get_now_angle() - Driver_Back_Angle;
+            shoot.trigger_motor.set_control_method(DJI_Motor_Control_Method_Torque);
+
+            shoot.target_value.trigger_angle = shoot.trigger_motor.get_now_angle();  // 拨盘电机保持当前位置
+            shoot.target_value.trigger_omega = shoot.trigger_motor.get_now_omega();  // 拨盘电机保持当前转速
+            shoot.trigger_motor.pid_angle.pid_clear();  // 拨盘电机角度PID复位
+            shoot.trigger_motor.pid_omega.pid_clear();  // 拨盘电机转速PID复位
+            shoot.trigger_motor.set_target_torque(0.0f);                             // 拨盘电机停止转动
+            // shoot.trigger_motor.set_target_angle(shoot.trigger_motor.get_now_angle() - Driver_Back_Angle);  // 拨盘电机回退角度
+            // shoot.target_value.trigger_angle = shoot.trigger_motor.get_now_angle() - Driver_Back_Angle;
             // 切换电机控制模式和控制角度-->卡弹处理状态
             set_status(Shoot_Fsm_Jamming_Status_Process);
             break;
@@ -568,7 +588,6 @@ void shoot_jamming_fsm_class::fsm_calculate_callback()
             }
             break;
         }
-
     }
 }
 

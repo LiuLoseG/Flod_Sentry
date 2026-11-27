@@ -232,13 +232,37 @@ void hi12_gyro::init(uart_manger_object *uart_manager) volatile
 }
 
 /**
+ * @brief 离线检查
+ */
+void hi12_gyro::alive_check() volatile
+{
+    // 若连续两次接收标志位未变化, 则认为连接断开
+    if (flag == pre_flag) 
+    {
+        hi12_status = HI12_Connection_Status_Disable;
+    } 
+
+    else
+    {
+        hi12_status = HI12_Connection_Status_Enable;
+    }
+
+    pre_flag = flag;
+}
+
+/**
  * @brief DMA 双缓冲回调入口 — 逐字节送入状态机
  */
 void hi12_gyro::parse_buffer(uint8_t *buf, uint16_t len) volatile
 {
     if (!buf || !len) return;
+
+    flag += 1;
+
     for (uint16_t i = 0; i < len; ++i)
+    {
         feed_byte(buf[i]);
+    }
 }
 
 /**
@@ -249,7 +273,12 @@ void hi12_gyro_uart_callback(uint8_t *buf, uint16_t len)
     hi12_data.parse_buffer(buf, len);
 }
 
-void h12_imu_init(uart_manger_object *uart_manager)
+void hi12_imu_init(uart_manger_object *uart_manager)
 {
     hi12_data.init(uart_manager);
+}
+
+void hi12_alive_check()
+{
+    hi12_data.alive_check();
 }

@@ -10,6 +10,8 @@
 const float BASIC_MATH_RPM_TO_RADPS = 2.0f * PI / 60.0f;
 // deg换算到rad
 const float BASIC_MATH_DEG_TO_RAD = PI / 180.0f;
+// rad换算到deg
+const float BASIC_MATH_RAD_TO_DEG = 180.0f / PI;
 // 摄氏度换算到开氏度
 const float BASIC_MATH_CELSIUS_TO_KELVIN = 273.15f;
 

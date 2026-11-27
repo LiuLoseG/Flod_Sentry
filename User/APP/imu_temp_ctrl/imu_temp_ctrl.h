@@ -1,16 +1,9 @@
 /**
  * @file imu_temp_ctrl.h
  * @author Robin Liu (19038200162@163.com)
- * @brief 板载 BMI088 IMU 的 DRDY 同步采样、恒温控制与姿态解算对外接口
- * @note  1) 对外单位: 角度 rad, 角速度 rad/s, 加速度 m/s^2, 温度 ℃ (见 RoboMaster电控C++开发规范 §5.1)
- *        2) 坐标系: 机体 X=前 Y=左 Z=上(右手系), yaw 绕 Z 逆时针为正, 角度自 +X 起算
- *        3) imu_frame 由 IMU 任务写、其余任务读, 单个 float 字段的读写是原子的(32 位对齐);
- *           需要多字段严格一致时应自行关中断拷贝
- *        4) imu_frame.status 是工作状态的唯一真源, 模块内不再另存副本
- *        5) 姿态可用性与传感器数据有效性解耦: imu_is_ready() = 已进入解算 且 数据有效 且 EKF 正常产出
- *        6) 命名与设计约定对照表见 imu_temp_ctrl.md §1.4
- * @date 2026-11-12
- * @version 2.2
+ * @brief 
+ * @date 2026-11-23
+ * @version 0.1
  * @copyright HNAU-Robot (c) 2026
  */
 #ifndef IMU_TEMP_CTRL_H
@@ -32,22 +25,27 @@ extern "C" {
  */
 typedef enum
 {
-    Imu_Status_Uninit = 0,  //!< 未初始化
-    Imu_Status_Init_Fail,   //!< BMI088 初始化失败, 任务内周期性重试
-    Imu_Status_Wait_Temp,   //!< 等待加热到目标温度(仅自标定模式)
-    Imu_Status_Calibrating, //!< 陀螺零漂标定中
-    Imu_Status_Running,     //!< 正常解算
+    Imu_Status_Uninit = 0,  // 未初始化
+    Imu_Status_Init_Fail,   // BMI088 初始化失败, 任务内周期性重试
+    Imu_Status_Wait_Temp,   // 等待加热到目标温度(仅自标定模式)
+    Imu_Status_Calibrating, // 陀螺零漂标定中
+    Imu_Status_Running,     // 正常解算
 } imu_status_e;
 
-/**
- * @brief 欧拉角, 单位 rad
- */
+typedef enum
+{
+    VQF = 0,    // VQF 算法
+    MAHONY,     // Mahony算法
+    EKF         // EKF 算法
+} IMU_Fusion_Algo_e;
+
 typedef struct
 {
-    float roll;
-    float pitch;
-    float yaw; 
-} euler_angle_t;
+    uint8_t temp_reached;      // 到达目标温度
+    uint8_t temp_stable;       // 温度稳定
+    uint8_t gyro_calib_done;   // 陀螺仪零漂完成
+    uint8_t fusion_enabled;    // 融合算法输出可用
+} imu_ctrl_flag_t;
 
 /**
  * @brief IMU 解算结果
@@ -58,8 +56,11 @@ typedef struct
     float gyro[3];              // 已扣除零漂的角速度, rad/s
     float accel[3];             // 加速度, m/s^2; 解算状态下已做偏心补偿(折算到旋转中心)
     float temperature;          // 当前温度, ℃
-    euler_angle_t euler_angle;  // 欧拉角, rad
-    float yaw_total;            // yaw 连续多圈角(不折叠到 ±pi), rad
+    float q[4];                  // 姿态四元数 [w, x, y, z]
+    float pitch;                 // 俯仰角, rad
+    float roll;                  // 横滚角, rad
+    float yaw;                   // 偏航角, rad
+    float YawTotalAngle;         // yaw 连续多圈角(不折叠到 ±pi), rad
     float dt;                   // 本拍姿态积分步长, s(累计排空后的实际积分时间)
 
     // 温控
@@ -80,7 +81,7 @@ float imu_get_yaw_rad(void);
 float imu_get_yaw_total_rad(void);
 
 /**
- * @brief 姿态是否可用(传感器在线且已进入解算状态)
+ * @brief 姿态是否可用(传感器在线、已进入解算状态且融合器正常产出)
  * @return 1 可用, 0 不可用
  */
 uint8_t imu_is_ready(void);

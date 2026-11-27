@@ -73,6 +73,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
     User/Drive/algorithm/feedforward/feedforward.cpp
     User/Drive/algorithm/filter/filter_ekf/filter_ekf.cpp
+    User/Drive/algorithm/filter/filter_vqf/filter_vqf.cpp
     User/Drive/algorithm/filter/frequency_filter/frequency_filter.cpp
     User/Drive/algorithm/filter/general_filter/general_filter.cpp
     User/Drive/algorithm/filter/kalman_last/kalman_last.cpp
@@ -178,6 +179,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
     User/Drive/algorithm/feedforward
     User/Drive/algorithm/filter/filter_ekf
+    User/Drive/algorithm/filter/filter_vqf
     User/Drive/algorithm/filter/frequency_filter
     User/Drive/algorithm/filter/general_filter
     User/Drive/algorithm/filter/kalman_last
