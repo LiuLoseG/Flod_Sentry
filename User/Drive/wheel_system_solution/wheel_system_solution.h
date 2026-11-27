@@ -42,6 +42,16 @@ typedef struct
 } wheel_robot_accel_t;
 
 /**
+ * @brief 各轮平动和转动产生的轮端力矩分量, N·m ([0]=FL [1]=RL [2]=RR [3]=FR)
+ * @note 已包含轮系方向和舵轮对齐系数, 尚未应用力死区及单轮力矩限幅。
+ */
+typedef struct
+{
+    float translation_torque[4];
+    float rotation_torque[4];
+} wheel_torque_components_t;
+
+/**
  * @brief 机器人位姿 (世界系): x/y: m, yaw: rad
  * @note  yaw 折到 [-π, π); 描述的是**底盘中心**, 其它参考点需上层自行平移.
  */
@@ -95,16 +105,19 @@ typedef struct
 
     // 优化后的输出参数
     float optimize_angle[4];     // 舵向目标角, rad (多圈, 含零位; 同时是下一拍斜坡基准)
-    float optimize_speed[4];     // 轮向目标速度, rad/s (已含余弦削减与方向符号; 纯力控为 0)
+    float optimize_speed[4];     // 轮向目标速度, rad/s (已含精确投影、四轮公共削减与方向符号; 纯力控为 0)
 
-    float optimize_direction[4]; // 轮向方向, ±1 (就近转位的翻转状态, 兼作下一拍迟滞记忆; 速度域, 只由逆解写)
-    float cosine_optimize[4];    // 余弦削减系数(幅值), 无量纲 [0,1] (1 = 已对齐不削减; 速控与力控共用)
+    float optimize_direction[4]; // 轮速方向分支, ±1 (就近转位的翻转状态, 兼作下一拍迟滞记忆; 只由逆解写)
+                                 //   迟滞带内 sign(optimize_speed) 可能与它不同, 速度符号以 optimize_speed 为准
+    float cosine_optimize[4];    // 该轮 solution_speed -> optimize_speed 的实际倍数(幅值), [0,1]
+                                 //   速控 = 精确投影 |cos e| × 四轮公共削减 min|cos e|²; 力控 = |cos e|³ (逐轮)
     float error_angle[4];        // 真实未对齐角, rad (相对所选方向分支, 0 表示已对齐; 速控与力控共用)
-    float force_direction[4];    // 轮端出力方向, ±1 (+1 = 沿当前舵向 +û(θ) 推底盘; 只由力控写,
-                                 //   纯力控 = 就近转位分支, 混控 = 力投影 sign(F·û(θ)), 与轮向方向无关)
+    float force_direction[4];    // 轮端出力方向, ±1 (+1 = 沿当前舵向 +û(θ) 推底盘; 只由力控写)
+                                 //   纯力控与混控同判据 = sign(力在**实测**舵向 û(θ_now) 上的投影), 与轮速方向无关
 
     // 力控轮输出力矩
     float wheel_torque[4];       // 四轮轮端目标力矩, N·m ([0]=FL [1]=RL [2]=RR [3]=FR)
+    wheel_torque_components_t torque_components;
 } steer_wheel_status_t;
 
 /*-----------------------------------omni_wheel-----------------------------------*/
@@ -145,6 +158,8 @@ public:
 
     // 轮端目标力矩, N·m
     inline float get_wheel_torque(const uint8_t &__index) const;
+    inline float get_translation_torque(const uint8_t &__index) const;
+    inline float get_rotation_torque(const uint8_t &__index) const;
 
     // 轮向电机方向: +1 
     inline void set_wheel_encoder_direction(const float &__direction);
@@ -240,7 +255,7 @@ protected:
     // 力控: 目标加速度
     wheel_robot_accel_t target_accel = {0.0f, 0.0f, 0.0f};
     // 里程计: IMU 绝对航向角, rad
-    float imu_yaw = 0.0f;
+    float imu_yaw = NAN;
      // 内部变量
 
     // 上一帧累计轮转角, rad
@@ -259,6 +274,7 @@ protected:
     float target_wheel_speed[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     // 四轮轮端目标力矩
     float wheel_torque[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    wheel_torque_components_t torque_components = {};
     // 正运动学结果 (机器人速度, vx/vy: m/s, vw: rad/s)
     wheel_robot_speed_t robot_speed = {0.0f, 0.0f, 0.0f};
     // 编码器里程计世界系位姿 (x,y: m; yaw: rad)
@@ -305,6 +321,8 @@ public:
 
     // 轮端目标力矩, N·m
     inline float get_wheel_torque(const uint8_t &__index) const;
+    inline float get_translation_torque(const uint8_t &__index) const;
+    inline float get_rotation_torque(const uint8_t &__index) const;
 
     // 轮向电机方向 +1 
     inline void set_wheel_encoder_direction(const float &__direction);
@@ -402,7 +420,7 @@ protected:
     // 力控: 目标加速度
     wheel_robot_accel_t target_accel = {0.0f, 0.0f, 0.0f};
     // 里程计: IMU 绝对航向角, rad
-    float imu_yaw = 0.0f;
+    float imu_yaw = NAN;
 
 
     // 上一帧累计轮转角, rad
@@ -420,6 +438,7 @@ protected:
     float target_wheel_speed[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     // 力控: 四轮轮端目标力矩, N·m ([0]=FL [1]=RL [2]=RR [3]=FR)
     float wheel_torque[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    wheel_torque_components_t torque_components = {};
     // 正运动学结果 (机器人速度, vx/vy: m/s, vw: rad/s)
     wheel_robot_speed_t robot_speed = {0.0f, 0.0f, 0.0f};
     // 编码器里程计世界系位姿 (x,y: m; yaw: rad)
@@ -445,7 +464,7 @@ public:
               // 速控参数
               const float &__target_max_step = 0.12f,
               const float &__max_wheel_speed = 25.0f,
-              const float &__min_limit = 0.1f,
+              const float &__min_limit = 0.03f,
               const float &__steer_angle_deadband = 0.003f,
               const float &__flip_hysteresis = 0.1f,
               // 力控死区和最大力矩限制
@@ -465,6 +484,8 @@ public:
 
     // 轮端目标力矩(动力学), N·m
     inline float get_wheel_torque(const uint8_t &__index) const;
+    inline float get_translation_torque(const uint8_t &__index) const;
+    inline float get_rotation_torque(const uint8_t &__index) const;
 
     inline float get_optimize_direction(const uint8_t &__index) const;
     inline float get_error_angle(const uint8_t &__index) const;
@@ -497,9 +518,10 @@ public:
     inline void set_steer_angle_deadband(const float &__steer_angle_deadband);
     // 就近转位翻转迟滞, rad (须在 [0, π/2) 内, 0 表示无迟滞)
     inline void set_flip_hysteresis(const float &__flip_hysteresis);
-    // 余弦优化开关 (速控与力控共用: 关闭时两条流水线同时不再按 cos³e 削减出力)
+    // 余弦优化开关 (速控与力控共用: 关闭后速控不再额外削减轮速 (精确投影仍保留), 力控不再按 cos³e 削减出力)
     inline void set_cosine_optimize_enable(const bool &__enable);
-    // 就近转位优化开关 (速控与力控共用: 关闭时两条流水线都只转到解算/力方向本体, dir 恒 +1)
+    // 就近转位优化开关 (速控与力控共用: 关闭时两条流水线都只转到解算/力方向本体, 速度分支方向恒 +1,
+    // 偏差超过 90° 期间轮速为 0)
     inline void set_nearest_optimize_enable(const bool &__enable);
     // 舵向目标斜坡限幅开关 (速控与力控共用)
     inline void set_target_step_limit_enable(const bool &__enable);
@@ -599,7 +621,7 @@ protected:
     // 轮向电机最大角速度, rad/s (超限时四轮等比例缩放)
     float max_wheel_speed = 25.0f;
     // 静止判定阈值, m/s 与 rad/s (三轴指令均不超过该值视为零指令)
-    float min_limit = 0.1f;
+    float min_limit = 0.03f;
     // 非小陀螺模式舵向误差死区, rad (小于该值不再修舵, 防抖)
     float steer_angle_deadband = 0.003f;
     // 就近转位翻转迟滞, rad ∈ [0, π/2): 已反转时需 |误差| 小于 90°-迟滞 才转回, 正向时需大于 90°+迟滞 才反转
@@ -628,7 +650,7 @@ protected:
     // 里程计: 舵向累计转角 + 轮向累计转角 + IMU 航向
     float wheel_angle[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float steer_angle[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    float imu_yaw = 0.0f;
+    float imu_yaw = NAN;
 
     // 上一帧累计轮转角, rad
     float last_wheel_angle[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -661,7 +683,18 @@ inline float omni_wheel_class::get_wheel_torque(const uint8_t &__index) const
     {
         return (0.0f);
     }
+
     return (wheel_torque[__index]);
+}
+
+inline float omni_wheel_class::get_translation_torque(const uint8_t &__index) const
+{
+    return (__index < 4) ? torque_components.translation_torque[__index] : 0.0f;
+}
+
+inline float omni_wheel_class::get_rotation_torque(const uint8_t &__index) const
+{
+    return (__index < 4) ? torque_components.rotation_torque[__index] : 0.0f;
 }
 
 inline void omni_wheel_class::update_robot_accel(const wheel_robot_accel_t &__target_accel)
@@ -822,7 +855,18 @@ inline float mecanum_wheel_class::get_wheel_torque(const uint8_t &__index) const
     {
         return (0.0f);
     }
+
     return (wheel_torque[__index]);
+}
+
+inline float mecanum_wheel_class::get_translation_torque(const uint8_t &__index) const
+{
+    return (__index < 4) ? torque_components.translation_torque[__index] : 0.0f;
+}
+
+inline float mecanum_wheel_class::get_rotation_torque(const uint8_t &__index) const
+{
+    return (__index < 4) ? torque_components.rotation_torque[__index] : 0.0f;
 }
 
 inline void mecanum_wheel_class::update_robot_accel(const wheel_robot_accel_t &__target_accel)
@@ -983,7 +1027,18 @@ inline float steer_wheel_class::get_wheel_torque(const uint8_t &__index) const
     {
         return 0.0f;
     }
+
     return (status.wheel_torque[__index]);
+}
+
+inline float steer_wheel_class::get_translation_torque(const uint8_t &__index) const
+{
+    return (__index < 4) ? status.torque_components.translation_torque[__index] : 0.0f;
+}
+
+inline float steer_wheel_class::get_rotation_torque(const uint8_t &__index) const
+{
+    return (__index < 4) ? status.torque_components.rotation_torque[__index] : 0.0f;
 }
 
 inline void steer_wheel_class::update_robot_accel(const wheel_robot_accel_t &__target_accel)

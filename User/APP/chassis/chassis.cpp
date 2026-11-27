@@ -301,7 +301,7 @@ void chassis_update_measure(void)
 
     // 更新舵轮解算的相关参数
 
-    chassis.steer_wheel.update_now_state(chassis.now_steer_state, chassis.now_wheel_state);
+    chassis.steer_wheel.update_now_state(chassis.now_steer_state, chassis.now_wheel_state, NAN);
 
     // 更新滤波后的轮电机速度值（一阶IIR低通，30Hz截止）
     
