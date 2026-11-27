@@ -468,7 +468,7 @@ public:
               const float &__steer_angle_deadband = 0.003f,
               const float &__flip_hysteresis = 0.1f,
               // 力控死区和最大力矩限制
-              const float &__max_wheel_torque = 4.9f,
+              const float &__max_wheel_torque = 3.65f,
               const float &__force_deadband = 0.1f,
               // 优化开关
               const bool &__cosine_optimize_enable = true,
