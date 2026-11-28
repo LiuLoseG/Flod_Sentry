@@ -41,7 +41,11 @@
  * @param __anti_windup_gain 反算增益Kb, 单位1/s, 仅BACK_CALC使用
  * @param __anti_windup_out_max 抗饱和跟踪上限, 仅用于抗饱和判定, 0为沿用out_max
  */
-void pid_class::init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f, const float &__i_out_max, const float &__out_max, const float &__d_t, const float &__dead_zone, const float &__i_variable_speed_a, const float &__i_variable_speed_b, const float &__i_separate_threshold, const pid_d_first_e &__d_first, const pid_anti_windup_e &__anti_windup, const pid_d_filter_e &__d_filter, const float &__anti_windup_gain, const float &__anti_windup_out_max)
+void pid_class::init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f, 
+                     const float &__i_out_max, const float &__out_max, const float &__d_t, const float &__dead_zone, 
+                     const float &__i_variable_speed_a, const float &__i_variable_speed_b, const float &__i_separate_threshold, 
+                     const pid_d_first_e &__d_first, const pid_d_filter_e &__d_filter, 
+                     const pid_anti_windup_e &__anti_windup, const float &__anti_windup_gain, const float &__anti_windup_out_max)
 {
     k_p = __k_p;
     k_i = __k_i;

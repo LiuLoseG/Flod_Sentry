@@ -133,8 +133,8 @@ void chassis_init(void)
 
     for (uint8_t i = 0; i < 4; i++)
     {
-        chassis.pid_steer_angle[i].init(0.0f, 0.00f, 0.0f, 0.0f, 1.0f, 12.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机角度环PID初始化
-        chassis.pid_steer_omega[i].init(0.0f, 0.0f, 0.0f, 0.0f, 0.85f, 1.2f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机速度环PID初始化
+        chassis.pid_steer_angle[i].init(12.8f, 0.00f, 0.002f, 0.0f, 1.0f, 6.8f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE); // 电机角度环PID初始化
+        chassis.pid_steer_omega[i].init(0.105f, 0.95f, 0.0f, 0.0f, 0.5f, 1.2f, 0.001f, 0.0f, 1.5f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_D_Filter_ENABLE); // 电机速度环PID初始化
     }
 #if CHASSIS_CONTROL_METHOD
     // 底盘加速度环PID控制初始化
@@ -390,7 +390,7 @@ void chassis_whole_remote_control(void)
 
     // 直接使用遥控器控制底盘速度
     chassis.target_robot_speed.vx = basic_math_dead_constrain((chassis.crsf->get_right_x() * CHASSIS_MAX_MOVE_SPEED), -CHASSIS_MAX_MOVE_SPEED, CHASSIS_MAX_MOVE_SPEED, 0.05f); // 将遥控器右摇杆Y轴值映射为底盘的x轴速度，并进行限幅和死区处理
-    chassis.target_robot_speed.vy = basic_math_dead_constrain((chassis.crsf->get_right_y() * CHASSIS_MAX_MOVE_SPEED), -CHASSIS_MAX_MOVE_SPEED, CHASSIS_MAX_MOVE_SPEED, 0.05f); // 将遥控器右摇杆X轴值映射为底盘的y轴速度，并进行限幅和死区处理
+    chassis.target_robot_speed.vy = basic_math_dead_constrain((chassis.crsf->get_right_y() * CHASSIS_MAX_MOVE_SPEED), -CHASSIS_MAX_MOVE_SPEED, CHASSIS_MAX_MOVE_SPEED, 0.08f); // 将遥控器右摇杆X轴值映射为底盘的y轴速度，并进行限幅和死区处理
     chassis.target_robot_speed.vw = basic_math_dead_constrain((chassis.crsf->get_left_y() * CHASSIS_MAX_ROTATE_SPEED), -CHASSIS_MAX_ROTATE_SPEED, CHASSIS_MAX_ROTATE_SPEED, 0.08f); // 将遥控器滚轮值映射为底盘的角速度，并进行限幅和死区处理
 
 #elif ROBOT_AMOUNT_BOARD == 2   // 双板(两块H7)
@@ -491,7 +491,7 @@ void chassis_overall_mobile_control(void)
 void chassis_motor_calculate(void)
 {
     // 更新底盘整体运动学参数
-    chassis.steer_wheel.update_robot_state(chassis.slope_output_speed, chassis.now_mode);
+    chassis.steer_wheel.update_robot_state(chassis.target_robot_speed, chassis.now_mode);
 
 #if CHASSIS_CONTROL_METHOD  // 力控启动
     chassis.pid_chassis_accel[0].set_target(chassis.slope_output_speed.vx); // 设置底盘加速度环的目标值为底盘的期望速度
@@ -583,7 +583,7 @@ void chassis_motor_calculate(void)
     // }
 
     // 发送数据
-    bsp_can_1_to_4_transmit(&hfdcan1, 0x1fe, can2_0x1fe_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
+    bsp_can_1_to_4_transmit(&hfdcan1, 0x1fe, can1_0x1fe_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
     bsp_can_1_to_4_transmit(&hfdcan2, 0x200, can2_0x200_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
 }
 
@@ -636,14 +636,17 @@ void chassis_power_cotrol(void)
  */
 void chasiss_motor_test(void)
 {
+    wave_generator_calc(&motor_wave);
     // 舵向电机PID计算
     for (uint8_t i = 0; i < 4; i++)
     {
+        chassis.tgr_steer_state.angle[i] = wave_generator_get_value(&motor_wave);
         // 位置环
         chassis.pid_steer_angle[i].set_now(chassis.now_steer_state.angle[i]); // 设置电机当前角度值
         chassis.pid_steer_angle[i].set_target(chassis.tgr_steer_state.angle[i]); // 设置电机目标角度值
         chassis.pid_steer_angle[i].pid_calculate_callback(); // 计算电机控制参数
         chassis.tgr_steer_state.speed[i] = chassis.pid_steer_angle[i].get_out(); // 获取电机控制参数
+        // chassis.tgr_steer_state.speed[i] = wave_generator_get_value(&motor_wave); // 获取波形发生器的输出值作为电机目标角度值
 
         // 速度环
         chassis.pid_steer_omega[i].set_now(chassis.now_steer_state.speed[i]); // 设置电机当前速度值
@@ -681,7 +684,7 @@ void chasiss_motor_test(void)
 
 
     // 发送数据
-    bsp_can_1_to_4_transmit(&hfdcan1, 0x1fe, can2_0x1fe_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
+    bsp_can_1_to_4_transmit(&hfdcan1, 0x1fe, can1_0x1fe_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
     bsp_can_1_to_4_transmit(&hfdcan2, 0x200, can2_0x200_tx_data, Can_Transmit_Frequency_Div1); // 发送电机控制参数
 }
 

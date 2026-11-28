@@ -70,7 +70,11 @@ typedef struct
 class pid_class
 {
 public:
-    void init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f = 0.0f, const float &__i_out_max = 0.0f, const float &__out_max = 0.0f, const float &__d_t = 0.001f, const float &__dead_zone = 0.0f, const float &__i_variable_speed_a = 0.0f, const float &__i_variable_speed_b = 0.0f, const float &__i_separate_threshold = 0.0f, const pid_d_first_e &__d_first = PID_D_First_DISABLE, const pid_anti_windup_e &__anti_windup = PID_Anti_Windup_DISABLE, const pid_d_filter_e &__d_filter = PID_D_Filter_DISABLE, const float &__anti_windup_gain = 10.0f, const float &__anti_windup_out_max = 0.0f);
+    void init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f = 0.0f, 
+              const float &__i_out_max = 0.0f, const float &__out_max = 0.0f, const float &__d_t = 0.001f, const float &__dead_zone = 0.0f, 
+              const float &__i_variable_speed_a = 0.0f, const float &__i_variable_speed_b = 0.0f, const float &__i_separate_threshold = 0.0f, 
+              const pid_d_first_e &__d_first = PID_D_First_DISABLE, const pid_d_filter_e &__d_filter = PID_D_Filter_DISABLE, 
+              const pid_anti_windup_e &__anti_windup = PID_Anti_Windup_DISABLE, const float &__anti_windup_gain = 10.0f, const float &__anti_windup_out_max = 0.0f);
 
     inline float get_integral_error() const;
 

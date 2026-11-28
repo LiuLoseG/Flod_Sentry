@@ -370,31 +370,31 @@ void gimbal_init(void)
     gimbal.big_pit_ang_fil.init(0.82f, 0.001f);
 
     // 初始化遥控器PID控制器
-    gimbal.rc_small_yaw_pid.angle.init(12.5f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
-    gimbal.rc_small_yaw_pid.speed.init(0.68f, 0.0f, 0.0f, 0.0f, 0.85f, 3.5f, 0.001f, 0.0101f, 0.12f, 0.35f, 0.45f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.rc_small_yaw_pid.angle.init(12.5f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_D_Filter_ENABLE,PID_Anti_Windup_CLAMP);
+    gimbal.rc_small_yaw_pid.speed.init(0.68f, 0.0f, 0.0f, 0.0f, 0.85f, 3.5f, 0.001f, 0.0101f, 0.12f, 0.35f, 0.45f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
 
-    gimbal.rc_small_pitch_pid.angle.init(12.85f, 0.0f, 0.05f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
-    gimbal.rc_small_pitch_pid.speed.init(0.52f, 0.0f, 0.0f, 0.0f, 0.65f, 10.0f, 0.001f, 0.0f, 0.45f, 0.82f, 0.88f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.rc_small_pitch_pid.angle.init(12.85f, 0.0f, 0.05f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.rc_small_pitch_pid.speed.init(0.52f, 0.0f, 0.0f, 0.0f, 0.65f, 10.0f, 0.001f, 0.0f, 0.45f, 0.82f, 0.88f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
 
-    gimbal.rc_big_yaw_pid.angle.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
-    gimbal.rc_big_yaw_pid.speed.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.rc_big_yaw_pid.angle.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE,PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.rc_big_yaw_pid.speed.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
 
-    gimbal.rc_big_pitch_pid.angle.init(11.25f, 1.2f, 0.12f, 0.0f, 1.2f, 10.0f, 0.001f, 0.0f, 0.82f, 1.45f, 1.98f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
-    gimbal.rc_big_pitch_pid.speed.init(0.65f, 1.65f, 0.0f, 0.0f, 1.2f, 5.0f, 0.001f, 0.0f, 0.58f, 1.52f, 1.8f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.rc_big_pitch_pid.angle.init(11.25f, 1.2f, 0.12f, 0.0f, 1.2f, 10.0f, 0.001f, 0.0f, 0.82f, 1.45f, 1.98f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.rc_big_pitch_pid.speed.init(0.65f, 1.65f, 0.0f, 0.0f, 1.2f, 5.0f, 0.001f, 0.0f, 0.58f, 1.52f, 1.8f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
 
     // 初始化云台自瞄PID控制器
-    gimbal.pc_small_yaw_pid.angle.init(12.5f, 0.0f, 0.54f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
-    gimbal.pc_small_yaw_pid.speed.init(0.72f, 0.25f, 0.0f, 0.0f, 0.85f, 3.5f, 0.001f, 0.0101f, 0.12f, 0.35f, 0.45f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.pc_small_yaw_pid.angle.init(12.5f, 0.0f, 0.54f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.pc_small_yaw_pid.speed.init(0.72f, 0.25f, 0.0f, 0.0f, 0.85f, 3.5f, 0.001f, 0.0101f, 0.12f, 0.35f, 0.45f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
 
-    gimbal.pc_small_pitch_pid.angle.init(10.85f, 0.0f, 0.05f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.pc_small_pitch_pid.angle.init(10.85f, 0.0f, 0.05f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
     // gimbal.pc_small_pitch_pid.speed.init(0.65f, 0.23f, 0.0f, 0.0f, 0.65f, 10.0f, 0.001f, 0.0f, 0.45f, 0.82f, 0.86f, PID_D_First_ENABLE, PID_Anti_Windup_DISABLE);
-    gimbal.pc_small_pitch_pid.speed.init(0.35f, 0.58f, 0.0f, 0.0f, 0.65f, 10.0f, 0.001f, 0.0f, 0.45f, 0.82f, 0.88f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.pc_small_pitch_pid.speed.init(0.35f, 0.58f, 0.0f, 0.0f, 0.65f, 10.0f, 0.001f, 0.0f, 0.45f, 0.82f, 0.88f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
 
-    gimbal.pc_big_yaw_pid.angle.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
-    gimbal.pc_big_yaw_pid.speed.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.pc_big_yaw_pid.angle.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.pc_big_yaw_pid.speed.init(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 10.0f, 0.001f, 0.0f, 0.0f, 0.0f, 0.0f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
 
-    gimbal.pc_big_pitch_pid.angle.init(11.25f, 1.2f, 0.12f, 0.0f, 1.2f, 10.0f, 0.001f, 0.0f, 0.82f, 1.45f, 1.98f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
-    gimbal.pc_big_pitch_pid.speed.init(0.65f, 1.65f, 0.0f, 0.0f, 1.2f, 5.0f, 0.001f, 0.0f, 0.58f, 1.52f, 1.8f, PID_D_First_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.pc_big_pitch_pid.angle.init(11.25f, 1.2f, 0.12f, 0.0f, 1.2f, 10.0f, 0.001f, 0.0f, 0.82f, 1.45f, 1.98f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
+    gimbal.pc_big_pitch_pid.speed.init(0.65f, 1.65f, 0.0f, 0.0f, 1.2f, 5.0f, 0.001f, 0.0f, 0.58f, 1.52f, 1.8f, PID_D_First_ENABLE, PID_D_Filter_ENABLE, PID_Anti_Windup_CLAMP);
 
     gimbal.big_yaw_omega_slope.init(0.001f, 0.001f, Slope_First_REAL);
     
