@@ -29,13 +29,22 @@ typedef enum
 } pid_d_first_e;
 
 /**
+ * @brief 微分滤波器使能
+ */
+typedef enum
+{
+    PID_D_Filter_DISABLE = 0,
+    PID_D_Filter_ENABLE,
+} pid_d_filter_e;
+
+/**
  * @brief 抗积分饱和(anti-windup)方案
- * @note 均在输出被限幅时才生效; 默认 DISABLE, 行为与原逻辑逐位一致
+ * @note 超过抗饱和跟踪上限时生效; 默认 DISABLE
  */
 typedef enum
 {
     PID_Anti_Windup_DISABLE = 0,    // 关闭
-    PID_Anti_Windup_CLAMP,          // 条件积分: 饱和且误差仍朝限幅方向时冻结本步积分
+    PID_Anti_Windup_CLAMP,          // 条件积分: 饱和且积分增量加深饱和时冻结本步积分
     PID_Anti_Windup_BACK_CALC,      // 反算: 按输出超出量回退积分
 } pid_anti_windup_e;
 
@@ -44,14 +53,14 @@ typedef enum
  */
 typedef struct
 {
-    float p_out;        // P输出
-    float i_out;        // I输出
-    float d_out;        // D输出
-    float f_out;        // 前馈输出
+    float p_out = 0.0f;             // P输出
+    float i_out = 0.0f;             // I输出
+    float d_out = 0.0f;             // D输出
+    float f_out = 0.0f;             // 前馈输出
     
-    float error;        // 当前误差
-    float abs_error;     // 当前误差绝对值
-    float speed_ratio;    // 积分变速比例系数
+    float error = 0.0f;             // 当前误差
+    float abs_error = 0.0f;         // 当前误差绝对值
+    float speed_ratio = 0.0f;       // 积分变速比例系数
 } pid_term_t;
 
 /**
@@ -61,7 +70,11 @@ typedef struct
 class pid_class
 {
 public:
-    void init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f = 0.0f, const float &__i_out_max = 0.0f, const float &__out_max = 0.0f, const float &__d_t = 0.001f, const float &__dead_zone = 0.0f, const float &__i_variable_speed_a = 0.0f, const float &__i_variable_speed_b = 0.0f, const float &__i_separate_threshold = 0.0f, const pid_d_first_e &__d_first = PID_D_First_DISABLE, const pid_anti_windup_e &__anti_windup = PID_Anti_Windup_DISABLE, const float &__anti_windup_gain = 10.0f, const float &__anti_windup_out_max = 0.0f);
+    void init(const float &__k_p, const float &__k_i, const float &__k_d, const float &__k_f = 0.0f, 
+              const float &__i_out_max = 0.0f, const float &__out_max = 0.0f, const float &__d_t = 0.001f, const float &__dead_zone = 0.0f, 
+              const float &__i_variable_speed_a = 0.0f, const float &__i_variable_speed_b = 0.0f, const float &__i_separate_threshold = 0.0f, 
+              const pid_d_first_e &__d_first = PID_D_First_DISABLE, const pid_d_filter_e &__d_filter = PID_D_Filter_DISABLE, 
+              const pid_anti_windup_e &__anti_windup = PID_Anti_Windup_DISABLE, const float &__anti_windup_gain = 10.0f, const float &__anti_windup_out_max = 0.0f);
 
     inline float get_integral_error() const;
 
@@ -101,17 +114,21 @@ public:
 
     inline void set_anti_windup_out_max(const float &__anti_windup_out_max);
 
+    void pid_clear();
+
     void pid_calculate_callback();
 
 protected:
     // 初始化相关常量
 
     // PID计时器周期, s
-    float d_t;
+    float d_t = 0.001f;
     // 死区, Error在其绝对值内不输出
-    float dead_zone;
+    float dead_zone = 0.0f;
     // 微分先行
-    pid_d_first_e d_first;
+    pid_d_first_e d_first = PID_D_First_DISABLE;
+    // 微分滤波器
+    pid_d_filter_e d_filter = PID_D_Filter_DISABLE;
 
     // 常量
 
@@ -147,22 +164,22 @@ protected:
     // 输出限幅, 0为不限制
     float out_max = 0;
 
-    // 变速积分定速内段阈值, 0为不限制
+    // 变速积分定速内段阈值, 启用时需 0 <= A < B
     float i_variable_speed_a = 0.0f;
-    // 变速积分变速区间, 0为不限制
+    // 变速积分停止阈值B, 0为关闭变速积分
     float i_variable_speed_b = 0.0f;
     // 积分分离阈值，需为正数, 0为不限制
     float i_separate_threshold = 0.0f;
 
     // 微分滤波器补偿
-    float d_filter_n = 10.0f;  // 微分滤波器截止频率, Hz
+    float d_filter_n = 10.0f;  // 微分滤波器截止角频率, rad/s
     float d_filter_out = 0.0f; // 微分滤波器输出
 
     // 抗积分饱和
     pid_anti_windup_e anti_windup = PID_Anti_Windup_DISABLE;
     // 反算增益Kb, 单位1/s
     float anti_windup_gain = 10.0f;      
-    // 抗饱和判定用输出上限, 0=沿用out_max, 单位同out
+    // 抗积分饱和跟踪上限, 仅影响 anti_windup 判定, 不限制实际输出; 0=沿用 out_max
     float anti_windup_out_max = 0.0f;    
     // 限幅前的原始输出
     float out_unsaturated = 0.0f;        
@@ -276,9 +293,9 @@ inline void pid_class::set_out_max(const float &__out_max)
 }
 
 /**
- * @brief 设定定速内段阈值, 0为不限制
+ * @brief 设定定速内段阈值A, 启用时需 0 <= A < B
  *
- * @param __i_variable_speed_a 定速内段阈值, 0为不限制
+ * @param __i_variable_speed_a 定速内段阈值A, 启用时需 0 <= A < B
  */
 inline void pid_class::set_i_variable_speed_a(const float &__i_variable_speed_a)
 {
@@ -286,9 +303,9 @@ inline void pid_class::set_i_variable_speed_a(const float &__i_variable_speed_a)
 }
 
 /**
- * @brief 设定变速区间, 0为不限制
+ * @brief 设定变速积分停止阈值B, 0为关闭变速积分
  *
- * @param __i_variable_speed_b 变速区间, 0为不限制
+ * @param __i_variable_speed_b 停止阈值B, 0为关闭变速积分
  */
 inline void pid_class::set_i_variable_speed_b(const float &__i_variable_speed_b)
 {
@@ -306,9 +323,9 @@ inline void pid_class::set_i_separate_threshold(const float &__i_separate_thresh
 }
 
 /**
- * @brief 设定微分滤波器截止频率, Hz
+ * @brief 设定微分滤波器截止角频率, rad/s
  *
- * @param __d_filter_n 微分滤波器截止频率, Hz
+ * @param __d_filter_n 微分滤波器截止角频率, rad/s
  */
 inline void pid_class::set_d_filter_n(const float &__d_filter_n)
 {
@@ -366,9 +383,9 @@ inline void pid_class::set_anti_windup_gain(const float &__anti_windup_gain)
 }
 
 /**
- * @brief 设定抗饱和判定用输出上限, 0为沿用out_max
+ * @brief 设定抗积分饱和跟踪上限, 仅影响抗饱和判定, 不限制实际输出; 0为沿用out_max
  *
- * @param __anti_windup_out_max 抗饱和判定用输出上限
+ * @param __anti_windup_out_max 抗饱和跟踪上限, 不限制实际输出
  */
 inline void pid_class::set_anti_windup_out_max(const float &__anti_windup_out_max)
 {
