@@ -29,7 +29,7 @@ typedef struct {
 typedef struct
 {
     float speed_rad_s;      // 电机转速，单位 rad/s
-    float limited_cmd;      // 限幅后的电机输入指令，单位 A
+    float limited_cmd;      // 限幅后的电机输出指令(最终发个电机的电流指令)，单位 A
 } motor_power_state_t;
 
 /**
@@ -83,3 +83,27 @@ typedef struct {
     power_motion_status_e status;   // 分配状态，调用方须检查后再发送电流
 } power_motion_result_t;
 
+extern const power_motor_model_t model_m3508;
+
+/** @brief 最优运动分配函数
+ * @param allowed_limit 允许的最大功率限制
+ * @param nodes 电机节点数组
+ * @param node_count 电机节点数量
+ * @param result 分配结果
+ * @retval power_motion_status_e: 分配状态
+ */
+power_motion_status_e power_ctrl_allocate_motion_optimal(
+    float allowed_limit, power_motion_node_t *nodes,
+    uint8_t node_count, power_motion_result_t *result);
+
+/** @brief 带优先级的运动分配函数
+ * @param allowed_limit 允许的最大功率限制
+ * @param nodes 电机节点数组
+ * @param node_count 电机节点数量
+ * @param priority 优先级
+ * @param result 分配结果
+ * @retval power_motion_status_e: 分配状态
+ */
+power_motion_status_e power_ctrl_allocate_motion_with_priority(
+    float allowed_limit, power_motion_node_t *nodes, uint8_t node_count, 
+    power_motion_priority_e priority, power_motion_result_t *result);

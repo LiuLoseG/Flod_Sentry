@@ -14,6 +14,7 @@
 #include "pid.h"
 #include "slope_math.h"
 #include "general_filter.h"
+#include "bsp_dwt.h"
 
 #include "dji_motor_new.h"
 #include "dm_motor.h"
@@ -24,14 +25,14 @@
 #include "robot_def.h"
 
 #include "robot_decision.h"
+#include "imu_temp_ctrl.h"
 
 // #include "power.h"
 // #include "chassis_power.h"
+#include "power_ctrl.h"
 #include "Chassis_ESKF.h"
 #include "chassis_power_rls.h"
 #include "safe_daemon_process.h"
-
-#include "sys_phased_freq.h"
 
 /**
  * @brief 底盘控制方式模式枚举
@@ -40,7 +41,8 @@ typedef enum
 {
     Chassis_Lock_Method = 0, // 底盘无力模式
     Chassis_Manual_Method,   // 底盘手动模式
-    Chassis_Auto_Method,     // 底盘自动模式
+    Chassis_Nav_Auto_Method, // 底盘导航自动模式(视觉自动控制模式)
+    Chassis_Pro_Auto_Method, // 底盘程序自动模式(程序自动控制模式)
 } chassis_method_e;
 
 /**
@@ -61,18 +63,33 @@ typedef struct
     // 遥控器对象指针
     crsf_class *crsf; 
     
-    // volatile power_data_t *power; // 功率计对象指针
+    // 功率计对象指针
+    // volatile power_data_t *power; 
+
+    // 底盘IMU对象指针
+    volatile imu_data_resolve_t *imu_data; 
 
     // 机器人决策对象指针
     robot_decision_class *decision; 
 
     // 底盘功率控制对象
-    chassis_power_rls control_power; 
+    // chassis_power_rls control_power; 
 
-/*------------------------------------底盘整体目标和状态观测量---------------------------------------------*/
+/*------------------------------------底盘整体状态观测量---------------------------------------------*/
+
+    // EKF 状态观测器
+    chassis_eskf_t eskf; // ESKF 状态观测器对象
+    chassis_eskf_input_t eskf_input; // ESKF 输入结构体
+    chassis_eskf_output_t eskf_output; // ESKF 输出结构体
 
     // 底盘里程计
     wheel_robot_position_t odom_position; // 里程计位置, m / rad    
+
+    uint32_t time_now_us; // 当前时间戳, us
+    float dt; // 采样周期, s
+
+    bool error_flag; // 底盘错误标志位, true表示底盘出现错误, false表示底盘正常
+/*---------------------------------------底盘整体控制对象------------------------------------------*/
 
     // 底盘整体控制结构体
     steer_wheel_class steer_wheel;
@@ -81,10 +98,16 @@ typedef struct
     wheel_robot_speed_t target_robot_speed; 
     // 当前底盘速度(运动学正解算)，单位m/s
     wheel_robot_speed_t now_robot_speed;    
+
     // 底盘映射速度(旋转矩阵映射后的速度)，单位m/s
     wheel_robot_speed_t map_robot_speed;
     // 底盘实际的控制速度(斜坡函数输出)，单位m/s
     wheel_robot_speed_t slope_output_speed;
+
+#if CHASSIS_CONTROL_METHOD // 力控
+    wheel_robot_accel_t target_accel; // 目标加速度, m/s^2 / rad/s^2
+#endif
+
 
     // 角度偏移量(旋转矩阵)，将云台坐标系下的速度转换为底盘坐标系下的速度，单位rad
     float yaw_angular_offset; 
@@ -93,13 +116,14 @@ typedef struct
     slope_class slope_speed[3]; // [0]-X轴速度斜坡, [1]-Y轴速度斜坡, [2]-角速度斜坡 
 
 /*------------------------------------电机控制量和测量量---------------------------------------------*/   
+#if CHASSIS_CONTROL_METHOD 
+    pid_class pid_chassis_accel[3]; // 底盘整体运动速度控制
+#endif
+    pid_class pid_wheel_omega[4];   // 轮向电机速度环PID
 
     // 舵向电机角度环和速度环PID对象数组
     pid_class pid_steer_angle[4]; // 电机角度环PID对象数组
     pid_class pid_steer_omega[4]; // 电机速度环PID对象数组
-    
-    // 轮向电机速度环PID
-    pid_class pid_wheel_omega[4];
 
 /*------------------------------------电机目标和状态观测量---------------------------------------------*/
 
@@ -116,14 +140,26 @@ typedef struct
 
 /*------------------------------------电机对象创建---------------------------------------------*/
     dji_c620_motor_class wheel_motor[4]; // 轮电机对象数组
-    // dji_gm6020_motor_class steer_motor[4]; // 转向电机对象
-    dm_motor_normal_class steer_motor[4]; // 转向电机对象
+    dji_gm6020_motor_class steer_motor[4]; // 转向电机对象
+    // dm_motor_normal_class steer_motor[4]; // 转向电机对象
 /*------------------------------------功率对象创建---------------------------------------------*/
+    float tgr_motor_torque[4];        // 论端电机力矩
+
     float motor_target_output[4]; // 电机输出值数组, A
     float motor_target_omega[4];  // 电机目标角速度值数组, rad/s
     float motor_rotor_current[4]; // 电机转子电流值数组, A
     float motor_rotor_omega[4];   // 电机转子角速度值数组, rad/s
-    bool motor_alive_status[4];   // 电机存活状态数组, 1表示存活, 0表示掉线
+
+    bool wheel_alive_status[4];   // 电机存活状态数组, 1表示存活, 0表示掉线
+    bool steer_alive_status[4];   // 电机存活状态数组, 1表示存活, 0表示掉线
+
+    // 尽量不破坏运动学的功率分配方式 
+    float final_power_limit; // 功率上限, W
+    power_motion_status_e power_motion_status; // 功率分配状态
+    power_motion_priority_e power_priority; // 功率分配优先级
+    motor_power_state_t m_states[4];        // 电机状态结构体数组
+    power_motion_node_t power_motion[4];    // 四轮模型、运动电流分量及电流上限
+    power_motion_result_t powern_result;    // 本周期保留比例、功率预测和分配状态
 
 /*-------------------------------------底盘控制状态---------------------------------------------*/
     // 当前底盘控制方式
